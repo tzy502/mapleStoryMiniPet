@@ -1,0 +1,13 @@
+{
+  "name": "MapleStory_Mob_8880150",
+  "version": 2,
+  "type": "sprite",
+  "sprites": {
+    "skill1": {
+      "file": "skill1.png",
+      "frames": 32,
+      "frameWidth": 682,
+      "frameHeight": 701
+    }
+  }
+}
