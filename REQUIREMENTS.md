@@ -1,165 +1,164 @@
 # 需求文档 — MapleStory MiniPet v2
 
-## 版本目标
-
-从「静态精灵图桌宠」升级为「后端驱动的多怪物可切换桌宠」。
+> 冒险岛桌面悬浮宠物，Swift + AppKit 原生实现。后端驱动多怪物切换，内嵌 Hermes 对话终端。
 
 ---
 
-## 核心需求
+## 1. 已实现功能
 
-### 1. 后端精灵图获取
+### 1.1 精灵图播放
 
-**现状**：精灵图预生成在 `sprites/` 目录，固定 8880150。
+- 水平条带 PNG 精灵图，`frameWidth × frameCount = 总宽`
+- 4 种动画循环：stand / move / attack{N} / skill{N}
+- 240ms 逐帧播放，oneShot（attack/skill 播完回 stand）/ loop（stand/move 持续）
 
-**目标**：通过 wiki-backend API 拉取 WzComparerR2 导出的精灵图数据。
-
-```
-MiniPet ──HTTP──▶ wiki-backend (:9334)
-                      │
-                      ├── 解析 .wz 文件 (WzComparerR2)
-                      ├── 导出动画帧 (PNG)
-                      ├── 计算 origin（参考 GifUtil.wzImgDetailToGif）
-                      ├── 拼接地锚精灵图条
-                      └── 返回 {sprites, config}
-```
-
-**API 设计文档**：
-/Volumes/docker/hermes/download/api-docs/
-获取xml接口/api/wz/xml
-**缓存策略**：
-- 首次拉取后缓存到本地 `~/Library/Caches/MiniPet/{mobId}/`
-- 缓存命中直接使用，过期或缺失时重新拉取
-
----
-
-### 2. 怪物切换
-
-用户可切换不同冒险岛怪物作为桌宠。
-
-**交互**：
-- 右键菜单 → 「切换怪物」→ 列表选择
-- 或命令行：`./start.sh --mob 9602538`
-
-**预加载**：
-- 切换时异步拉取精灵图，显示 loading 状态
-- 拉取完成前保持当前怪物
-
-**初始怪物列表**：
-
-根据WZ内查询的数据
-
----
-
-### 3. 动画播放逻辑
-
-**默认动画**：`stand`
-
-**动画选择策略**：
+### 1.2 动画调度
 
 ```
-if (空闲超过 5 秒)         → stand
-if (Hermes 有活动)          → stand（attack 开头 skill 开头技能）
-if (用户拖拽窗口)           → move（有） / fly（无 move 时）
-if (随机触发，每 15~30 秒)  → attack 开头 skill 开头技能）1（随机选一个）
+空闲 > 5s           → stand（循环）
+Hermes 感知到活动    → move（5s 后回 stand）
+用户拖拽窗口         → move → fly → stand（fallback 链）
+随机 15~30s          → attack{N} | skill{N}（随机选一个，播完回 stand）
 ```
 
-**无 move 动画时的回退**：
+### 1.3 怪物切换
 
-```
-优先级: move → fly → stand
-```
+- 右键菜单 → 切换怪物 → 从后端拉取精灵图
+- 命令行：`./start.sh --mob 9602538`
+- 缓存：`~/Library/Caches/MiniPet/{mobId}/`
 
-如果没有 `fly` 也没有 `move`，拖拽时保持 `stand`。
+### 1.4 内嵌终端
 
-**随机攻击/技能**：
+- 右键 → 💬 内嵌终端
+- 底层使用 `hermes -z "msg" --cli --resume {sessionId}`，固定 session
+- 输出天然不含 thinking（与 QQ/飞书 Bot 行为一致）
+- 用户消息灰色 `>` 前缀，Hermes 回复绿色
 
-每隔 15~30 秒（随机间隔），从以下候选池随机选一个播放一轮后回到 stand：
+### 1.5 Origin 对齐
 
-```
-候选池: 所有 attack{N} + skill{N}（如 attack1, skill1, skill2, skill3...）
-```
-
-播放规则：
-- 播放完整一轮（所有帧播放一次）
-- 播完后回到 `stand`
-- 播放期间拖拽不受影响（拖拽结束后继续当前随机动画）
-
----
-
-### 4. Origin 对齐（关键）
-
-**问题回顾**：原 bbox 对齐导致帧间锚点漂移 → 动画抖动。
+精灵图使用统一锚点对齐，消除帧间抖动。
 
 **正确逻辑**（参考 `GifUtil.wzImgDetailToGif`）：
 
+```java
+// 取所有帧的 maxOrigin 作为统一锚点
+int finalOriginX = max(所有帧的 originX);
+int finalOriginY = max(所有帧的 originY);
 
+// 每帧按差值偏移
+drawImage(image, finalOriginX - frameOriginX, finalOriginY - frameOriginY);
+```
 
-**后端实现要求**：
-
-- `WzImgDetail` 模型已含 `originX/originY/l/t/r/b`
-- 精灵图生成时逐帧应用 origin 偏移
-- 前端（MiniPet）无需关心 origin，直接使用生成好的精灵图条
-
-**验证方法**：
-- 生成后检查每帧：角色「脚部」在同一像素行
-- 对比原版 bbox 精灵图：应无可见抖动
+- WZ 数据可用 → WZ origin（`regenerate_sprites.py --method wz`）
+- 无 WZ 数据 → 接地锚点（`regenerate_sprites.py --method ground`）
+- 已验证：8880150（接地锚点）、9602538（WZ origin）
 
 ---
 
-### 5. 精灵图规范
+## 2. 待实现需求
 
-| 字段 | 说明                      |
-|------|-------------------------|
-| 格式 | PNG RGBA 水平条带           |
-| 单帧尺寸 | `frameW × frameH`（统一）   |
-| 总宽度 | `frameW × frameCount`   |
-| origin 对齐 | WZ origin（唯一） |
+### 2.1 批量编号合并
 
-`pet_config.json` 格式：
+**背景**：冒险岛 BOSS 怪物在 WZ 中可能对应多个编号（不同形态/阶段），对用户来说是同一个怪物。
 
-```json
-{
-  "mobId": "8880150",
-  "name": "路西德",
-  "version": 2,
-  "animations": {
-    "stand":  { "file": "stand.png",  "frames": 16, "frameW": 312, "frameH": 355 },
-    "move":   { "file": "move.png",   "frames": 16, "frameW": 312, "frameH": 356 },
-    "attack1":{ "file": "attack1.png","frames": 16, "frameW": 679, "frameH": 423 },
-    "skill1": { "file": "skill1.png", "frames": 32, "frameW": 887, "frameH": 898 }
-  }
-}
+**需求**：
+- 用户输入逗号分隔的多个编号，如 `9602538,9602539,9602540`
+- 后端批量查询所有编号的动画节点
+- 合并为单一怪物配置，动画命名格式为 `动作-编号`（如 `stand-9602538`、`attack1-9602539`）
+
+**后端接口**：
+```
+POST /api/wz/renderImgPath/batch
+  Body: {"paths": ["Mob/_Canvas/9602538.img", "Mob/_Canvas/9602539.img"]}
+  → 返回合并后的动画列表
+```
+
+### 2.2 动画命名规则
+
+- 单编号：`stand`、`move`、`attack1`（不变）
+- 多编号合并：`动作-编号`，如 `stand-9602538`、`attack1-9602539`
+- 编号缺失时回退到基础名
+
+### 2.3 怪物名称查询
+
+**需求**：通过后端 `POST /api/wz/data/query/string` 查询怪物名称（非编号）。
+
+```
+POST /api/wz/data/query/string
+  Body: {"path": "Mob/9602538.img/info/name"}
+  → 返回怪物中文名
+```
+
+用于右键菜单和状态栏显示。
+
+---
+
+## 3. 架构
+
+```
+MiniPet (AppKit)
+├── CLIArgs         命令行解析 (--mob, --debug-api)
+├── APIClient       wiki-backend HTTP 客户端
+├── CacheManager    本地缓存: ~/Library/Caches/MiniPet/{mobId}/
+├── PetPanel        NSPanel 透明无边框悬浮窗
+├── ContainerView
+│   ├── PetView     精灵图播放 + 动画引擎
+│   └── TerminalView 内嵌终端（可选）
+├── HermesClient    每次输入执行 hermes -z --cli --resume
+├── StatusBarController 菜单栏图标
+└── AppDelegate     退出时播放 die 动画
 ```
 
 ---
 
-## 技术约束
+## 4. API 合约
+
+| 接口 | 方法 | 用途 |
+|------|------|------|
+| `/api/wz/renderImgPath` | POST | 查询动画帧路径列表 |
+| `/api/wz/image?path=...` | GET | 下载单帧 PNG |
+| `/api/wz/data/query/string` | POST | 查询怪物名称 |
+
+---
+
+## 5. 精灵图生成管线
+
+```
+fetch_and_generate.py <mob_code>
+  ├── 查询怪物名称 → POST /api/wz/data/query/string
+  ├── 获取帧路径   → POST /api/wz/renderImgPath
+  ├── 批量下载帧   → GET  /api/wz/image
+  ├── Origin 对齐  → WZ origin / 接地锚点
+  └── 输出精灵图条 + pet_config.json → 缓存目录
+```
+
+---
+
+## 6. 技术约束
 
 - macOS 13+, Swift 5.9+
-- 精灵图生成：Java（wiki-backend 侧）/ Python（本地工具）
-- 透明无边框 NSPanel
-- 网络请求：URLSession（async/await）
-- 离线可用：缓存精灵图
+- 精灵图生成：Java（wiki-backend）+ Python（本地工具）
+- 透明无边框 NSPanel，`level: .floating`
+- 网络：URLSession async/await
+- 离线：缓存精灵图到 `~/Library/Caches/MiniPet/`
 
 ---
+## 7. 验证
 
-## 实现优先级
-
-| 优先级 | 功能 |
-|--------|------|
-| P0 | Origin 对齐（后端 + 精灵图重生成） |
-| P0 | 动画回退逻辑（move→fly→stand） |
-| P1 | 后端 API：精灵图拉取 |
-| P1 | 本地缓存 |
-| P2 | 怪物切换 UI |
-| P2 | 随机 attack/skill |
-| P3 | 动态怪物列表（从 wiki-backend） |
-
+- 模拟输入8880191,8880155,8880154,8880153,8880152,8880151,8880150
+- 期望图片合并 菜单叫做路西德
 ---
 
-## 参考
+
+
+
+
+## 8. 参考
 
 - `GifUtil.wzImgDetailToGif` — origin 计算标准实现
-- `WzGifHandler.changeToDetail` — WZ 帧→WzImgDetail 转换
-- `regenerate_sprites.py --method wz` — 本地 WZ origin 精灵图生成
+- `WzGifHandler.changeToDetail` — WZ 帧 → WzImgDetail
+- `regenerate_sprites.py` — 本地精灵图生成（wz/ground/bbox 三种方法）
+- Hermes CLI：`hermes -z "msg" --cli --resume {sessionId}`
+
+
+
