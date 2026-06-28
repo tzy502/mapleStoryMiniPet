@@ -3,11 +3,37 @@
   "version": 2,
   "type": "sprite",
   "sprites": {
+    "stand": {
+      "file": "stand.png",
+      "frames": 16,
+      "frameWidth": 1398,
+      "frameHeight": 1086,
+      "originX": 743,
+      "originY": 672
+    },
+    "move": {
+      "file": "move.png",
+      "frames": 16,
+      "frameWidth": 1398,
+      "frameHeight": 1086,
+      "originX": 743,
+      "originY": 672
+    },
+    "attack1": {
+      "file": "attack1.png",
+      "frames": 16,
+      "frameWidth": 1398,
+      "frameHeight": 1086,
+      "originX": 743,
+      "originY": 672
+    },
     "skill1": {
       "file": "skill1.png",
       "frames": 32,
-      "frameWidth": 682,
-      "frameHeight": 701
+      "frameWidth": 1398,
+      "frameHeight": 1086,
+      "originX": 743,
+      "originY": 672
     }
   }
 }
