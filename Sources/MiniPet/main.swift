@@ -25,6 +25,12 @@ let statusBar = StatusBarController(petView: pv)
 pv.statusBar = statusBar
 
 let container = ContainerView(petView: pv, terminalView: tv)
+pv.balloonView = container.balloonView
+
+// Preload balloon tiles from cache or API
+if !container.balloonView.loadTilesFromCache(balloonId: 560) {
+    pv.loadBalloonTiles()
+}
 
 let win = PetPanel(contentRect: NSRect(x: 100, y: 100, width: petW, height: petH),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

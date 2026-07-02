@@ -32,6 +32,7 @@ class PetView: NSView {
     // References
     weak var terminalView: TerminalView?
     weak var statusBar: StatusBarController?
+    weak var balloonView: ChatBalloonView?
 
     // Available mob list
     var mobList: [MobInfo] = MobStore.load() {
@@ -369,6 +370,43 @@ class PetView: NSView {
         }
     }
 
+    // MARK: - Balloon
+
+    var balloonTiles: [String: Data] = [:]
+    var currentBalloonId: Int = 560 {
+        didSet {
+            if currentBalloonId != oldValue { loadBalloonTiles() }
+        }
+    }
+
+    func loadBalloonTiles() {
+        Task {
+            let api = APIClient()
+            if let result = await api.fetchBalloonTiles(balloonId: currentBalloonId) {
+                await MainActor.run {
+                    self.balloonTiles = result
+                    self.balloonView?.loadTileData(result)
+                    self.balloonView?.saveTilesToCache(balloonId: self.currentBalloonId)
+                }
+            }
+            // Fetch clr (text color) — fallback to white on failure
+            if let clr = await api.fetchBalloonClr(balloonId: currentBalloonId) {
+                let a = CGFloat((clr >> 24) & 0xFF) / 255.0
+                let r = CGFloat((clr >> 16) & 0xFF) / 255.0
+                let g = CGFloat((clr >> 8) & 0xFF) / 255.0
+                let b = CGFloat(clr & 0xFF) / 255.0
+                await MainActor.run {
+                    self.balloonView?.textColor = NSColor(calibratedRed: r, green: g, blue: b, alpha: a)
+                }
+            }
+        }
+    }
+
+    func showBalloon(text: String) {
+        guard let bv = balloonView, !balloonTiles.isEmpty else { return }
+        bv.show(text: text)
+    }
+
     // MARK: - Mouse Events
 
     override func mouseDown(with event: NSEvent) {
@@ -418,6 +456,17 @@ class PetView: NSView {
         menu.addItem(NSMenuItem(title: "居中", action: #selector(centerOriginOnScreen), keyEquivalent: "c"))
         let terminalOpen = !(terminalView?.isHidden ?? true)
         menu.addItem(NSMenuItem(title: terminalOpen ? "关闭终端" : "内嵌终端", action: #selector(toggleTerminal), keyEquivalent: "t"))
+
+        // Balloon submenu
+        let balloonItem = NSMenuItem(title: "聊天气泡", action: nil, keyEquivalent: "")
+        let balloonMenu = NSMenu()
+        balloonMenu.addItem(NSMenuItem(title: "测试气泡", action: #selector(testBalloon), keyEquivalent: ""))
+        balloonMenu.addItem(NSMenuItem(title: "隐藏气泡", action: #selector(hideBalloon), keyEquivalent: ""))
+        balloonMenu.addItem(.separator())
+        balloonMenu.addItem(NSMenuItem(title: "气球样式: \(currentBalloonId)", action: #selector(changeBalloonStyle), keyEquivalent: ""))
+        balloonItem.submenu = balloonMenu
+        menu.addItem(balloonItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MiniPet", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -576,6 +625,27 @@ class PetView: NSView {
                 let greeting = "这是从桌宠来的自动化话语 介绍一下你自己，告诉我现在的本地时间和当地天气，然后打个招呼"
                 hermes.send(greeting, silent: true, isGreeting: true)
             }
+        }
+    }
+
+    // MARK: - Balloon Actions
+
+    @objc func testBalloon() {
+        let text = "胶水现在正在广州南站\n今天是2026年7月2日\n我是一个来自冒险岛的桌面宠物\n请多关照～ (｀・ω・´)"
+        showBalloon(text: text)
+    }
+
+    @objc func hideBalloon() {
+        balloonView?.dismiss()
+    }
+
+    @objc func changeBalloonStyle() {
+        // Simple: cycle through nearby IDs
+        let ids = [5, 560, 3, 50, 100, 200, 300, 400]
+        if let idx = ids.firstIndex(of: currentBalloonId) {
+            currentBalloonId = ids[(idx + 1) % ids.count]
+        } else {
+            currentBalloonId = 560
         }
     }
 }

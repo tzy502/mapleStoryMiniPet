@@ -98,4 +98,76 @@ class APIClient {
 
         return cm.isCached
     }
+
+    // MARK: - Balloon Resources
+
+    func fetchBalloonList() async -> [Int] {
+        guard let base = await resolveBase() else { return [] }
+        guard let url = URL(string: "\(base)/api/wz/tree") else { return [] }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = ["path": "UI/ChatBalloon.img"]
+        req.httpBody = try? JSONEncoder().encode(body)
+
+        do {
+            let (data, _) = try await session.data(for: req)
+            guard let nodes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+            var ids: [Int] = []
+            for node in nodes {
+                if node["type"] as? String == "容器", let name = node["name"], let id = Int("\(name)") {
+                    ids.append(id)
+                }
+            }
+            return ids.sorted()
+        } catch {
+            logDebug("fetchBalloonList failed: \(error)")
+            return []
+        }
+    }
+
+    func fetchBalloonTileImage(balloonId: Int, tileName: String) async -> Data? {
+        guard let base = await resolveBase() else { return nil }
+        let path = "UI/ChatBalloon.img/\(balloonId)/\(tileName)"
+        guard let url = URL(string: "\(base)/api/wz/image?path=\(path)") else { return nil }
+        do {
+            let (data, _) = try await session.data(from: url)
+            return data
+        } catch {
+            logDebug("fetchBalloonTileImage(\(balloonId), \(tileName)) failed: \(error)")
+            return nil
+        }
+    }
+
+    func fetchBalloonTiles(balloonId: Int) async -> [String: Data]? {
+        let names = ["nw", "n", "head", "ne", "w", "c", "e", "sw", "s", "arrow", "se"]
+        var tiles: [String: Data] = [:]
+        for name in names {
+            if let data = await fetchBalloonTileImage(balloonId: balloonId, tileName: name) {
+                tiles[name] = data
+            }
+        }
+        guard tiles.count >= 10 else { return nil }
+        return tiles
+    }
+
+    func fetchBalloonClr(balloonId: Int) async -> Int? {
+        guard let base = await resolveBase() else { return nil }
+        let path = "UI/ChatBalloon.img/\(balloonId)/info/clr"
+        guard let url = URL(string: "\(base)/api/wz/property") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = ["path": path]
+        req.httpBody = try? JSONEncoder().encode(body)
+        do {
+            let (data, _) = try await session.data(for: req)
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let value = json["value"] as? Int else { return nil }
+            return value
+        } catch {
+            logDebug("fetchBalloonClr(\(balloonId)) failed: \(error)")
+            return nil
+        }
+    }
 }
