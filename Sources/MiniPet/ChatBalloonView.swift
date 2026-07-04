@@ -3,10 +3,11 @@ import AppKit
 // MARK: - Chat Balloon View (冒险岛聊天戒指风格)
 
 class ChatBalloonView: NSView {
-    private var tileData: [String: Data] = [:]
+    private(set) var tileData: [String: Data] = [:]
     private var balloonText: NSAttributedString?
     private var autoDismissWork: DispatchWorkItem?
 
+    var hasTiles: Bool { tileData.count >= 9 }
     var textColor: NSColor = .white
     var balloonId: Int = 560
 
@@ -88,6 +89,24 @@ class ChatBalloonView: NSView {
         return canvasSize(textContentSize: textSize)
     }
 
+    func arrowTipX() -> CGFloat {
+        guard let cImg = tileData["c"].flatMap({ loadCGImage(from: $0) }),
+              let wImg = tileData["w"].flatMap({ loadCGImage(from: $0) }),
+              let nwImg = tileData["nw"].flatMap({ loadCGImage(from: $0) }),
+              let swImg = tileData["sw"].flatMap({ loadCGImage(from: $0) }) else { return 0 }
+        let leftColW = max(CGFloat(nwImg.width), CGFloat(wImg.width), CGFloat(swImg.width))
+        let cW = CGFloat(cImg.width)
+        guard let text = balloonText else { return leftColW + cW / 2 }
+        let sz = canvasSize(textContentSize: textSize(for: text))
+        let rightColW = max(
+            CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0),
+            CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0),
+            CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0))
+        let midAreaW = sz.width - leftColW - rightColW
+        let midCount = Int(round(midAreaW / cW))
+        return leftColW + CGFloat(midCount / 2) * cW + cW / 2
+    }
+
     private func canvasSize(textContentSize: NSSize) -> NSSize {
         guard let cData = tileData["c"],
               let cImg = loadCGImage(from: cData) else { return .zero }
@@ -100,23 +119,31 @@ class ChatBalloonView: NSView {
         let cW = CGFloat(cImg.width)
         let cH = CGFloat(cImg.height)
 
+        let nwW = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let nH = CGFloat(tileData["n"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let nwH = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let neW = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let neH = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let wW = CGFloat(tileData["w"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let eW = CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let swW = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let swH = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let sH = CGFloat(tileData["s"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let seW = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let seH = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let arrH = CGFloat(tileData["arrow"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+
+        let leftColW = max(nwW, wW, swW)
+        let rightColW = max(neW, eW, seW)
         let minCols = 3
         let minRows = 2
         let cols = max(minCols, Int(ceil(contentW / cW)))
         let rows = max(minRows, Int(ceil(contentH / cH)))
 
-        let nw = loadCGImage(from: tileData["nw"]!)!
-        let nH = CGFloat(tileData["n"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let ne = loadCGImage(from: tileData["ne"]!)!
-        let sw = loadCGImage(from: tileData["sw"]!)!
-        let sH = CGFloat(tileData["s"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let se = loadCGImage(from: tileData["se"]!)!
-        let arrH = CGFloat(tileData["arrow"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-
-        let totalW = CGFloat(nw.width) + CGFloat(cols) * cW + CGFloat(ne.width)
-        let topH = nH
+        let totalW = leftColW + CGFloat(cols) * cW + rightColW
+        let topH = max(nwH, nH, neH)
         let midH = cH * CGFloat(rows)
-        let botH = max(CGFloat(sw.height), sH, CGFloat(se.height), arrH)
+        let botH = max(swH, sH, seH, arrH)
         let totalH = topH + midH + botH
 
         return NSSize(width: totalW, height: totalH)
@@ -129,28 +156,38 @@ class ChatBalloonView: NSView {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        // Measure text
         let textSize = self.textSize(for: attr)
         let canvasSize = self.canvasSize(textContentSize: textSize)
-        let cImg = loadCGImage(from: tileData["c"]!)!
+        guard let cData = tileData["c"], let cImg = loadCGImage(from: cData) else { return }
         let cW = CGFloat(cImg.width), cH = CGFloat(cImg.height)
 
-        let nwW = CGFloat(loadCGImage(from: tileData["nw"]!)!.width)
+        let nwW = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let nwH = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
         let nH = CGFloat(tileData["n"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let neW = CGFloat(loadCGImage(from: tileData["ne"]!)!.width)
+        let neW = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let neH = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let wW = CGFloat(tileData["w"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let swW = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let swH = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let sH = CGFloat(tileData["s"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let eW = CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let seW = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
+        let seH = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
         let arrH = CGFloat(tileData["arrow"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
 
-        let cols = Int(round((canvasSize.width - nwW - neW) / cW))
-        let topH = nH
-        let midH = cH * CGFloat(Int(round((canvasSize.height - topH - (CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.height } ?? 0) + arrH) / 2) / cH)))
+        let leftEdge = max(nwW, wW, swW)
+        let rightEdge = canvasSize.width - max(neW, eW, seW)
+        let midCount = Int(round((rightEdge - leftEdge) / cW))
+        let topH = max(nwH, nH, neH)
+        let botMax = max(swH, sH, seH, arrH)
+        let rowCount = max(2, Int(round((canvasSize.height - topH - botMax) / cH)))
+        let botH = canvasSize.height - topH - cH * CGFloat(rowCount)
 
-        // Draw nine-slice
         drawNineSlice(in: ctx, canvasSize: canvasSize)
 
-        // Draw text
-        let cRegionW = CGFloat(cols) * cW
-        let textX = nwW + (cRegionW - textSize.width) / 2
-        let textY = topH + (midH - textSize.height) / 2
+        let centerW = CGFloat(midCount) * cW
+        let textX = leftEdge + (centerW - textSize.width) / 2
+        let textY = botH + (cH * CGFloat(rowCount) - textSize.height) / 2
 
         let tc = NSTextContainer(size: NSSize(width: textSize.width, height: textSize.height))
         let ts = NSTextStorage(attributedString: attr)
@@ -175,60 +212,123 @@ class ChatBalloonView: NSView {
               let s = loadCGImage(from: sData), let arrow = loadCGImage(from: arrowData),
               let se = loadCGImage(from: seData) else { return }
 
-        let nwW = CGFloat(nw.width), nwH = CGFloat(nw.height)
-        let nW = CGFloat(n.width), nH = CGFloat(n.height)
-        let neW = CGFloat(ne.width), neH = CGFloat(ne.height)
-        let wW = CGFloat(w.width), wH = CGFloat(w.height)
         let cW = CGFloat(c.width), cH = CGFloat(c.height)
-        let eW = CGFloat(e.width), eH = CGFloat(e.height)
-        let swW = CGFloat(sw.width), swH = CGFloat(sw.height)
+        let nW = CGFloat(n.width), nH = CGFloat(n.height)
         let sW = CGFloat(s.width), sH = CGFloat(s.height)
-        let arrowW = CGFloat(arrow.width), arrowH = CGFloat(arrow.height)
-        let seW = CGFloat(se.width), seH = CGFloat(se.height)
 
-        let cw = canvasSize.width
-        let ch = canvasSize.height
+        // All tiles use the SAME grid: each mid-cell is cW wide.
+        // Left column tiles (NW, W, SW) right-align at leftColW.
+        // Right column tiles (NE, E, SE) left-align at rightStartX.
+        let maxLeftW = max(CGFloat(nw.width), CGFloat(w.width), CGFloat(sw.width))
+        let maxRightW = max(CGFloat(ne.width), CGFloat(e.width), CGFloat(se.width))
+        let midAreaW = canvasSize.width - maxLeftW - maxRightW
+        let midCount = Int(round(midAreaW / cW))
+        let actualMidW = CGFloat(midCount) * cW
 
-        let midCount = Int(round((cw - nwW - neW) / cW))
-        let rowCount = Int(round((ch - nH - max(swH, sH, seH, arrowH)) / cH))
-        guard midCount > 0, rowCount > 0 else { return }
+        let topRowH = max(CGFloat(nw.height), CGFloat(n.height), CGFloat(ne.height))
+        let botRowH = max(CGFloat(sw.height), CGFloat(s.height), CGFloat(se.height), CGFloat(arrow.height))
+        let rowCount = max(2, Int(round((canvasSize.height - topRowH - botRowH) / cH)))
+        let actualMidH = CGFloat(rowCount) * cH
 
-        let topH = nH
-        let midH = cH * CGFloat(rowCount)
-        let botH = ch - topH - midH
+        let midStartX = maxLeftW
+        let rightStartX = maxLeftW + actualMidW
 
-        // Top row: NW + N×midCount + NE
-        ctx.draw(nw, in: CGRect(x: 0, y: ch - nwH, width: nwW, height: nwH))
+        // --- Top row: bottom-aligned at ch ---
+        let topY_bottom = canvasSize.height  // bottom edge of top row = canvas height
+        ctx.draw(nw, in: CGRect(x: maxLeftW - CGFloat(nw.width), y: topY_bottom - CGFloat(nw.height),
+                                width: CGFloat(nw.width), height: CGFloat(nw.height)))
         for i in 0..<midCount {
-            ctx.draw(n, in: CGRect(x: nwW + CGFloat(i) * nW, y: ch - nH, width: nW, height: nH))
+            let x = midStartX + CGFloat(i) * cW
+            ctx.draw(n, in: CGRect(x: x, y: topY_bottom - nH, width: nW, height: nH))
         }
-        ctx.draw(ne, in: CGRect(x: cw - neW, y: ch - neH, width: neW, height: neH))
+        ctx.draw(ne, in: CGRect(x: rightStartX, y: topY_bottom - CGFloat(ne.height),
+                                width: CGFloat(ne.width), height: CGFloat(ne.height)))
 
-        // Middle rows: W + C×midCount + E (×rowCount)
+        // head tile (optional) — replaces N at middle column
+        if let headData = tileData["head"], let head = loadCGImage(from: headData) {
+            let headCol = midCount / 2
+            let hx = midStartX + CGFloat(headCol) * cW
+            let hw = CGFloat(head.width), hh = CGFloat(head.height)
+            ctx.draw(head, in: CGRect(x: hx, y: topY_bottom - hh, width: hw, height: hh))
+        }
+
+        // --- Middle rows ---
         for r in 0..<rowCount {
-            let y = topH + CGFloat(r) * cH
-            ctx.draw(w, in: CGRect(x: 0, y: y, width: wW, height: wH))
+            let y = botRowH + CGFloat(r) * cH
+            // Left column tile: right-aligned
+            ctx.draw(w, in: CGRect(x: maxLeftW - CGFloat(w.width), y: y,
+                                   width: CGFloat(w.width), height: CGFloat(w.height)))
             for i in 0..<midCount {
-                ctx.draw(c, in: CGRect(x: nwW + CGFloat(i) * cW, y: y, width: cW, height: cH))
+                ctx.draw(c, in: CGRect(x: midStartX + CGFloat(i) * cW, y: y, width: cW, height: cH))
             }
-            ctx.draw(e, in: CGRect(x: cw - eW, y: y, width: eW, height: eH))
+            ctx.draw(e, in: CGRect(x: rightStartX, y: y,
+                                   width: CGFloat(e.width), height: CGFloat(e.height)))
         }
 
-        // Bottom row: SW + S×midCount + SE, arrow replaces mid S
-        let yBot = topH + midH
-        ctx.draw(sw, in: CGRect(x: 0, y: yBot, width: swW, height: swH))
+        // --- Bottom row: top-aligned at y=0 ---
+        ctx.draw(sw, in: CGRect(x: maxLeftW - CGFloat(sw.width), y: 0,
+                                width: CGFloat(sw.width), height: CGFloat(sw.height)))
         let midCol = midCount / 2
         for i in 0..<midCount {
-            let x = swW + CGFloat(i) * sW
+            let x = midStartX + CGFloat(i) * cW
             if i == midCol {
-                let ax = x + (sW - arrowW) / 2
-                let ay = yBot + botH - arrowH
-                ctx.draw(arrow, in: CGRect(x: ax, y: ay, width: arrowW, height: arrowH))
+                let aw = CGFloat(arrow.width), ah = CGFloat(arrow.height)
+                let ax = x + (cW - aw) / 2
+                ctx.draw(arrow, in: CGRect(x: ax, y: 0, width: aw, height: ah))
             } else {
-                ctx.draw(s, in: CGRect(x: x, y: yBot, width: sW, height: sH))
+                ctx.draw(s, in: CGRect(x: x, y: 0, width: sW, height: sH))
             }
         }
-        ctx.draw(se, in: CGRect(x: cw - seW, y: yBot, width: seW, height: seH))
+        ctx.draw(se, in: CGRect(x: rightStartX, y: 0,
+                                width: CGFloat(se.width), height: CGFloat(se.height)))
+
+        // --- Debug borders ---
+        ctx.setLineWidth(1.0)
+
+        ctx.setStrokeColor(NSColor.red.cgColor)
+        ctx.stroke(CGRect(x: maxLeftW - CGFloat(nw.width), y: topY_bottom - CGFloat(nw.height),
+                          width: CGFloat(nw.width), height: CGFloat(nw.height)))
+        for i in 0..<midCount {
+            ctx.stroke(CGRect(x: midStartX + CGFloat(i) * cW, y: topY_bottom - nH, width: nW, height: nH))
+        }
+        ctx.stroke(CGRect(x: rightStartX, y: topY_bottom - CGFloat(ne.height),
+                          width: CGFloat(ne.width), height: CGFloat(ne.height)))
+
+        ctx.setStrokeColor(NSColor.blue.cgColor)
+        for r in 0..<rowCount {
+            let y = botRowH + CGFloat(r) * cH
+            ctx.stroke(CGRect(x: maxLeftW - CGFloat(w.width), y: y,
+                              width: CGFloat(w.width), height: CGFloat(w.height)))
+            for i in 0..<midCount {
+                ctx.stroke(CGRect(x: midStartX + CGFloat(i) * cW, y: y, width: cW, height: cH))
+            }
+            ctx.stroke(CGRect(x: rightStartX, y: y,
+                              width: CGFloat(e.width), height: CGFloat(e.height)))
+        }
+
+        ctx.setStrokeColor(NSColor.green.cgColor)
+        ctx.stroke(CGRect(x: maxLeftW - CGFloat(sw.width), y: 0,
+                          width: CGFloat(sw.width), height: CGFloat(sw.height)))
+        for i in 0..<midCount {
+            let x = midStartX + CGFloat(i) * cW
+            if i == midCol {
+                let aw = CGFloat(arrow.width), ah = CGFloat(arrow.height)
+                let ax = x + (cW - aw) / 2
+                ctx.stroke(CGRect(x: ax, y: 0, width: aw, height: ah))
+            } else {
+                ctx.stroke(CGRect(x: x, y: 0, width: sW, height: sH))
+            }
+        }
+        ctx.stroke(CGRect(x: rightStartX, y: 0,
+                          width: CGFloat(se.width), height: CGFloat(se.height)))
+
+        ctx.setStrokeColor(NSColor.yellow.cgColor)
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: 0, y: botRowH))
+        ctx.addLine(to: CGPoint(x: canvasSize.width, y: botRowH))
+        ctx.move(to: CGPoint(x: 0, y: canvasSize.height - topRowH))
+        ctx.addLine(to: CGPoint(x: canvasSize.width, y: canvasSize.height - topRowH))
+        ctx.strokePath()
     }
 
     // MARK: - Tile Loading
@@ -248,7 +348,7 @@ class ChatBalloonView: NSView {
                 loaded[name] = data
             }
         }
-        if loaded.count >= 10 {
+        if loaded.count >= 9 {
             tileData = loaded
             return true
         }

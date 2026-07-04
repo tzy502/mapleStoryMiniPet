@@ -10,9 +10,9 @@ class APIClient {
         return c
     }())
 
-    private var resolvedBase: String?
+    var resolvedBase: String?
 
-    private func resolveBase() async -> String? {
+    func resolveBase() async -> String? {
         if let cached = resolvedBase { return cached }
         for base in apiBases {
             guard let url = URL(string: "\(base)/api/health") else { continue }
@@ -147,7 +147,7 @@ class APIClient {
                 tiles[name] = data
             }
         }
-        guard tiles.count >= 10 else { return nil }
+        guard tiles.count >= 9 else { return nil }
         return tiles
     }
 
