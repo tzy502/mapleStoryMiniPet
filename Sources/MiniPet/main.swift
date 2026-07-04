@@ -16,6 +16,8 @@ let pv = PetView(frame: NSRect(x: 0, y: 0, width: petW, height: petH))
 pv.wantsLayer = true
 pv.layer?.contentsGravity = .topLeft
 pv.layer?.addSublayer(pv.debugDot)
+pv.layer?.borderWidth = 1
+pv.layer?.borderColor = NSColor.magenta.cgColor
 
 let tv = TerminalView(frame: NSRect(x: 0, y: 0, width: petW, height: termH))
 pv.terminalView = tv
@@ -26,11 +28,7 @@ pv.statusBar = statusBar
 
 let container = ContainerView(petView: pv, terminalView: tv)
 pv.balloonView = container.balloonView
-
-// Preload balloon tiles from cache or API
-if !container.balloonView.loadTilesFromCache(balloonId: 560) {
-    pv.loadBalloonTiles()
-}
+pv.loadBalloonTiles()
 
 let win = PetPanel(contentRect: NSRect(x: 100, y: 100, width: petW, height: petH),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

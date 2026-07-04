@@ -372,7 +372,6 @@ class PetView: NSView {
 
     // MARK: - Balloon
 
-    var balloonTiles: [String: Data] = [:]
     var currentBalloonId: Int = 560 {
         didSet {
             if currentBalloonId != oldValue { loadBalloonTiles() }
@@ -380,17 +379,18 @@ class PetView: NSView {
     }
 
     func loadBalloonTiles() {
+        let bid = currentBalloonId
+        if balloonView?.loadTilesFromCache(balloonId: bid) == true { return }
+        // Cache miss — fetch from API async
         Task {
             let api = APIClient()
-            if let result = await api.fetchBalloonTiles(balloonId: currentBalloonId) {
+            if let result = await api.fetchBalloonTiles(balloonId: bid) {
                 await MainActor.run {
-                    self.balloonTiles = result
                     self.balloonView?.loadTileData(result)
-                    self.balloonView?.saveTilesToCache(balloonId: self.currentBalloonId)
+                    self.balloonView?.saveTilesToCache(balloonId: bid)
                 }
             }
-            // Fetch clr (text color) — fallback to white on failure
-            if let clr = await api.fetchBalloonClr(balloonId: currentBalloonId) {
+            if let clr = await api.fetchBalloonClr(balloonId: bid) {
                 let a = CGFloat((clr >> 24) & 0xFF) / 255.0
                 let r = CGFloat((clr >> 16) & 0xFF) / 255.0
                 let g = CGFloat((clr >> 8) & 0xFF) / 255.0
@@ -403,7 +403,7 @@ class PetView: NSView {
     }
 
     func showBalloon(text: String) {
-        guard let bv = balloonView, !balloonTiles.isEmpty else { return }
+        guard let bv = balloonView, bv.hasTiles else { return }
         bv.show(text: text)
     }
 
@@ -631,7 +631,7 @@ class PetView: NSView {
     // MARK: - Balloon Actions
 
     @objc func testBalloon() {
-        let text = "胶水现在正在广州南站\n今天是2026年7月2日\n我是一个来自冒险岛的桌面宠物\n请多关照～ (｀・ω・´)"
+        let text = "倒到妈妈牛逼"
         showBalloon(text: text)
     }
 
