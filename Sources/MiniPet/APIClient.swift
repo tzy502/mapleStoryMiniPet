@@ -67,55 +67,11 @@ class APIClient {
         return nil
     }
 
-    func fetchNpcName(npcId: String) async -> String? {
-        guard let base = await resolveBase() else { return nil }
-        guard let url = URL(string: "\(base)/api/wz/data/query/string") else { return nil }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = ["type": "npc", "code": npcId]
-        req.httpBody = try? JSONEncoder().encode(body)
-
-        do {
-            let (data, _) = try await session.data(for: req)
-            if let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-               let name = list.first?["name"] as? String {
-                return name
-            }
-        } catch {
-            logDebug("fetchNpcName failed: \(error)")
-        }
-        return nil
-    }
-
-    func fetchNpcList() async -> [MobInfo] {
-        guard let base = await resolveBase() else { return [] }
-        guard let url = URL(string: "\(base)/api/wz/data/query/string") else { return [] }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = ["type": "npc", "name": ""]
-        req.httpBody = try? JSONEncoder().encode(body)
-
-        do {
-            let (data, _) = try await session.data(for: req)
-            guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-            return list.compactMap { dict in
-                guard let code = dict["code"] as? String ?? dict["id"] as? String else { return nil }
-                let name = dict["name"] as? String ?? ""
-                return MobInfo(code: code, name: name, type: "npc")
-            }
-        } catch {
-            logDebug("fetchNpcList failed: \(error)")
-            return []
-        }
-    }
-
-    func fetchAndGenerateSprites(mobId: String, type: String = "mob") async -> Bool {
-        let cm = CacheManager(mobId: mobId, entityType: type)
+    func fetchAndGenerateSprites(mobId: String) async -> Bool {
+        let cm = CacheManager(mobId: mobId)
 
         if cm.isCached {
-            logDebug("Sprites already cached for \(type) \(mobId)")
+            logDebug("Sprites already cached for mob \(mobId)")
             return true
         }
 
@@ -127,7 +83,7 @@ class APIClient {
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [scriptPath, mobId, "--type", type]
+        task.arguments = [scriptPath, mobId]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
 
@@ -195,60 +151,10 @@ class APIClient {
         return tiles
     }
 
-    // MARK: - Balloon Origins & Properties
-
-    /// Fetch origin data for all balloon tiles by parsing the XML endpoint.
-    /// Uses POST /api/wz/xml which returns XML with embedded <vector name="origin" value="x, y"/>.
-    func fetchBalloonOrigins(balloonId: Int) async -> [String: CGPoint] {
-        let names = ["nw", "n", "head", "ne", "w", "c", "e", "sw", "s", "arrow", "se"]
-        var origins: [String: CGPoint] = [:]
-        for name in names {
-            if let pt = await fetchPieceOrigin(balloonId: balloonId, piece: name) {
-                origins[name] = pt
-            }
-        }
-        return origins
-    }
-
-    /// Fetch a single tile piece's origin via the XML endpoint.
-    private func fetchPieceOrigin(balloonId: Int, piece: String) async -> CGPoint? {
-        guard let base = await resolveBase() else { return nil }
-        let path = "UI/ChatBalloon.img/\(balloonId)/\(piece)"
-        guard let url = URL(string: "\(base)/api/wz/xml") else { return nil }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = ["path": path]
-        req.httpBody = try? JSONEncoder().encode(body)
-        do {
-            let (data, _) = try await session.data(for: req)
-            // API returns JSON: {"name":"nw","path":"...","xml":"<?xml ...>"}
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let xml = json["xml"] as? String else { return nil }
-            // Parse: <vector name="origin" value="x, y"/>
-            let vecPattern = try NSRegularExpression(pattern: #"<vector name="origin" value="(\d+),\s*(\d+)"/>"#)
-            let nsRange = NSRange(xml.startIndex..<xml.endIndex, in: xml)
-            if let match = vecPattern.firstMatch(in: xml, range: nsRange) {
-                if let xRange = Range(match.range(at: 1), in: xml),
-                   let yRange = Range(match.range(at: 2), in: xml) {
-                    let x = CGFloat(Int(xml[xRange]) ?? 0)
-                    let y = CGFloat(Int(xml[yRange]) ?? 0)
-                    return CGPoint(x: x, y: y)
-                }
-            }
-            return nil
-        } catch {
-            logDebug("fetchPieceOrigin(\(balloonId), \(piece)) failed: \(error)")
-            return nil
-        }
-    }
-
-    /// Fetch balloon clr value from the parent balloon node's XML (MapleSalon2 getWzClrColor).
-    /// The /api/wz/xml endpoint returns the full balloon node including clr as a property.
     func fetchBalloonClr(balloonId: Int) async -> Int? {
         guard let base = await resolveBase() else { return nil }
-        let path = "UI/ChatBalloon.img/\(balloonId)"
-        guard let url = URL(string: "\(base)/api/wz/xml") else { return nil }
+        let path = "UI/ChatBalloon.img/\(balloonId)/info/clr"
+        guard let url = URL(string: "\(base)/api/wz/property") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -256,16 +162,9 @@ class APIClient {
         req.httpBody = try? JSONEncoder().encode(body)
         do {
             let (data, _) = try await session.data(for: req)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let xml = json["xml"] as? String else { return nil }
-            // Parse: <wznumberproperty name="clr" value="-1"/>
-            let intPattern = try NSRegularExpression(pattern: #"<wznumberproperty name="clr" value="(-?\d+)"/>"#)
-            let nsRange = NSRange(xml.startIndex..<xml.endIndex, in: xml)
-            if let match = intPattern.firstMatch(in: xml, range: nsRange),
-               let valRange = Range(match.range(at: 1), in: xml) {
-                return Int(xml[valRange])
-            }
-            return nil
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let value = json["value"] as? Int else { return nil }
+            return value
         } catch {
             logDebug("fetchBalloonClr(\(balloonId)) failed: \(error)")
             return nil

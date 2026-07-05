@@ -4,12 +4,11 @@ import Foundation
 
 class CacheManager {
     let mobId: String
-    let entityType: String  // "mob" or "npc"
-    var sanitizedId: String { "\(entityType)_\(mobId.replacingOccurrences(of: ",", with: "_"))" }
+    var sanitizedId: String { mobId.replacingOccurrences(of: ",", with: "_") }
     var dir: String { "\(cacheRoot)/\(sanitizedId)" }
     var configPath: String { "\(dir)/pet_config.json" }
 
-    init(mobId: String, entityType: String = "mob") { self.mobId = mobId; self.entityType = entityType }
+    init(mobId: String) { self.mobId = mobId }
 
     var isCached: Bool {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),

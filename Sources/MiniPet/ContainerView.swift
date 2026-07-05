@@ -28,11 +28,6 @@ class ContainerView: NSView {
         termH = terminalView.isHidden ? 0 : terminalView.bounds.height
         let ballH: CGFloat = balloonView.isHidden ? 0 : balloonView.frame.height
 
-        // 如果存在背景视图，让背景视图填满容器
-        if let bgView = backgroundView {
-            bgView.frame = bounds
-        }
-
         // Resize container to fit balloon above pet
         let totalH = petH + termH + ballH
         let totalW = max(petView.frame.width, balloonView.frame.width)

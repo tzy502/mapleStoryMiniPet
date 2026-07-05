@@ -24,7 +24,6 @@ struct MobInfo: Codable {
     let code: String
     var name: String
     var defaultAnim: String = "stand"
-    var type: String = "mob"  // "mob" or "npc"
 }
 
 // MARK: - Mob Store (persistent config)
@@ -42,14 +41,13 @@ class MobStore {
             guard let code = dict["code"] as? String else { return nil }
             let name = dict["name"] as? String ?? code
             let defaultAnim = dict["defaultAnim"] as? String ?? "stand"
-            let type = dict["type"] as? String ?? "mob"
-            return MobInfo(code: code, name: name, defaultAnim: defaultAnim, type: type)
+            return MobInfo(code: code, name: name, defaultAnim: defaultAnim)
         }
     }
 
     static func save(_ mobs: [MobInfo]) {
         let arr: [[String: Any]] = mobs.map {
-            ["code": $0.code, "name": $0.name, "defaultAnim": $0.defaultAnim, "type": $0.type]
+            ["code": $0.code, "name": $0.name, "defaultAnim": $0.defaultAnim]
         }
         let json: [String: Any] = ["mobs": arr]
         if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
