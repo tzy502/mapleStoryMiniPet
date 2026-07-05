@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=780, initial-scale=1.0">
+<title>Hermes AI 关联 - MapleStory MiniPet</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: rgba(30, 30, 40, 0.85);
+    --bg-card: rgba(44, 44, 54, 0.9);
+    --bg-card-hover: rgba(54, 54, 66, 0.95);
+    --bg-input: rgba(60, 60, 72, 0.7);
+    --border: rgba(100, 100, 120, 0.25);
+    --border-focus: rgba(94, 156, 255, 0.5);
+    --text-primary: #e8e8ed;
+    --text-secondary: #98989e;
+    --text-tertiary: #6c6c74;
+    --accent: #5E9CFF;
+    --accent-hover: #4a8ae6;
+    --green: #34C759;
+    --yellow: #FF9F0A;
+    --red: #FF453A;
+    --orange: #FF9500;
+    --font: -apple-system, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow: 0 8px 32px rgba(0,0,0,0.4);
+    --transition: 0.2s ease;
+  }
+
+  html, body {
+    width: 780px; height: 620px; overflow: hidden;
+    background: transparent;
+    font-family: var(--font);
+    font-size: 13px;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* === Panel Frame === */
+  .panel {
+    width: 100%; height: 100%;
+    background: var(--bg-primary);
+    backdrop-filter: blur(32px) saturate(1.3);
+    -webkit-backdrop-filter: blur(32px) saturate(1.3);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* === Titlebar === */
+  .titlebar {
+    display: flex; align-items: center;
+    height: 38px; padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .titlebar-icon { font-size: 14px; margin-right: 8px; }
+  .titlebar-title {
+    font-size: 12.5px; font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--text-primary);
+    flex: 1;
+  }
+  .titlebar-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: none; background: transparent;
+    color: var(--text-secondary); transition: var(--transition);
+    font-size: 14px;
+  }
+  .titlebar-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+
+  /* === Scroll Content === */
+  .content {
+    flex: 1; overflow-y: auto; padding: 14px 16px 16px;
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent;
+  }
+  .content::-webkit-scrollbar { width: 5px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  .content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+  /* === Card === */
+  .card {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    transition: var(--transition);
+  }
+  .card:last-child { margin-bottom: 0; }
+
+  .card-header {
+    display: flex; align-items: center;
+    margin-bottom: 12px;
+    font-size: 13px; font-weight: 600;
+    color: var(--text-primary);
+  }
+  .card-header .badge {
+    margin-left: 8px; font-size: 10px; font-weight: 500;
+    padding: 1px 7px; border-radius: 9px;
+    background: rgba(94,156,255,0.15); color: var(--accent);
+  }
+  .card-header .spacer { flex: 1; }
+  .card-header .btn-add {
+    font-size: 11px; font-weight: 500;
+    padding: 4px 10px; border-radius: 5px;
+    background: var(--accent); color: #fff;
+    border: none; cursor: pointer;
+    transition: var(--transition);
+  }
+  .card-header .btn-add:hover { background: var(--accent-hover); }
+
+  /* === Status Panel (Area 1) === */
+  .status-panel { display: flex; gap: 16px; align-items: center; }
+
+  .status-dot-wrapper {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    flex-shrink: 0;
+  }
+  .status-dot {
+    width: 36px; height: 36px; border-radius: 50%;
+    position: relative; flex-shrink: 0;
+  }
+  .status-dot.green { background: var(--green); }
+  .status-dot.yellow { background: var(--yellow); }
+  .status-dot.red { background: var(--red); }
+
+  /* breathing animation */
+  .status-dot.breathing {
+    animation: breathe 2.4s ease-in-out infinite;
+    box-shadow: 0 0 12px rgba(52,199,89,0.3);
+  }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 10px rgba(52,199,89,0.25); }
+    50% { transform: scale(1.12); opacity: 0.85; box-shadow: 0 0 20px rgba(52,199,89,0.5); }
+  }
+
+  .status-dot.pulsing {
+    animation: pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 12px rgba(255,159,10,0.4);
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    25% { transform: scale(1.1); opacity: 0.85; }
+    50% { transform: scale(1.15); opacity: 0.7; }
+    75% { transform: scale(1.1); opacity: 0.85; }
+  }
+
+  .status-dot-inner {
+    position: absolute; inset: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  .status-info { flex: 1; min-width: 0; }
+  .status-info-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .status-label { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+  .status-duration { font-size: 11px; color: var(--text-tertiary); }
+  .status-model { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; }
+  .status-model-name { font-size: 11px; color: var(--text-secondary); }
+  .provider-tag {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 4px;
+    background: rgba(94,156,255,0.12); color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+  .status-activity { margin-top: 5px; display: flex; align-items: center; gap: 8px; }
+  .activity-label { font-size: 10px; color: var(--text-tertiary); flex-shrink: 0; }
+  .activity-bar-wrap { flex: 1; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+  .activity-bar {
+    height: 100%; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), #7BB3FF);
+    width: 80%; transition: width 0.6s ease;
+  }
+  .activity-pct { font-size: 10px; color: var(--text-secondary); flex-shrink: 0; width: 28px; text-align: right; }
+
+  .status-recent {
+    margin-top: 4px;
+    font-size: 10.5px; color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .status-actions { flex-shrink: 0; display: flex; align-items: center; }
+  .btn-connect {
+    font-size: 11px; font-weight: 500;
+    padding: 6px 14px; border-radius: 6px;
+    background: rgba(255,255,255,0.07); color: var(--text-secondary);
+    border: 1px solid var(--border); cursor: pointer;
+    transition: var(--transition);
+  }
+  .btn-connect:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); border-color: rgba(255,255,255,0.15); }
+  .btn-connect.active { background: rgba(255,69,58,0.12); color: var(--red); border-color: rgba(255,69,58,0.25); }
+  .btn-connect.active:hover { background: rgba(255,69,58,0.2); }
+
+  /* === Table (Area 2) === */
+  .rules-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .rules-table thead th {
+    text-align: left; padding: 6px 8px;
+    font-size: 10.5px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .rules-table tbody tr {
+    border-bottom: 1px solid rgba(100,100,120,0.1);
+    transition: var(--transition);
+  }
+  .rules-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .rules-table tbody tr:hover { background: rgba(94,156,255,0.05); }
+  .rules-table tbody td { padding: 6px 8px; vertical-align: middle; }
+
+  .rules-table select {
+    background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 5px; padding: 4px 6px; font-size: 11px;
+    outline: none; cursor: pointer; width: 100%;
+    transition: var(--transition);
+    -webkit-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 8 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L4 4L7 1' stroke='%2398989e' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center; padding-right: 20px;
+  }
+  .rules-table select:hover { border-color: rgba(255,255,255,0.15); }
+  .rules-table select:focus { border-color: var(--border-focus); }
+
+  .rules-table input[type="text"] {
+    background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 5px; padding: 4px 8px; font-size: 11px;
+    outline: none; width: 100%; transition: var(--transition);
+  }
+  .rules-table input[type="text"]:hover { border-color: rgba(255,255,255,0.15); }
+  .rules-table input[type="text"]:focus { border-color: var(--border-focus); }
+
+  .cell-actions { display: flex; gap: 4px; justify-content: center; }
+  .cell-actions button {
+    width: 24px; height: 24px; border-radius: 4px;
+    border: none; background: transparent;
+    cursor: pointer; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-tertiary); transition: var(--transition);
+    opacity: 0.3;
+  }
+  tr:hover .cell-actions button { opacity: 0.7; }
+  .cell-actions button:hover { background: rgba(255,255,255,0.08); opacity: 1 !important; color: var(--text-primary); }
+  .cell-actions .btn-del:hover { background: rgba(255,69,58,0.15); color: var(--red); }
+
+  /* === NSSwitch === */
+  .switch-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .switch-label { font-size: 12px; color: var(--text-secondary); flex: 1; }
+  .switch {
+    position: relative; display: inline-block;
+    width: 36px; height: 20px; flex-shrink: 0;
+    cursor: pointer;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch-slider {
+    position: absolute; inset: 0;
+    background: rgba(100,100,120,0.35);
+    border-radius: 10px; transition: var(--transition);
+    border: 1px solid var(--border);
+  }
+  .switch-slider::before {
+    content: ''; position: absolute;
+    width: 14px; height: 14px; left: 2px; bottom: 2px;
+    background: #fff;
+    border-radius: 50%; transition: var(--transition);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .switch input:checked + .switch-slider { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + .switch-slider::before { transform: translateX(16px); }
+
+  /* === Chat Bubbles (Area 3) === */
+  .chat-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .chat-bubble-wrap {
+    display: flex; flex-direction: column; gap: 2px;
+    max-width: 85%;
+  }
+  .chat-bubble-wrap.user { align-self: flex-end; align-items: flex-end; }
+  .chat-bubble-wrap.assistant { align-self: flex-start; align-items: flex-start; }
+
+  .chat-meta { font-size: 10px; color: var(--text-tertiary); padding: 0 4px; }
+  .chat-bubble {
+    padding: 7px 12px; border-radius: 12px;
+    font-size: 12px; line-height: 1.45;
+    word-break: break-word;
+  }
+  .chat-bubble-wrap.user .chat-bubble {
+    background: var(--accent); color: #fff;
+    border-bottom-right-radius: 3px;
+  }
+  .chat-bubble-wrap.assistant .chat-bubble {
+    background: rgba(60,60,75,0.8); color: var(--text-primary);
+    border-bottom-left-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .perception-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    background: rgba(94,156,255,0.06);
+    border-radius: 6px;
+    border: 1px solid rgba(94,156,255,0.1);
+    margin-bottom: 10px;
+  }
+  .perception-icon { font-size: 14px; }
+  .perception-text { font-size: 11px; color: var(--text-secondary); flex: 1; }
+  .perception-confidence { font-size: 11px; color: var(--yellow); letter-spacing: 1px; }
+
+  .btn-trigger {
+    font-size: 11px; font-weight: 500;
+    padding: 6px 14px; border-radius: 6px;
+    background: rgba(94,156,255,0.1); color: var(--accent);
+    border: 1px solid rgba(94,156,255,0.2); cursor: pointer;
+    transition: var(--transition);
+  }
+  .btn-trigger:hover { background: rgba(94,156,255,0.18); border-color: rgba(94,156,255,0.3); }
+
+  /* === Trigger Popover === */
+  .trigger-overlay {
+    display: none; position: fixed; inset: 0;
+    z-index: 100; background: rgba(0,0,0,0.3);
+    align-items: center; justify-content: center;
+  }
+  .trigger-overlay.show { display: flex; }
+  .trigger-popover {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+    min-width: 200px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .trigger-popover h4 { font-size: 12px; margin-bottom: 10px; color: var(--text-secondary); }
+  .trigger-option {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 6px;
+    cursor: pointer; transition: var(--transition); font-size: 12px;
+  }
+  .trigger-option:hover { background: rgba(94,156,255,0.1); }
+  .trigger-option.selected { background: rgba(94,156,255,0.15); color: var(--accent); font-weight: 500; }
+
+  /* === Timeline (Area 4) === */
+  .timeline-wrap {
+    max-height: 170px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent;
+  }
+  .timeline-wrap::-webkit-scrollbar { width: 4px; }
+  .timeline-wrap::-webkit-scrollbar-track { background: transparent; }
+  .timeline-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+  .timeline { list-style: none; padding: 0; margin: 0; position: relative; }
+  .timeline::before {
+    content: ''; position: absolute;
+    left: 14px; top: 10px; bottom: 10px;
+    width: 1px; background: rgba(100,100,120,0.2);
+  }
+  .timeline-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 0; position: relative;
+  }
+  .timeline-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0; position: relative; z-index: 1;
+    margin-left: 10px;
+    border: 1.5px solid var(--bg-card);
+  }
+  .timeline-dot.green { background: var(--green); }
+  .timeline-dot.yellow { background: var(--yellow); }
+  .timeline-dot.red { background: var(--red); }
+  .timeline-dot.blue { background: var(--accent); }
+
+  .timeline-time { font-size: 10px; color: var(--text-tertiary); width: 56px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .timeline-status { font-size: 12px; width: 20px; flex-shrink: 0; text-align: center; }
+  .timeline-event { font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* === Edit row inline === */
+  .edit-row-overlay {
+    display: none; position: fixed; inset: 0;
+    z-index: 200; background: rgba(0,0,0,0.4);
+    align-items: center; justify-content: center;
+  }
+  .edit-row-overlay.show { display: flex; }
+  .edit-dialog {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px;
+    min-width: 340px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .edit-dialog h4 { font-size: 13px; margin-bottom: 12px; }
+  .edit-field { margin-bottom: 10px; }
+  .edit-field label { display: block; font-size: 11px; color: var(--text-tertiary); margin-bottom: 3px; }
+  .edit-field select, .edit-field input {
+    width: 100%; padding: 5px 8px; border-radius: 5px;
+    background: var(--bg-input); color: var(--text-primary);
+    border: 1px solid var(--border); font-size: 12px; outline: none;
+  }
+  .edit-field select:focus, .edit-field input:focus { border-color: var(--border-focus); }
+  .edit-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .edit-dialog-actions button {
+    padding: 5px 14px; border-radius: 5px; font-size: 11px;
+    font-weight: 500; cursor: pointer; border: none; transition: var(--transition);
+  }
+  .edit-dialog-actions .btn-cancel { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+  .edit-dialog-actions .btn-cancel:hover { background: rgba(255,255,255,0.1); }
+  .edit-dialog-actions .btn-save { background: var(--accent); color: #fff; }
+  .edit-dialog-actions .btn-save:hover { background: var(--accent-hover); }
+
+  /* === Add rule dialog reuses edit-dialog styles === */
+
+  /* MISC */
+  .text-muted { color: var(--text-tertiary); }
+  .flex { display: flex; }
+  .gap-8 { gap: 8px; }
+  .items-center { align-items: center; }
+</style>
+</head>
+<body>
+<div class="panel" id="app">
+  <!-- Title Bar -->
+  <div class="titlebar">
+    <span class="titlebar-icon">🔗</span>
+    <span class="titlebar-title">Hermes AI 关联</span>
+    <button class="titlebar-btn" onclick="window.close()" title="关闭">✕</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content" id="panelContent">
+    <!-- ======== Area 1: Status ======== -->
+    <div class="card" id="areaStatus">
+      <div class="card-header">
+        <span>📡 Hermes 状态</span>
+        <span class="badge" id="statusBadge">运行中</span>
+      </div>
+      <div class="status-panel">
+        <div class="status-dot-wrapper">
+          <div class="status-dot green breathing" id="statusDot">
+            <div class="status-dot-inner"></div>
+          </div>
+        </div>
+        <div class="status-info">
+          <div class="status-info-row">
+            <span class="status-label" id="statusLabelText">运行中</span>
+            <span class="status-duration" id="statusDuration">已运行 2h 34m</span>
+          </div>
+          <div class="status-model">
+            <span class="status-model-name">当前模型: gpt-4o</span>
+            <span class="provider-tag">OpenAI</span>
+          </div>
+          <div class="status-activity">
+            <span class="activity-label">对话活动度</span>
+            <div class="activity-bar-wrap">
+              <div class="activity-bar" id="activityBar" style="width:80%"></div>
+            </div>
+            <span class="activity-pct" id="activityPct">80%</span>
+          </div>
+          <div class="status-recent">
+            <span>最近活动: <span id="recentActivity">12:34:56 — 用户询问纸娃娃搭配</span></span>
+          </div>
+        </div>
+        <div class="status-actions">
+          <button class="btn-connect active" id="btnToggleConnect">断开</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== Area 2: Pet Reaction Rules ======== -->
+    <div class="card" id="areaRules">
+      <div class="card-header">
+        <span>🐾 宠物反应规则</span>
+        <span class="spacer"></span>
+        <button class="btn-add" id="btnAddRule">+ 添加规则</button>
+      </div>
+
+      <table class="rules-table" id="rulesTable">
+        <thead>
+          <tr>
+            <th style="width:22%">AI 状态</th>
+            <th style="width:22%">触发动画</th>
+            <th style="width:36%">气泡内容</th>
+            <th style="width:20%">操作</th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody">
+          <!-- rows injected by JS -->
+        </tbody>
+      </table>
+
+      <div class="switch-row">
+        <span class="switch-label">启用 AI 感应 — 每 3 秒检测 Hermes 活动状态</span>
+        <label class="switch">
+          <input type="checkbox" id="aiSenseToggle" checked>
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- ======== Area 3: Dialogue Context ======== -->
+    <div class="card" id="areaDialogue">
+      <div class="card-header">
+        <span>💬 对话上下文</span>
+      </div>
+
+      <div class="chat-list" id="chatList">
+        <!-- injected by JS -->
+      </div>
+
+      <div class="perception-bar">
+        <span class="perception-icon">🎨</span>
+        <span class="perception-text" id="perceptionText">用户与 AI 在讨论装备搭配</span>
+        <span class="perception-confidence" id="perceptionConfidence">★★★★☆</span>
+      </div>
+
+      <div>
+        <button class="btn-trigger" id="btnTriggerReaction">🎯 手动触发宠物反应</button>
+      </div>
+    </div>
+
+    <!-- ======== Area 4: Timeline ======== -->
+    <div class="card" id="areaTimeline" style="margin-bottom:0">
+      <div class="card-header">
+        <span>📊 状态历史</span>
+        <span class="badge" id="timelineCount">5 条</span>
+      </div>
+      <div class="timeline-wrap">
+        <ul class="timeline" id="timelineList">
+          <!-- injected by JS -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trigger Popover -->
+  <div class="trigger-overlay" id="triggerOverlay">
+    <div class="trigger-popover">
+      <h4>选择宠物反应动画</h4>
+      <div class="trigger-option" data-anim="stand">🧘 stand — 站立</div>
+      <div class="trigger-option" data-anim="move">👂 move — 倾听</div>
+      <div class="trigger-option" data-anim="attack">🎯 attack — 攻击</div>
+      <div class="trigger-option" data-anim="say">💬 say — 说话</div>
+      <div class="trigger-option" data-anim="fly">🦋 fly — 飞行</div>
+      <div class="trigger-option" data-anim="hit">💥 hit — 受击</div>
+      <div class="trigger-option" data-anim="idle">💤 idle — 空闲</div>
+    </div>
+  </div>
+
+  <!-- Edit Row Overlay -->
+  <div class="edit-row-overlay" id="editOverlay">
+    <div class="edit-dialog">
+      <h4 id="editDialogTitle">编辑规则</h4>
+      <div class="edit-field">
+        <label>AI 状态</label>
+        <select id="editAiStatus">
+          <option value="思考中">思考中</option>
+          <option value="回答中">回答中</option>
+          <option value="空闲">空闲</option>
+          <option value="@宠物">@宠物</option>
+          <option value="错误">错误</option>
+          <option value="启动中">启动中</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>触发动画</label>
+        <select id="editAnimation">
+          <option value="stand">stand 🧘</option>
+          <option value="move">move 👂</option>
+          <option value="fly">fly 🦋</option>
+          <option value="attack">attack 🎯</option>
+          <option value="idle">idle 💤</option>
+          <option value="hit">hit 💥</option>
+          <option value="say">say 💬</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>气泡内容</label>
+        <input type="text" id="editBubble" placeholder="输入气泡内容...">
+      </div>
+      <div class="edit-dialog-actions">
+        <button class="btn-cancel" id="editCancel">取消</button>
+        <button class="btn-save" id="editSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Rule Overlay -->
+  <div class="edit-row-overlay" id="addOverlay">
+    <div class="edit-dialog">
+      <h4>添加规则</h4>
+      <div class="edit-field">
+        <label>AI 状态</label>
+        <select id="addAiStatus">
+          <option value="思考中">思考中</option>
+          <option value="回答中">回答中</option>
+          <option value="空闲">空闲</option>
+          <option value="@宠物">@宠物</option>
+          <option value="错误">错误</option>
+          <option value="启动中">启动中</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>触发动画</label>
+        <select id="addAnimation">
+          <option value="stand">stand 🧘</option>
+          <option value="move">move 👂</option>
+          <option value="fly">fly 🦋</option>
+          <option value="attack">attack 🎯</option>
+          <option value="idle">idle 💤</option>
+          <option value="hit">hit 💥</option>
+          <option value="say">say 💬</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>气泡内容</label>
+        <input type="text" id="addBubble" placeholder="输入气泡内容..." value="新规则">
+      </div>
+      <div class="edit-dialog-actions">
+        <button class="btn-cancel" id="addCancel">取消</button>
+        <button class="btn-save" id="addSave">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============================================================
+  // Data
+  // ============================================================
+  const TIMELINE_EVENTS = [
+    { time: '12:34:56', dot: 'green', status: '🟢', event: 'Hermes 接收消息' },
+    { time: '12:34:50', dot: 'yellow', status: '🟡', event: 'Hermes 正在回答' },
+    { time: '12:34:45', dot: 'green', status: '🟢', event: '空闲' },
+    { time: '12:34:30', dot: 'red', status: '🔴', event: '用户 @宠物' },
+    { time: '12:34:20', dot: 'green', status: '🟢', event: 'Hermes 接收消息' },
+    { time: '12:34:10', dot: 'yellow', status: '🟡', event: '用户输入中...' },
+    { time: '12:34:05', dot: 'green', status: '🟢', event: '启动完成' },
+    { time: '12:33:50', dot: 'blue', status: '🔵', event: '系统初始化' },
+    { time: '12:33:42', dot: 'green', status: '🟢', event: '空闲' },
+    { time: '12:33:30', dot: 'yellow', status: '🟡', event: '模型加载中' },
+  ];
+
+  const CHAT_MESSAGES = [
+    { role: 'user', text: '帮我设计一套龙神装备', time: '12:34' },
+    { role: 'assistant', text: '好的，龙神推荐用特米纳斯法杖 + 暴君套，综合性价比最高。', time: '12:34' },
+    { role: 'user', text: '那武器卷轴用什么比较好？', time: '12:35' },
+  ];
+
+  let rules = [
+    { aiStatus: '思考中', animation: 'stand 🧘', bubble: '正在思考...' },
+    { aiStatus: '回答中', animation: 'move 👂', bubble: '我在听~' },
+    { aiStatus: '空闲', animation: 'idle 💤', bubble: '好无聊...' },
+    { aiStatus: '@宠物', animation: 'attack 🎯', bubble: '叫我干嘛？' },
+    { aiStatus: '错误', animation: 'hit 💥', bubble: '出错了！' },
+  ];
+
+  let editingIndex = -1;
+
+  // ============================================================
+  // DOM refs
+  // ============================================================
+  const statusDot = document.getElementById('statusDot');
+  const statusLabelText = document.getElementById('statusLabelText');
+  const statusDuration = document.getElementById('statusDuration');
+  const statusBadge = document.getElementById('statusBadge');
+  const activityBar = document.getElementById('activityBar');
+  const activityPct = document.getElementById('activityPct');
+  const recentActivity = document.getElementById('recentActivity');
+  const btnToggleConnect = document.getElementById('btnToggleConnect');
+  const rulesBody = document.getElementById('rulesBody');
+  const btnAddRule = document.getElementById('btnAddRule');
+  const aiSenseToggle = document.getElementById('aiSenseToggle');
+  const chatList = document.getElementById('chatList');
+  const perceptionText = document.getElementById('perceptionText');
+  const perceptionConfidence = document.getElementById('perceptionConfidence');
+  const timelineList = document.getElementById('timelineList');
+  const timelineCount = document.getElementById('timelineCount');
+  const btnTriggerReaction = document.getElementById('btnTriggerReaction');
+  const triggerOverlay = document.getElementById('triggerOverlay');
+  const editOverlay = document.getElementById('editOverlay');
+  const addOverlay = document.getElementById('addOverlay');
+
+  // ============================================================
+  // State simulation
+  // ============================================================
+  let connected = true;
+  let activityValue = 80;
+  let uptimeSeconds = 2 * 3600 + 34 * 60; // 2h 34m
+
+  // ============================================================
+  // Render helpers
+  // ============================================================
+  function formatDuration(secs) {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return `已运行 ${h}h ${String(m).padStart(2, '0')}m`;
+  }
+
+  function setConnectedState(state) {
+    connected = state;
+    if (state) {
+      statusDot.className = 'status-dot green breathing';
+      statusLabelText.textContent = '运行中';
+      statusBadge.textContent = '运行中';
+      statusBadge.style.color = 'var(--green)';
+      btnToggleConnect.textContent = '断开';
+      btnToggleConnect.className = 'btn-connect active';
+    } else {
+      statusDot.className = 'status-dot red';
+      statusLabelText.textContent = '已停止';
+      statusBadge.textContent = '已停止';
+      statusBadge.style.color = 'var(--red)';
+      btnToggleConnect.textContent = '重连';
+      btnToggleConnect.className = 'btn-connect';
+    }
+  }
+
+  // ============================================================
+  // Render Rules Table
+  // ============================================================
+  function renderRules() {
+    let html = '';
+    rules.forEach((r, i) => {
+      const animShort = r.animation.replace(/ .*/, '');
+      html += `<tr data-index="${i}">
+        <td>
+          <select data-field="aiStatus" data-index="${i}">
+            <option value="思考中" ${r.aiStatus === '思考中' ? 'selected' : ''}>思考中</option>
+            <option value="回答中" ${r.aiStatus === '回答中' ? 'selected' : ''}>回答中</option>
+            <option value="空闲" ${r.aiStatus === '空闲' ? 'selected' : ''}>空闲</option>
+            <option value="@宠物" ${r.aiStatus === '@宠物' ? 'selected' : ''}>@宠物</option>
+            <option value="错误" ${r.aiStatus === '错误' ? 'selected' : ''}>错误</option>
+            <option value="启动中" ${r.aiStatus === '启动中' ? 'selected' : ''}>启动中</option>
+          </select>
+        </td>
+        <td>
+          <select data-field="animation" data-index="${i}">
+            <option value="stand" ${animShort === 'stand' ? 'selected' : ''}>stand 🧘</option>
+            <option value="move" ${animShort === 'move' ? 'selected' : ''}>move 👂</option>
+            <option value="fly" ${animShort === 'fly' ? 'selected' : ''}>fly 🦋</option>
+            <option value="attack" ${animShort === 'attack' ? 'selected' : ''}>attack 🎯</option>
+            <option value="idle" ${animShort === 'idle' ? 'selected' : ''}>idle 💤</option>
+            <option value="hit" ${animShort === 'hit' ? 'selected' : ''}>hit 💥</option>
+            <option value="say" ${animShort === 'say' ? 'selected' : ''}>say 💬</option>
+          </select>
+        </td>
+        <td><input type="text" value="${r.bubble}" data-field="bubble" data-index="${i}"></td>
+        <td>
+          <div class="cell-actions">
+            <button class="btn-edit" data-index="${i}" title="编辑">✏️</button>
+            <button class="btn-del" data-index="${i}" title="删除">🗑️</button>
+          </div>
+        </td>
+      </tr>`;
+    });
+    rulesBody.innerHTML = html;
+
+    // Attach event listeners
+    document.querySelectorAll('[data-field="aiStatus"]').forEach(el => {
+      el.addEventListener('change', e => { rules[+e.target.dataset.index].aiStatus = e.target.value; });
+    });
+    document.querySelectorAll('[data-field="animation"]').forEach(el => {
+      el.addEventListener('change', e => {
+        const idx = +e.target.dataset.index;
+        const sel = e.target;
+        const txt = sel.options[sel.selectedIndex].text;
+        rules[idx].animation = txt;
+      });
+    });
+    document.querySelectorAll('[data-field="bubble"]').forEach(el => {
+      el.addEventListener('change', e => { rules[+e.target.dataset.index].bubble = e.target.value; });
+    });
+    document.querySelectorAll('.btn-edit').forEach(el => {
+      el.addEventListener('click', e => { openEdit(+e.currentTarget.dataset.index); });
+    });
+    document.querySelectorAll('.btn-del').forEach(el => {
+      el.addEventListener('click', e => { deleteRule(+e.currentTarget.dataset.index); });
+    });
+  }
+
+  function deleteRule(idx) {
+    rules.splice(idx, 1);
+    renderRules();
+  }
+
+  // ============================================================
+  // Edit dialog
+  // ============================================================
+  function openEdit(idx) {
+    editingIndex = idx;
+    const r = rules[idx];
+    document.getElementById('editAiStatus').value = r.aiStatus;
+    // Set animation select
+    const animShort = r.animation.split(' ')[0];
+    document.getElementById('editAnimation').value = animShort;
+    document.getElementById('editBubble').value = r.bubble;
+    document.getElementById('editDialogTitle').textContent = '编辑规则';
+    editOverlay.classList.add('show');
+  }
+
+  document.getElementById('editSave').addEventListener('click', () => {
+    if (editingIndex < 0) return;
+    const status = document.getElementById('editAiStatus').value;
+    const animSelect = document.getElementById('editAnimation');
+    const animText = animSelect.options[animSelect.selectedIndex].text;
+    const bubble = document.getElementById('editBubble').value;
+    rules[editingIndex] = { aiStatus: status, animation: animText, bubble };
+    renderRules();
+    editOverlay.classList.remove('show');
+    editingIndex = -1;
+  });
+
+  document.getElementById('editCancel').addEventListener('click', () => {
+    editOverlay.classList.remove('show');
+    editingIndex = -1;
+  });
+
+  // ============================================================
+  // Add rule dialog
+  // ============================================================
+  btnAddRule.addEventListener('click', () => {
+    document.getElementById('addAiStatus').value = '思考中';
+    document.getElementById('addAnimation').value = 'stand';
+    document.getElementById('addBubble').value = '新规则';
+    addOverlay.classList.add('show');
+  });
+
+  document.getElementById('addSave').addEventListener('click', () => {
+    const status = document.getElementById('addAiStatus').value;
+    const animSelect = document.getElementById('addAnimation');
+    const animText = animSelect.options[animSelect.selectedIndex].text;
+    const bubble = document.getElementById('addBubble').value || '新规则';
+    rules.push({ aiStatus: status, animation: animText, bubble });
+    renderRules();
+    addOverlay.classList.remove('show');
+    // Scroll rules into view
+    document.getElementById('areaRules').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
+  document.getElementById('addCancel').addEventListener('click', () => {
+    addOverlay.classList.remove('show');
+  });
+
+  // ============================================================
+  // Chat messages render
+  // ============================================================
+  function renderChat() {
+    let html = '';
+    CHAT_MESSAGES.forEach(m => {
+      const cls = m.role === 'user' ? 'user' : 'assistant';
+      const name = m.role === 'user' ? '用户' : '助理';
+      html += `<div class="chat-bubble-wrap ${cls}">
+        <span class="chat-meta">${name} · ${m.time}</span>
+        <div class="chat-bubble">${m.text}</div>
+      </div>`;
+    });
+    chatList.innerHTML = html;
+  }
+
+  // ============================================================
+  // Timeline render
+  // ============================================================
+  function renderTimeline() {
+    const visible = TIMELINE_EVENTS.slice(0, 20);
+    let html = '';
+    visible.forEach(e => {
+      html += `<li class="timeline-item">
+        <span class="timeline-dot ${e.dot}"></span>
+        <span class="timeline-time">${e.time}</span>
+        <span class="timeline-status">${e.status}</span>
+        <span class="timeline-event">${e.event}</span>
+      </li>`;
+    });
+    timelineList.innerHTML = html;
+    timelineCount.textContent = `${visible.length} 条`;
+  }
+
+  // ============================================================
+  // Trigger popover
+  // ============================================================
+  btnTriggerReaction.addEventListener('click', () => {
+    triggerOverlay.classList.add('show');
+  });
+
+  triggerOverlay.querySelectorAll('.trigger-option').forEach(el => {
+    el.addEventListener('click', () => {
+      const anim = el.dataset.anim;
+      triggerOverlay.classList.remove('show');
+      // Flash a notification on the status area
+      recentActivity.textContent = `手动触发: ${anim}`;
+      // blink the dot
+      statusDot.style.animation = 'none';
+      void statusDot.offsetHeight;
+      statusDot.style.animation = '';
+      // Add a timeline entry
+      const now = new Date();
+      const time = now.toTimeString().slice(0, 8);
+      const emojis = { stand: '🟢', move: '🟡', attack: '🔴', say: '💬', fly: '🦋', hit: '💥', idle: '💤' };
+      const colors = { stand: 'green', move: 'yellow', attack: 'red', say: 'blue', fly: 'blue', hit: 'red', idle: 'green' };
+      TIMELINE_EVENTS.unshift({
+        time,
+        dot: colors[anim] || 'green',
+        status: emojis[anim] || '🟢',
+        event: `手动触发 ${anim}`
+      });
+      renderTimeline();
+    });
+  });
+
+  triggerOverlay.addEventListener('click', e => {
+    if (e.target === triggerOverlay) triggerOverlay.classList.remove('show');
+  });
+
+  // ============================================================
+  // Connect toggle
+  // ============================================================
+  btnToggleConnect.addEventListener('click', () => {
+    if (connected) {
+      // Disconnect
+      setConnectedState(false);
+      statusDuration.textContent = '';
+      recentActivity.textContent = '12:35:10 — 连接已断开';
+    } else {
+      // Reconnect — simulate connecting
+      statusDot.className = 'status-dot yellow pulsing';
+      statusLabelText.textContent = '连接中...';
+      statusBadge.textContent = '连接中';
+      statusBadge.style.color = 'var(--yellow)';
+      btnToggleConnect.textContent = '连接中';
+      btnToggleConnect.className = 'btn-connect';
+      btnToggleConnect.disabled = true;
+      recentActivity.textContent = '正在重连...';
+
+      setTimeout(() => {
+        setConnectedState(true);
+        statusDuration.textContent = formatDuration(uptimeSeconds);
+        recentActivity.textContent = `12:35:${Math.floor(Math.random()*10+10)} — 连接已恢复`;
+        btnToggleConnect.disabled = false;
+        TIMELINE_EVENTS.unshift({
+          time: new Date().toTimeString().slice(0, 8),
+          dot: 'green',
+          status: '🟢',
+          event: '连接已恢复'
+        });
+        renderTimeline();
+      }, 2000);
+    }
+  });
+
+  // ============================================================
+  // AI Sense toggle
+  // ============================================================
+  aiSenseToggle.addEventListener('change', () => {
+    const on = aiSenseToggle.checked;
+    const label = document.querySelector('.switch-row .switch-label');
+    if (on) {
+      label.textContent = '启用 AI 感应 — 每 3 秒检测 Hermes 活动状态';
+    } else {
+      label.textContent = 'AI 感应已禁用';
+    }
+  });
+
+  // ============================================================
+  // Activity simulation
+  // ============================================================
+  function simulateActivity() {
+    if (!connected) return;
+    // Random walk
+    const delta = (Math.random() - 0.5) * 10;
+    activityValue = Math.max(10, Math.min(100, activityValue + delta));
+    activityValue = Math.round(activityValue);
+    activityBar.style.width = activityValue + '%';
+    activityPct.textContent = activityValue + '%';
+  }
+
+  function simulateUptime() {
+    if (connected) {
+      uptimeSeconds += 60;
+      statusDuration.textContent = formatDuration(uptimeSeconds);
+    }
+  }
+
+  // ============================================================
+  // Perception simulation
+  // ============================================================
+  const perceptions = [
+    { icon: '🎨', text: '用户与 AI 在讨论装备搭配', stars: '★★★★☆' },
+    { icon: '⚔️', text: 'AI 正在生成装备方案', stars: '★★★☆☆' },
+    { icon: '💬', text: '用户询问角色养成路线', stars: '★★★★★' },
+    { icon: '🛒', text: '用户查询交易市场行情', stars: '★★★☆☆' },
+    { icon: '🧭', text: 'AI 主动推荐练级地点', stars: '★★★★☆' },
+  ];
+  let perceptionIdx = 0;
+
+  function cyclePerception() {
+    if (!connected) return;
+    perceptionIdx = (perceptionIdx + 1) % perceptions.length;
+    const p = perceptions[perceptionIdx];
+    perceptionText.textContent = p.text;
+    perceptionConfidence.textContent = p.stars;
+  }
+
+  // ============================================================
+  // Init
+  // ============================================================
+  function init() {
+    renderRules();
+    renderChat();
+    renderTimeline();
+    setConnectedState(true);
+  }
+
+  init();
+
+  // Periodic updates
+  setInterval(simulateActivity, 3000);
+  setInterval(simulateUptime, 60000);
+  setInterval(cyclePerception, 8000);
+
+  // ============================================================
+  // Overlay close on Escape
+  // ============================================================
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      triggerOverlay.classList.remove('show');
+      editOverlay.classList.remove('show');
+      addOverlay.classList.remove('show');
+    }
+  });
+
+  // Close edit/add on background click
+  editOverlay.addEventListener('click', e => { if (e.target === editOverlay) editOverlay.classList.remove('show'); });
+  addOverlay.addEventListener('click', e => { if (e.target === addOverlay) addOverlay.classList.remove('show'); });
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>素材查询浏览器 - 高保真原型</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-window: rgba(40, 40, 46, 0.88);
+    --bg-sidebar: rgba(36, 36, 42, 0.75);
+    --bg-list: rgba(32, 32, 38, 0.65);
+    --bg-detail: rgba(38, 38, 44, 0.70);
+    --bg-hover: rgba(94, 156, 255, 0.12);
+    --bg-selected: rgba(94, 156, 255, 0.22);
+    --bg-active: rgba(94, 156, 255, 0.35);
+    --border-color: rgba(80, 80, 90, 0.6);
+    --border-light: rgba(120, 120, 140, 0.3);
+    --text-primary: #f0f0f4;
+    --text-secondary: #a0a0b0;
+    --text-muted: #707080;
+    --accent: #5E9CFF;
+    --accent-hover: #7BB4FF;
+    --red-dot: #FF5E5E;
+    --orange: #E8924A;
+    --blue: #5E9CFF;
+    --green: #4CD964;
+    --purple: #BF5AF2;
+    --yellow: #FFD60A;
+    --splitter: rgba(80, 80, 90, 0.5);
+    --splitter-hover: rgba(94, 156, 255, 0.6);
+    --font-stack: -apple-system, 'SF Pro', 'Helvetica Neue', 'Segoe UI', sans-serif;
+    --mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    --radius: 12px;
+  }
+
+  html, body {
+    height: 100%; width: 100%;
+    font-family: var(--font-stack);
+    background: transparent;
+    color: var(--text-primary);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  /* ── window chrome ── */
+  .window {
+    width: 900px; height: 640px;
+    margin: 0 auto;
+    background: var(--bg-window);
+    backdrop-filter: blur(24px) saturate(1.3);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+    display: flex; flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ── title bar ── */
+  .titlebar {
+    display: flex; align-items: center;
+    height: 38px; padding: 0 12px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+  .titlebar-dots {
+    display: flex; gap: 7px; margin-right: 12px;
+  }
+  .titlebar-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    cursor: pointer; -webkit-app-region: no-drag;
+    transition: filter 0.15s;
+  }
+  .titlebar-dot:hover { filter: brightness(1.2); }
+  .dot-close { background: #FF5F56; }
+  .dot-minimize { background: #FFBD2E; }
+  .dot-zoom { background: #27C93F; }
+
+  .titlebar-title {
+    flex: 1; text-align: center;
+    font-size: 13px; font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+  }
+
+  /* ── search bar ── */
+  .searchbar {
+    display: flex; align-items: center;
+    gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 100;
+  }
+  .search-wrapper {
+    flex: 1; position: relative;
+  }
+  .search-wrapper .icon-mag {
+    position: absolute; left: 10px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px; color: var(--text-muted);
+    pointer-events: none;
+  }
+  .search-wrapper input {
+    width: 100%; height: 30px;
+    padding: 0 32px 0 30px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: rgba(30,30,36,0.7);
+    color: var(--text-primary);
+    font-size: 13px; font-family: var(--font-stack);
+    outline: none; transition: border-color 0.2s;
+  }
+  .search-wrapper input::placeholder { color: var(--text-muted); }
+  .search-wrapper input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(94,156,255,0.2);
+  }
+  .search-clear {
+    position: absolute; right: 8px; top: 50%;
+    transform: translateY(-50%);
+    width: 18px; height: 18px; border-radius: 50%;
+    border: none; background: rgba(120,120,140,0.3);
+    color: var(--text-secondary);
+    font-size: 11px; cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .search-wrapper.has-text .search-clear { display: flex; }
+
+  .btn-adv-search {
+    flex-shrink: 0; height: 30px;
+    padding: 0 10px; border-radius: 6px;
+    border: 1px solid var(--border-light);
+    background: rgba(30,30,36,0.5);
+    color: var(--text-secondary); font-size: 12px;
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .btn-adv-search:hover {
+    background: rgba(94,156,255,0.15);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* ── search popover ── */
+  .search-popover {
+    position: absolute; left: 12px; right: 12px;
+    top: 46px;
+    background: rgba(44,44,52,0.96);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    max-height: 280px; overflow-y: auto;
+    display: none; z-index: 200;
+  }
+  .search-popover.show { display: block; }
+  .search-suggestion {
+    display: flex; align-items: center;
+    gap: 10px; padding: 7px 12px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .search-suggestion:hover { background: var(--bg-hover); }
+  .search-suggestion .type-icon {
+    width: 20px; height: 20px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #fff; flex-shrink: 0;
+  }
+  .search-suggestion .sug-name {
+    flex: 1; font-size: 13px; color: var(--text-primary);
+  }
+  .search-suggestion .sug-id {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--text-muted);
+  }
+  .search-popover .popover-footer {
+    padding: 7px 12px; text-align: center;
+    border-top: 1px solid var(--border-light);
+    font-size: 12px; color: var(--accent);
+    cursor: pointer;
+  }
+  .search-popover .popover-footer:hover { color: var(--accent-hover); }
+
+  /* ── filter bar (collapsed) ── */
+  .filter-bar {
+    padding: 0 12px; max-height: 0;
+    overflow: hidden; transition: max-height 0.25s ease, padding 0.2s;
+    border-bottom: 1px solid transparent;
+    flex-shrink: 0;
+  }
+  .filter-bar.open {
+    max-height: 80px; padding: 8px 12px;
+    border-bottom-color: var(--border-color);
+  }
+  .filter-bar-inner {
+    display: flex; gap: 12px; align-items: center;
+    flex-wrap: wrap;
+  }
+  .filter-group {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .filter-group label { flex-shrink: 0; }
+  .filter-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .filter-chip {
+    padding: 2px 8px; border-radius: 4px;
+    border: 1px solid var(--border-light);
+    background: rgba(30,30,36,0.5);
+    color: var(--text-secondary); font-size: 11px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .filter-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+  .filter-chip.active {
+    background: rgba(94,156,255,0.2);
+    border-color: var(--accent); color: var(--accent);
+  }
+  .filter-range {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .filter-range input {
+    width: 48px; height: 24px; padding: 0 6px;
+    border-radius: 4px; border: 1px solid var(--border-light);
+    background: rgba(30,30,36,0.6);
+    color: var(--text-primary); font-size: 11px;
+    font-family: var(--mono); text-align: center;
+    outline: none;
+  }
+  .filter-range input:focus { border-color: var(--accent); }
+  .filter-range span { color: var(--text-muted); font-size: 11px; }
+
+  /* ── body: three-column split ── */
+  .body {
+    flex: 1; display: flex;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── splitters ── */
+  .splitter {
+    width: 4px; cursor: col-resize;
+    background: var(--splitter);
+    flex-shrink: 0;
+    position: relative;
+    transition: background 0.15s;
+  }
+  .splitter:hover, .splitter.active {
+    background: var(--splitter-hover);
+  }
+  .splitter::after {
+    content: ''; position: absolute;
+    left: 1px; top: 50%; transform: translateY(-50%);
+    width: 2px; height: 24px;
+    border-radius: 1px;
+    background: rgba(255,255,255,0.08);
+  }
+  .splitter:hover::after { background: rgba(255,255,255,0.18); }
+
+  /* ── left panel (sidebar / outline tree) ── */
+  .panel-left {
+    width: 200px; min-width: 140px; max-width: 320px;
+    background: var(--bg-sidebar);
+    display: flex; flex-direction: column;
+    flex-shrink: 0; overflow: hidden;
+  }
+  .panel-left .panel-header {
+    padding: 8px 12px; font-size: 11px;
+    font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+  }
+  .outline-tree {
+    flex: 1; overflow-y: auto;
+    padding: 4px 0;
+  }
+  .outline-tree::-webkit-scrollbar { width: 4px; }
+  .outline-tree::-webkit-scrollbar-track { background: transparent; }
+  .outline-tree::-webkit-scrollbar-thumb { background: rgba(120,120,140,0.3); border-radius: 2px; }
+
+  .tree-item {
+    display: flex; align-items: center;
+    padding: 5px 12px 5px 0;
+    cursor: pointer; transition: background 0.1s;
+    position: relative;
+    font-size: 13px; color: var(--text-primary);
+  }
+  .tree-item:hover { background: var(--bg-hover); }
+  .tree-item.selected { background: var(--bg-selected); }
+  .tree-item .indent-line {
+    width: 16px; flex-shrink: 0;
+    position: relative;
+  }
+  .tree-item .indent-line::after {
+    content: ''; position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 1px; background: var(--border-light);
+  }
+  .tree-item .chevron {
+    width: 18px; flex-shrink: 0;
+    font-size: 10px; color: var(--text-muted);
+    text-align: center; transition: transform 0.15s;
+  }
+  .tree-item.collapsed .chevron { transform: rotate(-90deg); }
+  .tree-item .tree-label {
+    flex: 1; margin-left: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tree-item .badge-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--red-dot); margin-left: 6px;
+    flex-shrink: 0;
+  }
+  .tree-item .badge-num {
+    font-size: 10px; color: var(--red-dot);
+    font-family: var(--mono); margin-left: 4px;
+  }
+  .tree-item.fav-item .tree-label { color: var(--yellow); }
+  .tree-item.history-item .tree-label { color: var(--text-secondary); }
+
+  .tree-children { overflow: hidden; }
+  .tree-item.collapsed + .tree-children { display: none; }
+
+  .tree-item .item-icon {
+    width: 18px; text-align: center; flex-shrink: 0;
+    font-size: 12px;
+  }
+
+  /* ── middle panel (list / table) ── */
+  .panel-mid {
+    width: 320px; min-width: 200px; max-width: 500px;
+    background: var(--bg-list);
+    display: flex; flex-direction: column;
+    flex-shrink: 0; overflow: hidden;
+  }
+
+  .list-header {
+    display: flex; align-items: center;
+    height: 28px; border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+  }
+  .list-header .th {
+    padding: 0 8px; font-size: 11px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; gap: 3px;
+    transition: color 0.1s;
+    white-space: nowrap;
+  }
+  .list-header .th:hover { color: var(--text-secondary); }
+  .list-header .th.sorted { color: var(--accent); }
+  .th-icon { width: 32px; justify-content: center; }
+  .th-name { flex: 1; min-width: 0; }
+  .th-id { width: 64px; text-align: right; justify-content: flex-end; }
+  .th .sort-arrow { font-size: 9px; }
+
+  .list-body {
+    flex: 1; overflow-y: auto;
+  }
+  .list-body::-webkit-scrollbar { width: 4px; }
+  .list-body::-webkit-scrollbar-track { background: transparent; }
+  .list-body::-webkit-scrollbar-thumb { background: rgba(120,120,140,0.3); border-radius: 2px; }
+
+  .list-row {
+    display: flex; align-items: center;
+    height: 30px; padding: 0 8px;
+    cursor: pointer; transition: background 0.08s;
+    border-bottom: 1px solid rgba(80,80,90,0.2);
+  }
+  .list-row:hover { background: var(--bg-hover); }
+  .list-row.selected { background: var(--bg-selected); }
+  .list-row .type-icon {
+    width: 20px; height: 20px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #fff; flex-shrink: 0;
+  }
+  .list-row .row-name {
+    flex: 1; font-size: 13px; margin-left: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .list-row .row-id {
+    width: 64px; text-align: right;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--text-muted); flex-shrink: 0;
+  }
+  .list-row .star-mark {
+    margin-left: 4px; font-size: 11px;
+    color: var(--yellow); flex-shrink: 0;
+  }
+
+  .list-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border-light);
+    flex-shrink: 0;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .list-footer .result-count { font-family: var(--mono); }
+  .pagination {
+    display: flex; align-items: center; gap: 2px;
+  }
+  .pagination button {
+    min-width: 24px; height: 22px;
+    padding: 0 5px; border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary); font-size: 11px;
+    font-family: var(--font-stack);
+    cursor: pointer; transition: all 0.1s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pagination button:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+  }
+  .pagination button:disabled {
+    opacity: 0.3; cursor: default;
+    background: transparent; border-color: transparent;
+  }
+  .pagination button.active {
+    background: var(--accent); color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* ── right panel (detail view) ── */
+  .panel-right {
+    flex: 1; min-width: 240px;
+    background: var(--bg-detail);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-right .panel-header {
+    padding: 8px 12px; font-size: 11px;
+    font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+  }
+
+  .detail-scroll {
+    flex: 1; overflow-y: auto;
+    padding: 16px;
+  }
+  .detail-scroll::-webkit-scrollbar { width: 4px; }
+  .detail-scroll::-webkit-scrollbar-track { background: transparent; }
+  .detail-scroll::-webkit-scrollbar-thumb { background: rgba(120,120,140,0.3); border-radius: 2px; }
+
+  /* preview area */
+  .preview-area {
+    width: 100%; aspect-ratio: 350/300;
+    border-radius: 8px;
+    background-image:
+      linear-gradient(45deg, rgba(60,60,70,0.5) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(60,60,70,0.5) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(60,60,70,0.5) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(60,60,70,0.5) 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    border: 1px solid var(--border-light);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .preview-area .placeholder {
+    font-size: 64px; opacity: 0.4;
+  }
+  .preview-area .placeholder-label {
+    position: absolute; bottom: 10px;
+    font-size: 11px; color: var(--text-muted);
+  }
+
+  /* info card */
+  .info-card {
+    background: rgba(30,30,38,0.5);
+    border: 1px solid var(--border-light);
+    border-radius: 8px; padding: 12px;
+    margin-bottom: 14px;
+  }
+  .info-card .detail-name {
+    font-size: 18px; font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .info-card .detail-id {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .info-card .detail-tags {
+    display: flex; gap: 6px; margin-bottom: 8px;
+  }
+  .detail-tag {
+    padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 500; color: #fff;
+  }
+  .info-card .detail-desc {
+    font-size: 12px; color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  /* related data */
+  .related-section {
+    margin-bottom: 14px;
+  }
+  .related-section .related-title {
+    font-size: 12px; font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+  .related-section .related-content {
+    font-size: 12px; color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .related-section .related-content a {
+    color: var(--accent); text-decoration: none;
+    cursor: pointer;
+  }
+  .related-section .related-content a:hover { text-decoration: underline; }
+
+  /* action buttons */
+  .action-buttons {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .action-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 14px; border-radius: 6px;
+    border: 1px solid transparent;
+    font-size: 12px; font-family: var(--font-stack);
+    cursor: pointer; transition: all 0.15s;
+    font-weight: 500;
+  }
+  .action-btn.primary {
+    background: var(--accent); color: #fff;
+    border-color: var(--accent);
+  }
+  .action-btn.primary:hover { background: var(--accent-hover); }
+  .action-btn.secondary {
+    background: rgba(60,60,70,0.5);
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+  }
+  .action-btn.secondary:hover {
+    background: rgba(94,156,255,0.15);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .action-btn.link-btn {
+    background: transparent;
+    color: var(--accent);
+    padding: 6px 8px;
+  }
+  .action-btn.link-btn:hover {
+    background: rgba(94,156,255,0.1);
+  }
+
+  /* ── context menu (right-click) ── */
+  .context-menu {
+    position: fixed;
+    background: rgba(44,44,52,0.96);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 4px 0;
+    min-width: 140px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    display: none;
+    z-index: 999;
+  }
+  .context-menu.show { display: block; }
+  .context-menu-item {
+    padding: 6px 14px; font-size: 13px;
+    color: var(--text-primary); cursor: pointer;
+    transition: background 0.1s;
+  }
+  .context-menu-item:hover { background: var(--bg-hover); }
+  .context-menu-item.danger { color: #FF5E5E; }
+  .context-menu-item.danger:hover { background: rgba(255,94,94,0.15); }
+
+  /* ── empty state ── */
+  .empty-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; color: var(--text-muted);
+    font-size: 14px; gap: 8px;
+  }
+  .empty-state .empty-icon { font-size: 36px; opacity: 0.4; }
+
+  /* ── misc ── */
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="window" id="app">
+  <!-- title bar -->
+  <div class="titlebar">
+    <div class="titlebar-dots">
+      <div class="titlebar-dot dot-close" onclick="closeApp()"></div>
+      <div class="titlebar-dot dot-minimize" onclick="minimizeApp()"></div>
+      <div class="titlebar-dot dot-zoom" onclick="zoomApp()"></div>
+    </div>
+    <div class="titlebar-title">📦 素材查询</div>
+  </div>
+
+  <!-- search bar -->
+  <div class="searchbar">
+    <div class="search-wrapper" id="searchWrapper">
+      <span class="icon-mag">🔍</span>
+      <input type="text" id="searchInput" placeholder="搜索素材名称或 ID…" autocomplete="off"
+             oninput="onSearchInput(this.value)" onfocus="onSearchFocus()"
+             onblur="setTimeout(()=>hideSearchPopover(),150)" onkeydown="onSearchKeydown(event)">
+      <button class="search-clear" onclick="clearSearch()">✕</button>
+    </div>
+    <button class="btn-adv-search" onclick="toggleFilters()">⚙ 高级搜索</button>
+    <!-- search popover -->
+    <div class="search-popover" id="searchPopover"></div>
+  </div>
+
+  <!-- filter bar -->
+  <div class="filter-bar" id="filterBar">
+    <div class="filter-bar-inner">
+      <div class="filter-group">
+        <label>类型:</label>
+        <div class="filter-chips">
+          <span class="filter-chip active" data-type="装备" onclick="toggleFilterChip(this)">装备</span>
+          <span class="filter-chip active" data-type="消耗" onclick="toggleFilterChip(this)">消耗</span>
+          <span class="filter-chip active" data-type="怪物" onclick="toggleFilterChip(this)">怪物</span>
+          <span class="filter-chip active" data-type="NPC" onclick="toggleFilterChip(this)">NPC</span>
+          <span class="filter-chip active" data-type="地图" onclick="toggleFilterChip(this)">地图</span>
+          <span class="filter-chip active" data-type="技能" onclick="toggleFilterChip(this)">技能</span>
+        </div>
+      </div>
+      <div class="filter-group">
+        <label>等级:</label>
+        <div class="filter-range">
+          <input type="text" id="levelMin" placeholder="1" value="">
+          <span>—</span>
+          <input type="text" id="levelMax" placeholder="300" value="">
+        </div>
+      </div>
+      <div class="filter-group">
+        <label>地区:</label>
+        <div class="filter-chips">
+          <span class="filter-chip active" data-area="all" onclick="toggleFilterChip(this)">全部</span>
+          <span class="filter-chip" data-area="maple" onclick="toggleFilterChip(this)">冒险岛世界</span>
+          <span class="filter-chip" data-area="grandis" onclick="toggleFilterChip(this)">格兰蒂斯</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- body: three-column split -->
+  <div class="body">
+    <!-- LEFT -->
+    <div class="panel-left" id="panelLeft">
+      <div class="panel-header">分类目录</div>
+      <div class="outline-tree" id="outlineTree"></div>
+    </div>
+    <div class="splitter" id="splitter1"></div>
+
+    <!-- MID -->
+    <div class="panel-mid" id="panelMid">
+      <div class="list-header" id="listHeader">
+        <div class="th th-icon" data-sort="type" onclick="sortList('type')">类型</div>
+        <div class="th th-name" data-sort="name" onclick="sortList('name')">名称 <span class="sort-arrow">▲</span></div>
+        <div class="th th-id" data-sort="id" onclick="sortList('id')">ID</div>
+      </div>
+      <div class="list-body" id="listBody"></div>
+      <div class="list-footer">
+        <span class="result-count" id="resultCount">共 128 个结果</span>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </div>
+    <div class="splitter" id="splitter2"></div>
+
+    <!-- RIGHT -->
+    <div class="panel-right" id="panelRight">
+      <div class="panel-header">详情</div>
+      <div class="detail-scroll" id="detailView"></div>
+    </div>
+  </div>
+</div>
+
+<!-- context menu -->
+<div class="context-menu" id="contextMenu"></div>
+
+<script>
+// ── Data ─────────────────────────────────────────────────────────────
+const TYPES = ['装备', '消耗', '怪物', 'NPC', '地图', '技能'];
+const TYPE_COLORS = { '装备':'#E8924A','消耗':'#5E9CFF','怪物':'#FF5E5E','NPC':'#4CD964','地图':'#FFD60A','技能':'#BF5AF2' };
+const TYPE_ICONS = { '装备':'⚔','消耗':'🧪','怪物':'👹','NPC':'👤','地图':'🗺','技能':'⚡' };
+
+// Generate mock items
+function generateItems(count = 128) {
+  const items = [];
+  const prefixes = ['暗黑', '传说', '神秘', '远古', '永恒', '混沌', '灿烂', '闪耀', '破碎', '完整',
+    '强化', '觉醒', '灵魂', '魔力', '破坏', '守护', '暴风', '火焰', '冰霜', '雷霆'];
+  const names = ['罗赛', '法弗纳', '暴君', '神秘之影', '航海', '根源', '毁灭', '救赎', '深渊', '光辉',
+    '月影', '日耀', '星辰', '暮光', '黎明', '暗影', '幻光', '苍穹', '大地', '海洋'];
+  const types = ['装备','消耗','怪物','NPC','地图','技能'];
+  const suffix = ['之剑','之盾','之弓','之杖','之书','之环','之甲','之帽','之鞋','之手套','之披风','之腰带','之耳环','之戒指','之项链'];
+
+  for (let i = 0; i < count; i++) {
+    const type = types[i % 6];
+    const p = prefixes[Math.floor(Math.random() * prefixes.length)];
+    const n = names[Math.floor(Math.random() * names.length)];
+    const s = suffix[Math.floor(Math.random() * suffix.length)];
+    const name = p + n + s;
+    const id = 1000000 + i * 13 + Math.floor(Math.random() * 7);
+    const descs = {
+      '装备': '装备后增加攻击力与防御力，可进行强化升级。',
+      '消耗': '使用后恢复 HP 和 MP，持续 30 秒。',
+      '怪物': '栖息在神秘之境的强大生物。',
+      'NPC': '在各地区提供服务和任务的居民。',
+      '地图': '隐藏在深处的远古遗迹。',
+      '技能': '释放古老力量的战斗技能。'
+    };
+    items.push({
+      id, name, type,
+      desc: descs[type],
+      isFav: Math.random() < 0.15,
+      related: {
+        drops: type === '装备' ? ['时间神殿', '未来东京', '黄昏勇士部落'] : [],
+        npcSells: type === '消耗' ? ['NPC 露西', '武器商人'] : [],
+        maps: ['神秘河', '消亡旅途']
+      }
+    });
+  }
+  // Ensure first item is a nice default
+  items[0] = { id: 1003010, name: '神秘之影法弗纳之剑', type: '装备',
+    desc: '传说中封印着远古龙魂的神秘长剑，散发出幽蓝色的光芒。装备后攻击力 +245，力量 +50。',
+    isFav: true, related: { drops: ['露西德', '威尔', '戴米安'], npcSells: [], maps: ['神秘河 - 消亡旅途'] } };
+  items[1] = { id: 2002001, name: '超级药水', type: '消耗',
+    desc: '恢复 HP 3000 和 MP 3000 的强力药水。',
+    isFav: false, related: { drops: ['普通怪物'], npcSells: ['药剂商人 艾琳'], maps: [] } };
+  items[2] = { id: 8880150, name: '露西德', type: '怪物',
+    desc: '噩梦之主，占据着灵魂之眼的强大存在。',
+    isFav: true, related: { drops: ['露西德的灵魂碎片'], npcSells: [], maps: ['灵魂之眼'] } };
+  return items;
+}
+
+let allItems = generateItems(128);
+let filteredItems = [...allItems];
+let currentSort = { field: 'name', asc: true };
+let currentPage = 0;
+const PAGE_SIZE = 20;
+let selectedIdx = -1;
+
+// Tree data
+const treeData = [
+  { label: '道具', icon: '📦', children: [
+    { label: '装备', badge: 42, icon: '⚔' },
+    { label: '消耗', icon: '🧪' },
+    { label: '设置', icon: '🔧' },
+    { label: '现金道具', icon: '💎' }
+  ]},
+  { label: '怪物', icon: '👹', children: [
+    { label: '1~30 级', icon: '⭐' },
+    { label: '31~70 级', icon: '⭐⭐' },
+    { label: '71~120 级', icon: '⭐⭐⭐' },
+    { label: '121~200 级', icon: '⭐⭐⭐⭐' },
+    { label: '200+ 级', icon: '🔥' }
+  ]},
+  { label: 'NPC', icon: '👤', children: [
+    { label: '冒险岛世界', icon: '🌍' },
+    { label: '格兰蒂斯', icon: '🌌' }
+  ]},
+  { label: '地图', icon: '🗺', children: [
+    { label: '冒险岛大陆', icon: '🏝' },
+    { label: '神秘河', icon: '🌊' },
+    { label: '格兰蒂斯', icon: '🌌' }
+  ]},
+  { label: '技能', icon: '⚡', children: [
+    { label: '冒险家', icon: '🦸' },
+    { label: '英雄团', icon: '🛡' },
+    { label: '诺巴', icon: '🐉' }
+  ]},
+  { label: '❤️ 收藏', icon: '❤️', isFav: true, isStatic: true, children: [] },
+  { label: '🕐 历史', icon: '🕐', isStatic: true, children: [] }
+];
+
+let favItems = allItems.filter(i => i.isFav).map(i => i.id);
+let historyItems = [];
+
+// ── Render Tree ──────────────────────────────────────────────────────
+function renderTree() {
+  const el = document.getElementById('outlineTree');
+  el.innerHTML = '';
+  treeData.forEach((node, i) => {
+    const itemDiv = createTreeItem(node, 0, i === 0 ? false : true); // first expanded
+    el.appendChild(itemDiv);
+    if (node.children && node.children.length > 0) {
+      const childContainer = document.createElement('div');
+      childContainer.className = 'tree-children' + (i === 0 ? '' : '');
+      if (i !== 0) childContainer.style.display = 'none';
+      node.children.forEach((child, ci) => {
+        const childItem = createTreeItem(child, 1, true, i === 5);
+        if (i === 5) childItem.classList.add('fav-item');
+        childContainer.appendChild(childItem);
+      });
+      el.appendChild(childContainer);
+    }
+  });
+}
+
+function createTreeItem(node, depth, collapsed, isFavCategory) {
+  const div = document.createElement('div');
+  div.className = 'tree-item' + (collapsed && node.children ? ' collapsed' : '');
+  if (node.isStatic && node.isFav) div.classList.add('fav-item');
+  if (node.isStatic && !node.isFav) div.classList.add('history-item');
+
+  const indent = document.createElement('div');
+  indent.className = 'indent-line';
+  indent.style.width = (16 + depth * 16) + 'px';
+  if (depth === 0) indent.style.width = '16px';
+  if (depth > 0) indent.style.marginLeft = '16px';
+  div.appendChild(indent);
+
+  if (node.children) {
+    const chevron = document.createElement('span');
+    chevron.className = 'chevron';
+    chevron.textContent = '▶';
+    div.appendChild(chevron);
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      div.classList.toggle('collapsed');
+      const next = div.nextElementSibling;
+      if (next && next.classList.contains('tree-children')) {
+        next.style.display = next.style.display === 'none' ? '' : 'none';
+      }
+    });
+  } else {
+    const spacer = document.createElement('span');
+    spacer.style.width = '18px'; spacer.style.display = 'inline-block';
+    div.appendChild(spacer);
+  }
+
+  if (node.icon) {
+    const icon = document.createElement('span');
+    icon.className = 'item-icon';
+    icon.textContent = node.icon;
+    div.appendChild(icon);
+  }
+
+  const label = document.createElement('span');
+  label.className = 'tree-label';
+  label.textContent = node.label;
+  div.appendChild(label);
+
+  if (node.badge) {
+    const badge = document.createElement('span');
+    badge.className = 'badge-num';
+    badge.textContent = node.badge;
+    div.appendChild(badge);
+    const dot = document.createElement('span');
+    dot.className = 'badge-dot';
+    div.appendChild(dot);
+  }
+
+  // Static categories: show dynamic children for fav/history
+  if (node.isStatic) {
+    const labelText = node.label;
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // expand/collapse
+      div.classList.toggle('collapsed');
+      const next = div.nextElementSibling;
+      if (next && next.classList.contains('tree-children')) {
+        next.style.display = next.style.display === 'none' ? '' : 'none';
+        if (next.style.display !== 'none') {
+          // Render dynamic items
+          updateFavHistoryChildren(next, labelText);
+        }
+      }
+    });
+  }
+
+  // selection
+  if (!node.children || depth > 0) {
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+      div.classList.add('selected');
+    });
+    // Right click on fav items
+    if (isFavCategory) {
+      div.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showContextMenu(e.clientX, e.clientY, node);
+      });
+    }
+  }
+
+  return div;
+}
+
+function updateFavHistoryChildren(container, label) {
+  container.innerHTML = '';
+  let items = [];
+  if (label.includes('收藏')) {
+    items = allItems.filter(i => favItems.includes(i.id));
+  } else {
+    items = historyItems.map(id => allItems.find(i => i.id === id)).filter(Boolean);
+  }
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'tree-item';
+    empty.style.paddingLeft = '48px';
+    empty.style.fontSize = '12px';
+    empty.style.color = 'var(--text-muted)';
+    empty.textContent = label.includes('收藏') ? '暂无收藏素材' : '暂无浏览记录';
+    container.appendChild(empty);
+    return;
+  }
+  items.forEach(item => {
+    const d = document.createElement('div');
+    d.className = 'tree-item';
+    if (label.includes('收藏')) d.classList.add('fav-item');
+    const spacer = document.createElement('span');
+    spacer.style.width = '42px'; spacer.style.display = 'inline-block';
+    d.appendChild(spacer);
+    const labelEl = document.createElement('span');
+    labelEl.className = 'tree-label';
+    labelEl.textContent = item.name;
+    d.appendChild(labelEl);
+    if (label.includes('收藏')) {
+      const star = document.createElement('span');
+      star.style.marginLeft = '4px'; star.style.color = 'var(--yellow)';
+      star.textContent = '★';
+      d.appendChild(star);
+    }
+    d.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = filteredItems.findIndex(fi => fi.id === item.id);
+      if (idx >= 0) {
+        selectItem(idx);
+      }
+    });
+    if (label.includes('收藏')) {
+      d.addEventListener('contextmenu', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        showContextMenu(e.clientX, e.clientY, item);
+      });
+    }
+    container.appendChild(d);
+  });
+}
+
+// ── Render List ──────────────────────────────────────────────────────
+function renderList() {
+  const body = document.getElementById('listBody');
+  body.innerHTML = '';
+  const start = currentPage * PAGE_SIZE;
+  const page = filteredItems.slice(start, start + PAGE_SIZE);
+
+  if (page.length === 0) {
+    body.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div>没有匹配的素材</div>';
+    document.getElementById('pagination').innerHTML = '';
+    document.getElementById('resultCount').textContent = '共 0 个结果';
+    return;
+  }
+
+  page.forEach((item, i) => {
+    const idx = start + i;
+    const row = document.createElement('div');
+    row.className = 'list-row' + (idx === selectedIdx ? ' selected' : '');
+    row.dataset.idx = idx;
+
+    const icon = document.createElement('div');
+    icon.className = 'type-icon';
+    icon.style.background = TYPE_COLORS[item.type] || '#666';
+    icon.textContent = TYPE_ICONS[item.type] || '?';
+    row.appendChild(icon);
+
+    const name = document.createElement('span');
+    name.className = 'row-name';
+    name.textContent = item.name;
+    row.appendChild(name);
+
+    if (favItems.includes(item.id)) {
+      const star = document.createElement('span');
+      star.className = 'star-mark';
+      star.textContent = '★';
+      row.appendChild(star);
+    }
+
+    const idSpan = document.createElement('span');
+    idSpan.className = 'row-id';
+    idSpan.textContent = item.id;
+    row.appendChild(idSpan);
+
+    row.addEventListener('click', () => selectItem(idx));
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, item);
+    });
+    body.appendChild(row);
+  });
+
+  updatePagination();
+  document.getElementById('resultCount').textContent = `共 ${filteredItems.length} 个结果`;
+}
+
+function updatePagination() {
+  const total = Math.ceil(filteredItems.length / PAGE_SIZE);
+  const el = document.getElementById('pagination');
+  el.innerHTML = '';
+  const prev = document.createElement('button');
+  prev.textContent = '‹';
+  prev.disabled = currentPage <= 0;
+  prev.addEventListener('click', () => { if (currentPage > 0) { currentPage--; renderList(); } });
+  el.appendChild(prev);
+
+  const maxShow = 5;
+  let start = Math.max(0, currentPage - Math.floor(maxShow/2));
+  let end = Math.min(total, start + maxShow);
+  if (end - start < maxShow) start = Math.max(0, end - maxShow);
+
+  for (let i = start; i < end; i++) {
+    const btn = document.createElement('button');
+    btn.textContent = i + 1;
+    if (i === currentPage) btn.className = 'active';
+    btn.addEventListener('click', () => { currentPage = i; renderList(); });
+    el.appendChild(btn);
+  }
+
+  const next = document.createElement('button');
+  next.textContent = '›';
+  next.disabled = currentPage >= total - 1;
+  next.addEventListener('click', () => { if (currentPage < total - 1) { currentPage++; renderList(); } });
+  el.appendChild(next);
+}
+
+function selectItem(idx) {
+  if (idx < 0 || idx >= filteredItems.length) return;
+  selectedIdx = idx;
+  renderList();
+  renderDetail(filteredItems[idx]);
+  // add to history
+  const item = filteredItems[idx];
+  historyItems = historyItems.filter(id => id !== item.id);
+  historyItems.unshift(item.id);
+  if (historyItems.length > 20) historyItems.pop();
+}
+
+function renderDetail(item) {
+  if (!item) {
+    document.getElementById('detailView').innerHTML =
+      '<div class="empty-state"><div class="empty-icon">🔍</div>选择一个素材查看详情</div>';
+    return;
+  }
+  const el = document.getElementById('detailView');
+  const color = TYPE_COLORS[item.type] || '#666';
+  const typeLabel = item.type;
+  const isFav = favItems.includes(item.id);
+
+  el.innerHTML = `
+    <div class="preview-area">
+      <div class="placeholder">${TYPE_ICONS[item.type] || '📦'}</div>
+      <div class="placeholder-label">${item.id} — 预览图</div>
+    </div>
+    <div class="info-card">
+      <div class="detail-name">${item.name}</div>
+      <div class="detail-id">#${item.id}</div>
+      <div class="detail-tags">
+        <span class="detail-tag" style="background:${color}">${typeLabel}</span>
+      </div>
+      <div class="detail-desc">${item.desc || '暂无描述'}</div>
+    </div>
+    <div class="related-section">
+      <div class="related-title">🎯 怪物掉落</div>
+      <div class="related-content">
+        ${item.related.drops.length ? item.related.drops.map(m => `<a>${m}</a>`).join('、') : '<span style="color:var(--text-muted)">暂无掉落信息</span>'}
+      </div>
+    </div>
+    <div class="related-section">
+      <div class="related-title">🏪 NPC 售卖</div>
+      <div class="related-content">
+        ${item.related.npcSells.length ? item.related.npcSells.map(n => `<a>${n}</a>`).join('、') : '<span style="color:var(--text-muted)">无 NPC 售卖</span>'}
+      </div>
+    </div>
+    <div class="related-section">
+      <div class="related-title">🗺️ 出现地图</div>
+      <div class="related-content">
+        ${item.related.maps.length ? item.related.maps.map(m => `<a>${m}</a>`).join('、') : '<span style="color:var(--text-muted)">无相关地图</span>'}
+      </div>
+    </div>
+    <div class="action-buttons">
+      <button class="action-btn primary" onclick="alert('📩 素材已发送到桌宠！')">📩 发送到桌宠</button>
+      <button class="action-btn secondary" onclick="toggleFav(${item.id})">${isFav ? '★ 已收藏' : '☆ 收藏'}</button>
+      <button class="action-btn link-btn" onclick="window.open('https://mxd.dvg.cn','_blank')">🔗 在 mxd.dvg.cn 查看</button>
+      <button class="action-btn secondary" onclick="alert('⬇ 批量下载功能')">⬇ 批量下载</button>
+    </div>
+  `;
+}
+
+// ── Search ───────────────────────────────────────────────────────────
+function onSearchInput(val) {
+  const wrapper = document.getElementById('searchWrapper');
+  wrapper.classList.toggle('has-text', val.length > 0);
+  if (val.length > 0) {
+    showSearchSuggestions(val);
+  } else {
+    hideSearchPopover();
+    filteredItems = [...allItems];
+    currentPage = 0;
+    selectedIdx = -1;
+    renderList();
+    renderDetail(null);
+  }
+}
+
+function onSearchFocus() {
+  const val = document.getElementById('searchInput').value;
+  if (val.length > 0) showSearchSuggestions(val);
+}
+
+function showSearchSuggestions(val) {
+  const pop = document.getElementById('searchPopover');
+  const q = val.toLowerCase();
+  const matches = allItems.filter(i =>
+    i.name.toLowerCase().includes(q) || String(i.id).includes(q)
+  ).slice(0, 8);
+
+  if (matches.length === 0) { pop.classList.remove('show'); return; }
+
+  pop.innerHTML = matches.map(item => `
+    <div class="search-suggestion" data-id="${item.id}">
+      <span class="type-icon" style="background:${TYPE_COLORS[item.type]}">${TYPE_ICONS[item.type]}</span>
+      <span class="sug-name">${highlightMatch(item.name, q)}</span>
+      <span class="sug-id">#${item.id}</span>
+    </div>
+  `).join('') + `<div class="popover-footer" onclick="submitSearch()">查看更多结果 →</div>`;
+
+  pop.querySelectorAll('.search-suggestion').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = parseInt(el.dataset.id);
+      const idx = filteredItems.findIndex(i => i.id === id);
+      if (idx >= 0) selectItem(idx);
+      else {
+        // search in all items
+        const item = allItems.find(i => i.id === id);
+        if (item) {
+          filteredItems = [item];
+          currentPage = 0; selectedIdx = 0;
+          renderList(); renderDetail(item);
+        }
+      }
+      hideSearchPopover();
+    });
+  });
+  pop.classList.add('show');
+}
+
+function highlightMatch(text, q) {
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return text;
+  return text.slice(0, idx) + '<strong style="color:var(--accent)">' + text.slice(idx, idx+q.length) + '</strong>' + text.slice(idx+q.length);
+}
+
+function submitSearch() {
+  const val = document.getElementById('searchInput').value.toLowerCase();
+  filteredItems = allItems.filter(i =>
+    i.name.toLowerCase().includes(val) || String(i.id).includes(val)
+  );
+  currentPage = 0; selectedIdx = -1;
+  renderList();
+  renderDetail(null);
+  hideSearchPopover();
+}
+
+function hideSearchPopover() {
+  document.getElementById('searchPopover').classList.remove('show');
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchWrapper').classList.remove('has-text');
+  filteredItems = [...allItems];
+  currentPage = 0; selectedIdx = -1;
+  renderList();
+  renderDetail(null);
+  hideSearchPopover();
+  document.getElementById('searchInput').focus();
+}
+
+function onSearchKeydown(e) {
+  if (e.key === 'Enter') {
+    submitSearch();
+  }
+}
+
+// ── Filters ──────────────────────────────────────────────────────────
+function toggleFilters() {
+  const bar = document.getElementById('filterBar');
+  bar.classList.toggle('open');
+}
+
+function toggleFilterChip(el) {
+  el.classList.toggle('active');
+}
+
+// ── Sort ─────────────────────────────────────────────────────────────
+function sortList(field) {
+  if (currentSort.field === field) {
+    currentSort.asc = !currentSort.asc;
+  } else {
+    currentSort.field = field;
+    currentSort.asc = true;
+  }
+  // update header arrows
+  document.querySelectorAll('.list-header .th').forEach(th => {
+    const sf = th.dataset.sort;
+    th.classList.toggle('sorted', sf === field);
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = sf === field ? (currentSort.asc ? '▲' : '▼') : '';
+  });
+  // sort
+  filteredItems.sort((a, b) => {
+    let va = a[field], vb = b[field];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return currentSort.asc ? -1 : 1;
+    if (va > vb) return currentSort.asc ? 1 : -1;
+    return 0;
+  });
+  currentPage = 0;
+  renderList();
+}
+
+// ── Favorites ────────────────────────────────────────────────────────
+function toggleFav(id) {
+  const idx = favItems.indexOf(id);
+  if (idx >= 0) {
+    favItems.splice(idx, 1);
+    const item = allItems.find(i => i.id === id);
+    if (item) item.isFav = false;
+  } else {
+    favItems.push(id);
+    const item = allItems.find(i => i.id === id);
+    if (item) item.isFav = true;
+  }
+  renderList();
+  const sel = filteredItems[selectedIdx];
+  if (sel) renderDetail(sel);
+}
+
+// ── Context Menu ─────────────────────────────────────────────────────
+function showContextMenu(x, y, item) {
+  const menu = document.getElementById('contextMenu');
+  menu.innerHTML = `
+    <div class="context-menu-item" onclick="toggleFav(${item.id});hideContextMenu()">
+      ${favItems.includes(item.id) ? '☆ 取消收藏' : '★ 添加到收藏'}
+    </div>
+    <div class="context-menu-item danger" onclick="removeFav(${item.id});hideContextMenu()">
+      🗑 移除收藏
+    </div>
+  `;
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.classList.add('show');
+}
+
+function removeFav(id) {
+  const idx = favItems.indexOf(id);
+  if (idx >= 0) favItems.splice(idx, 1);
+  const item = allItems.find(i => i.id === id);
+  if (item) item.isFav = false;
+  renderList();
+  const sel = filteredItems[selectedIdx];
+  if (sel) renderDetail(sel);
+}
+
+function hideContextMenu() {
+  document.getElementById('contextMenu').classList.remove('show');
+}
+document.addEventListener('click', hideContextMenu);
+
+// ── Keyboard nav ─────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (selectedIdx < filteredItems.length - 1) selectItem(selectedIdx + 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (selectedIdx > 0) selectItem(selectedIdx - 1);
+  } else if (e.key === 'Enter' && selectedIdx >= 0) {
+    e.preventDefault();
+    // simulate "send to pet"
+    const item = filteredItems[selectedIdx];
+    if (item) alert(`📩 ${item.name} 已发送到桌宠！`);
+  }
+});
+
+// ── Splitter drag ────────────────────────────────────────────────────
+function initSplitters() {
+  const s1 = document.getElementById('splitter1');
+  const s2 = document.getElementById('splitter2');
+  const pLeft = document.getElementById('panelLeft');
+  const pMid = document.getElementById('panelMid');
+  const container = document.querySelector('.body');
+
+  function makeDraggable(splitter, target, isFirst) {
+    let startX, startSize;
+
+    splitter.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startSize = target.offsetWidth;
+      splitter.classList.add('active');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    function onMove(e) {
+      const dx = e.clientX - startX;
+      let newSize = startSize + dx;
+      const min = isFirst ? 140 : 200;
+      const max = isFirst ? 320 : 500;
+      newSize = Math.max(min, Math.min(max, newSize));
+      target.style.width = newSize + 'px';
+    }
+
+    function onUp() {
+      splitter.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+  }
+
+  makeDraggable(s1, pLeft, true);
+  makeDraggable(s2, pMid, false);
+}
+
+// ── Window controls ──────────────────────────────────────────────────
+function closeApp() { alert('关闭窗口'); }
+function minimizeApp() { alert('最小化窗口'); }
+function zoomApp() { alert('最大化窗口'); }
+
+// ── Init ─────────────────────────────────────────────────────────────
+function init() {
+  renderTree();
+  filteredItems = [...allItems];
+  // sort default by name
+  currentSort = { field: 'name', asc: true };
+  filteredItems.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  renderList();
+  if (filteredItems.length > 0) selectItem(0);
+  initSplitters();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+</body>
+</html>

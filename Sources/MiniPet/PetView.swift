@@ -19,6 +19,9 @@ class PetView: NSView {
     var dragActive = false
     var lastSessionSize: Int = 0
 
+    // F9: Session-only temporary default animation (nil = use mob's persisted default -> stand)
+    var defaultAnim: String?
+
     // Timers
     var frameTimer: Timer?
     var idleTimer: Timer?
@@ -29,15 +32,33 @@ class PetView: NSView {
     var hermesActive = false
     var hermesCooldown: DispatchWorkItem?
 
+    // Map background
+    var currentMapId: String? {
+        didSet { statusBar?.refresh() }
+    }
+    var mapZoom: CGFloat = 1.0
+
     // References
     weak var terminalView: TerminalView?
     weak var statusBar: StatusBarController?
     weak var balloonView: ChatBalloonView?
+    weak var hermesClient: HermesClient?
+
+    // Panel controllers (lazily instantiated, held to keep them alive)
+    private var settingsPanelController: SettingsPanelController?
+    private var materialBrowserPanel: MaterialBrowserPanel?
+    private var hermesPanel: HermesPanel?
 
     // Available mob list
     var mobList: [MobInfo] = MobStore.load() {
         didSet { MobStore.save(mobList) }
     }
+
+    // Available NPC list
+    var npcList: [MobInfo] = []
+
+    // Current entity type: "mob" or "npc"
+    var entityType: String = "mob"
 
     // Store strip CGImages + per-animation origin
     var strips: [String: (cg: CGImage, fw: Int, fh: Int, count: Int, ox: Int, oy: Int)] = [:]
@@ -100,23 +121,130 @@ class PetView: NSView {
                 }
                 self.switchTo(anim)
                 self.startTimers()
+                self.observeMaterialBrowserSendToPet()
                 self.statusBar?.refresh()
             }
         }
     }
 
+    // MARK: - Panel Wiring
+
+    /// Listen for "MaterialBrowserSendToPet" notification to switch pet monster
+    private func observeMaterialBrowserSendToPet() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMaterialBrowserSendToPet(_:)),
+            name: Notification.Name("MaterialBrowserSendToPet"),
+            object: nil
+        )
+    }
+
+    @objc private func handleMaterialBrowserSendToPet(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let mobId = userInfo["mobId"] as? String else { return }
+        logDebug("MaterialBrowserSendToPet: mobId=\(mobId)")
+        // Switch directly using mobId (if the mob is already in the list, reuse it)
+        if mobList.contains(where: { $0.code == mobId }) {
+            menuSwitchMobWithCode(mobId)
+        } else {
+            // If not in the list, add it first
+            let onSuccess: (String) -> Void = { [weak self] code in
+                self?.menuSwitchMobWithCode(code)
+            }
+            addMobWithCode(mobId, onSuccess: onSuccess)
+        }
+    }
+
+    /// Switch to a mob by code (like menuSwitchMob but directly by code)
+    private func menuSwitchMobWithCode(_ code: String) {
+        guard code != mobId else { return }
+        let previousMobId = mobId
+        mobId = code
+        statusBar?.refresh()
+        Task {
+            let loaded = await loadSprites(for: code)
+            await MainActor.run {
+                if loaded {
+                    self.switchTo(self.bestDefaultAnim())
+                    self.statusBar?.refresh()
+                } else {
+                    self.mobId = previousMobId
+                    self.statusBar?.refresh()
+                    logDebug("menuSwitchMobWithCode: failed to load \(code), restored \(previousMobId)")
+                }
+            }
+        }
+    }
+
+    /// Add a mob by code and call onSuccess when done
+    private func addMobWithCode(_ code: String, onSuccess: @escaping (String) -> Void) {
+        DispatchQueue.main.async {
+            Task {
+                let api = APIClient()
+                let apiName = await api.fetchMobName(mobId: code) ?? code
+                let existing = self.mobList.first(where: { $0.name == apiName && $0.code != code })
+                let displayName = existing != nil ? "\(apiName) (\(code))" : apiName
+                _ = await api.fetchAndGenerateSprites(mobId: code, type: "mob")
+                let cm = CacheManager(mobId: code, entityType: "mob")
+                let priority = ["stand", "say", "mouse", "move", "hand", "laugh", "eye", "fly", "die"]
+                let keys = cm.loadConfig()?.sprites.keys.map { $0 } ?? []
+                let firstAnim = priority.first(where: { keys.contains($0) }) ?? keys.sorted().first ?? "stand"
+                await MainActor.run {
+                    if !self.mobList.contains(where: { $0.code == code }) {
+                        self.mobList.append(MobInfo(code: code, name: displayName, defaultAnim: firstAnim, type: "mob"))
+                        self.statusBar?.refresh()
+                    }
+                    onSuccess(code)
+                }
+            }
+        }
+    }
+
+    // MARK: - Panel Menu Actions
+
+    @objc private func openSettingsPanel() {
+        if settingsPanelController == nil {
+            settingsPanelController = SettingsPanelController(petView: self)
+        }
+        settingsPanelController?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func openMaterialBrowserPanel() {
+        if materialBrowserPanel == nil {
+            materialBrowserPanel = MaterialBrowserPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+        }
+        materialBrowserPanel?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func openHermesPanel() {
+        if hermesPanel == nil {
+            hermesPanel = HermesPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
+                petView: self,
+                hermesClient: hermesClient
+            )
+        }
+        hermesPanel?.makeKeyAndOrderFront(nil)
+    }
+
     func loadSprites(for mobId: String, isInitial: Bool = false) async -> Bool {
-        let cm = CacheManager(mobId: mobId)
+        let et = entityType
+        let cm = CacheManager(mobId: mobId, entityType: et)
 
         if cm.isCached, let config = cm.loadConfig() {
-            logDebug("Cache hit for mob \(mobId)")
+            logDebug("Cache hit for \(et) \(mobId)")
             await MainActor.run { self.applyConfig(config, cacheDir: cm.dir, isInitial: isInitial) }
             return true
         }
 
         let api = APIClient()
-        if await api.fetchAndGenerateSprites(mobId: mobId), let config = cm.loadConfig() {
-            logDebug("API sprites generated for mob \(mobId)")
+        if await api.fetchAndGenerateSprites(mobId: mobId, type: et), let config = cm.loadConfig() {
+            logDebug("API sprites generated for \(et) \(mobId)")
             await MainActor.run { self.applyConfig(config, cacheDir: cm.dir, isInitial: isInitial) }
             return true
         }
@@ -126,7 +254,7 @@ class PetView: NSView {
             return false
         }
 
-        logDebug("No sprites available for mob \(mobId)")
+        logDebug("No sprites available for \(et) \(mobId)")
         return false
     }
 
@@ -313,6 +441,9 @@ class PetView: NSView {
     }
 
     func bestDefaultAnim() -> String {
+        // F9: session-only defaultAnim takes highest priority
+        if let da = defaultAnim, strips[da] != nil { return da }
+        // Persisted defaultAnim per mob
         if let d = mobList.first(where: { $0.code == mobId })?.defaultAnim, strips[d] != nil { return d }
         let priority = ["stand", "fly", "say", "move", "hand", "die", "skill1", "attack1"]
         for prefix in priority {
@@ -384,19 +515,36 @@ class PetView: NSView {
         // Cache miss — fetch from API async
         Task {
             let api = APIClient()
-            if let result = await api.fetchBalloonTiles(balloonId: bid) {
+            // Fetch tiles, origins, and clr in parallel
+            async let tilesResult = api.fetchBalloonTiles(balloonId: bid)
+            async let originsResult = api.fetchBalloonOrigins(balloonId: bid)
+            async let clrResult = api.fetchBalloonClr(balloonId: bid)
+
+            if let tiles = await tilesResult {
+                let origins = await originsResult
+                var withOrigins: [String: BalloonTileInfo] = [:]
+                let names = ["nw", "n", "head", "ne", "w", "c", "e", "sw", "s", "arrow", "se"]
+                for name in names {
+                    if let data = tiles[name] {
+                        let origin = origins[name] ?? .zero
+                        withOrigins[name] = BalloonTileInfo(data: data, origin: origin, url: "")
+                    }
+                }
                 await MainActor.run {
-                    self.balloonView?.loadTileData(result)
+                    self.balloonView?.loadTileDataWithInfo(withOrigins)
                     self.balloonView?.saveTilesToCache(balloonId: bid)
                 }
             }
-            if let clr = await api.fetchBalloonClr(balloonId: bid) {
-                let a = CGFloat((clr >> 24) & 0xFF) / 255.0
-                let r = CGFloat((clr >> 16) & 0xFF) / 255.0
-                let g = CGFloat((clr >> 8) & 0xFF) / 255.0
-                let b = CGFloat(clr & 0xFF) / 255.0
+            if let clr = await clrResult {
+                // MapleSalon2 getWzClrColor: 0xffffff + 1 + clr
+                // Result is BGRA with alpha=0xFF (B=bits 0-7, G=bits 8-15, R=bits 16-23, A=bits 24-31)
+                // For clr=-1, result = 0xffffff (white)
+                let colorValue = UInt32(truncatingIfNeeded: 0xffffff + 1 + clr)
+                let r = CGFloat((colorValue >> 16) & 0xFF) / 255.0
+                let g = CGFloat((colorValue >> 8) & 0xFF) / 255.0
+                let b = CGFloat(colorValue & 0xFF) / 255.0
                 await MainActor.run {
-                    self.balloonView?.textColor = NSColor(calibratedRed: r, green: g, blue: b, alpha: a)
+                    self.balloonView?.textColor = NSColor(calibratedRed: r, green: g, blue: b, alpha: 1.0)
                 }
             }
         }
@@ -424,10 +572,20 @@ class PetView: NSView {
         let animItem = NSMenuItem(title: "切换动画", action: nil, keyEquivalent: "")
         let animMenu = NSMenu()
         for name in strips.keys.sorted() {
-            animMenu.addItem(NSMenuItem(title: name, action: #selector(menuSwitchAnimation(_:)), keyEquivalent: ""))
+            let item = NSMenuItem(title: name, action: #selector(menuSwitchAnimation(_:)), keyEquivalent: "")
+            let sub = NSMenu()
+            let setDefaultItem = NSMenuItem(title: "设为默认动画", action: #selector(setDefaultAnim(_:)), keyEquivalent: "")
+            setDefaultItem.representedObject = name
+            if defaultAnim == name { setDefaultItem.state = .on }
+            sub.addItem(setDefaultItem)
+            item.submenu = sub
+            animMenu.addItem(item)
         }
-        animMenu.addItem(.separator())
-        animMenu.addItem(NSMenuItem(title: "设为默认动画", action: #selector(setDefaultAnim(_:)), keyEquivalent: ""))
+        if defaultAnim != nil {
+            animMenu.addItem(.separator())
+            let resetItem = NSMenuItem(title: "恢复默认(stand)", action: #selector(resetDefaultAnim(_:)), keyEquivalent: "")
+            animMenu.addItem(resetItem)
+        }
         animItem.submenu = animMenu
         menu.addItem(animItem)
 
@@ -438,7 +596,7 @@ class PetView: NSView {
             let item = NSMenuItem(title: "\(mob.name) (\(mob.code))",
                                   action: #selector(menuSwitchMob(_:)), keyEquivalent: "")
             item.representedObject = mob.code
-            if mob.code == mobId { item.state = .on }
+            if mob.code == mobId, entityType == "mob" { item.state = .on }
             let renameItem = NSMenuItem(title: "重命名", action: #selector(renameMob(_:)), keyEquivalent: "")
             renameItem.representedObject = mob.code
             let deleteItem = NSMenuItem(title: "删除", action: #selector(deleteMob(_:)), keyEquivalent: "")
@@ -451,6 +609,21 @@ class PetView: NSView {
         mobMenu.addItem(NSMenuItem(title: "添加怪物…", action: #selector(addMob), keyEquivalent: "n"))
         mobItem.submenu = mobMenu
         menu.addItem(mobItem)
+
+        // NPC submenu
+        let npcItem = NSMenuItem(title: "切换NPC", action: nil, keyEquivalent: "")
+        let npcMenu = NSMenu()
+        for npc in npcList {
+            let item = NSMenuItem(title: "\(npc.name) (\(npc.code))",
+                                  action: #selector(menuSwitchNpc(_:)), keyEquivalent: "")
+            item.representedObject = npc.code
+            if npc.code == mobId, entityType == "npc" { item.state = .on }
+            npcMenu.addItem(item)
+        }
+        npcMenu.addItem(.separator())
+        npcMenu.addItem(NSMenuItem(title: "添加NPC…", action: #selector(addNpc), keyEquivalent: ""))
+        npcItem.submenu = npcMenu
+        menu.addItem(npcItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "居中", action: #selector(centerOriginOnScreen), keyEquivalent: "c"))
@@ -468,6 +641,40 @@ class PetView: NSView {
         menu.addItem(balloonItem)
 
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "设置面板", action: #selector(openSettingsPanel), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "素材浏览器", action: #selector(openMaterialBrowserPanel), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Hermes AI", action: #selector(openHermesPanel), keyEquivalent: ""))
+
+        // Background submenu
+        let bgItem = NSMenuItem(title: "切换背景", action: nil, keyEquivalent: "")
+        let bgMenu = NSMenu()
+        let transparentItem = NSMenuItem(title: "透明背景", action: #selector(menuSwitchMap(_:)), keyEquivalent: "")
+        transparentItem.representedObject = ""
+        if currentMapId == nil || currentMapId?.isEmpty == true { transparentItem.state = .on }
+        bgMenu.addItem(transparentItem)
+        bgMenu.addItem(.separator())
+        for map in classicMaps {
+            let item = NSMenuItem(title: "\(map.name) (\(map.id))", action: #selector(menuSwitchMap(_:)), keyEquivalent: "")
+            item.representedObject = map.id
+            if currentMapId == map.id { item.state = .on }
+            bgMenu.addItem(item)
+        }
+        bgMenu.addItem(.separator())
+        // Zoom submenu
+        let zoomItem = NSMenuItem(title: "缩放", action: nil, keyEquivalent: "")
+        let zoomMenu = NSMenu()
+        for (label, z) in [("0.5x", 0.5), ("1x", 1.0), ("2x", 2.0)] {
+            let zi = NSMenuItem(title: label, action: #selector(menuSetMapZoom(_:)), keyEquivalent: "")
+            zi.representedObject = z
+            if abs(mapZoom - CGFloat(z)) < 0.01 { zi.state = .on }
+            zoomMenu.addItem(zi)
+        }
+        zoomItem.submenu = zoomMenu
+        bgMenu.addItem(zoomItem)
+        bgItem.submenu = bgMenu
+        menu.addItem(bgItem)
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MiniPet", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -479,8 +686,23 @@ class PetView: NSView {
     }
 
     @objc func setDefaultAnim(_ sender: NSMenuItem) {
-        guard let idx = mobList.firstIndex(where: { $0.code == mobId }) else { return }
-        mobList[idx].defaultAnim = cur
+        guard let animName = sender.representedObject as? String else { return }
+
+        // Prevent oneShot animations (attack*, skill*, hit, happy, alert, die) from being set as default
+        let oneShotPrefixes = ["attack", "skill", "hit", "happy", "alert", "die"]
+        let isOneShotAnim = oneShotPrefixes.contains { animName.hasPrefix($0) }
+        if isOneShotAnim {
+            logDebug("setDefaultAnim rejected: \(animName) is a oneShot animation")
+            return
+        }
+
+        guard strips[animName] != nil else { return }
+        defaultAnim = animName
+        statusBar?.refresh()
+    }
+
+    @objc func resetDefaultAnim(_ sender: NSMenuItem) {
+        defaultAnim = nil
         statusBar?.refresh()
     }
 
@@ -646,6 +868,82 @@ class PetView: NSView {
             currentBalloonId = ids[(idx + 1) % ids.count]
         } else {
             currentBalloonId = 560
+        }
+    }
+
+    // MARK: - Map Background Actions
+
+    @objc func menuSwitchMap(_ sender: NSMenuItem) {
+        guard let mapId = sender.representedObject as? String else { return }
+
+        if mapId.isEmpty {
+            // 切换到透明背景（无地图）
+            currentMapId = nil
+            guard let container = superview as? ContainerView else { return }
+            container.hideBackground()
+            return
+        }
+
+        currentMapId = mapId
+        guard let container = superview as? ContainerView else { return }
+        container.showBackground(mapId: mapId)
+    }
+
+    @objc func menuSetMapZoom(_ sender: NSMenuItem) {
+        guard let z = sender.representedObject as? Double else { return }
+        mapZoom = CGFloat(z)
+        guard let container = superview as? ContainerView else { return }
+        container.setMapZoom(mapZoom)
+    }
+
+    @objc func addNpc() {
+        DispatchQueue.main.async {
+            InputDialog.ask(message: "添加NPC",
+                            info: "输入NPC code，逗号/换行分隔：") { raw in
+                guard let raw, !raw.isEmpty else { return }
+                let codes = raw.components(separatedBy: CharacterSet(charactersIn: ",\n;"))
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                guard !codes.isEmpty else { return }
+                Task {
+                    let api = APIClient()
+                    for code in codes {
+                        let apiName = await api.fetchNpcName(npcId: code) ?? code
+                        _ = await api.fetchAndGenerateSprites(mobId: code, type: "npc")
+                        let cm = CacheManager(mobId: code, entityType: "npc")
+                        let priority = ["stand", "say", "mouse", "move", "hand", "laugh", "eye", "fly", "die"]
+                        let keys = cm.loadConfig()?.sprites.keys.map { $0 } ?? []
+                        let firstAnim = priority.first(where: { keys.contains($0) }) ?? keys.sorted().first ?? "stand"
+                        await MainActor.run {
+                            if !self.npcList.contains(where: { $0.code == code }) {
+                                self.npcList.append(MobInfo(code: code, name: apiName, defaultAnim: firstAnim, type: "npc"))
+                                self.statusBar?.refresh()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @objc func menuSwitchNpc(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String, code != mobId || entityType != "npc" else { return }
+        let previousMobId = mobId
+        entityType = "npc"
+        mobId = code
+        statusBar?.refresh()
+        Task {
+            let loaded = await loadSprites(for: code)
+            await MainActor.run {
+                if loaded {
+                    self.switchTo(self.bestDefaultAnim())
+                    self.statusBar?.refresh()
+                } else {
+                    self.entityType = "mob"
+                    self.mobId = previousMobId
+                    logDebug("menuSwitchNpc: failed to load \(code), restored \(previousMobId)")
+                }
+            }
         }
     }
 }

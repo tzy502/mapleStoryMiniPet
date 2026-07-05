@@ -56,7 +56,7 @@ def parse_origins_from_xml(xml_text):
     return origins
 
 
-def align_by_wz_origin(anims_frames, mob_code, api_base, pad=4, global_origin=None):
+def align_by_wz_origin(anims_frames, mob_code, api_base, pad=4, global_origin=None, entity_type='mob'):
     """
     Align ALL animations to a shared global origin point.
     Returns (result, origins) where origins is {anim_name: (originX, originY)}.
@@ -68,9 +68,10 @@ def align_by_wz_origin(anims_frames, mob_code, api_base, pad=4, global_origin=No
     all_origins = []  # (ox, oy)
     anim_matched = {}  # {anim_name: [(img, ox, oy), ...]}
     has_wz_data = False
+    wz_prefix = 'Npc' if entity_type == 'npc' else 'Mob'
 
     for anim_name, frames in anims_frames.items():
-        xml_path = f'Mob/{mob_code}.img/{anim_name}'
+        xml_path = f'{wz_prefix}/{mob_code}.img/{anim_name}'
         xml_text = fetch_wz_xml(api_base, xml_path)
         origin_dict = parse_origins_from_xml(xml_text)
 
@@ -225,19 +226,21 @@ def api_get_image(api_base, path):
 # ══════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description='Fetch mob frames and generate sprite strips')
+    parser = argparse.ArgumentParser(description='Fetch mob/npc frames and generate sprite strips')
     parser.add_argument('mob_code', nargs='?', help='Mob code (e.g. 8880150), or comma-separated list')
     parser.add_argument('--api', default='http://127.0.0.1:10502', help='API base URL (tries 127.0.0.1 first)')
     parser.add_argument('--out', default=None, help='Output cache dir (default: ~/Library/Caches/MiniPet/{code})')
     parser.add_argument('--delete', action='store_true', help='Delete cached sprites for specified codes')
     parser.add_argument('--update', action='store_true', help='Force re-fetch even if cache exists')
+    parser.add_argument('--type', default='mob', choices=['mob', 'npc'], help='Entity type: mob or npc (default: mob)')
     args = parser.parse_args()
 
     if not args.mob_code:
-        print("用法: python3 fetch_and_generate.py <code>[,code2,...] [--delete|--update]")
+        print("用法: python3 fetch_and_generate.py <code>[,code2,...] [--delete|--update] [--type mob|npc]")
         sys.exit(1)
 
     codes = [c.strip() for c in args.mob_code.split(',') if c.strip()]
+    entity_type = args.type
     api_base = args.api.rstrip('/')
     # Auto-detect: try health check, if fails, try fallback
     fallback = 'http://192.168.3.46:10502'
@@ -258,13 +261,14 @@ def main():
     if len(codes) > 1:
         # ── Batch merge mode ──
         merged_dir = '_'.join(codes)
-        out_dir = args.out or os.path.expanduser(f'~/Library/Caches/MiniPet/{merged_dir}')
+        prefix_dir = f'{entity_type}_{merged_dir}'
+        out_dir = args.out or os.path.expanduser(f'~/Library/Caches/MiniPet/{prefix_dir}')
         raw_dir = os.path.join(out_dir, 'raw')
 
         if args.delete:
             import shutil
             for code in codes:
-                d = os.path.expanduser(f'~/Library/Caches/MiniPet/{code}')
+                d = os.path.expanduser(f'~/Library/Caches/MiniPet/{entity_type}_{code}')
                 if os.path.exists(d):
                     shutil.rmtree(d)
                     print(f'  Deleted individual cache: {d}')
@@ -280,11 +284,12 @@ def main():
                         os.remove(os.path.join(out_dir, f))
                 print(f'  Merged cache cleared for {",".join(codes)}')
 
-        _process_batch(codes, api_base, out_dir, raw_dir)
+        _process_batch(codes, api_base, out_dir, raw_dir, entity_type)
     else:
         # ── Single code mode ──
         for code in codes:
-            out_dir = args.out or os.path.expanduser(f'~/Library/Caches/MiniPet/{code}')
+            cache_prefix = f'{entity_type}_{code}'
+            out_dir = args.out or os.path.expanduser(f'~/Library/Caches/MiniPet/{cache_prefix}')
             raw_dir = os.path.join(out_dir, 'raw')
 
             if args.delete:
@@ -303,16 +308,72 @@ def main():
                         if f.endswith('.png') or f == 'pet_config.json':
                             os.remove(os.path.join(out_dir, f))
                     print(f'  Cache cleared for {code}')
-            _process_mob(code, api_base, out_dir, raw_dir)
+            _process_mob(code, api_base, out_dir, raw_dir, entity_type)
 
 
-def _fetch_code_groups(code, api_base):
-    """Fetch frame paths for a single mob code. Returns {action: [(frame_num, path), ...]} or None if link."""
+def _fetch_code_groups(code, api_base, entity_type='mob'):
+    """Fetch frame paths for a single code. Returns {action: [(frame_num, path), ...]} or None if link."""
     groups = defaultdict(list)
 
-    # Strategy A: Try Mob/_Canvas/{code}.img
-    try:
-        paths_resp = api_post(api_base, '/api/wz/renderImgPath',
+    if entity_type == 'npc':
+        # NPC path: Npc/_Canvas/{code}.img
+        try:
+            paths_resp = api_post(api_base, '/api/wz/renderImgPath',
+                                  {'type': 'npc', 'code': code,
+                                   'path': f'Npc/_Canvas/{code}.img'})
+        except Exception:
+            paths_resp = {'success': False}
+
+        if paths_resp.get('success') and paths_resp.get('images'):
+            paths = paths_resp['images']
+            for p in paths:
+                parts = p.split('/')
+                if 'info' in parts:
+                    continue
+                if len(parts) < 2 or not parts[-1].isdigit():
+                    continue
+                groups[parts[-2]].append((int(parts[-1]), p))
+            print(f'    Via Npc/_Canvas: {len(paths)} paths, {len(groups)} actions')
+
+        if not groups:
+            print('    Npc/_Canvas not found, trying per-animation tree...')
+            try:
+                tree = api_post(api_base, '/api/wz/tree',
+                                {'type': 'npc', 'code': code,
+                                 'path': f'Npc/{code}.img'})
+                anim_names = []
+                for node in tree:
+                    if node.get('type') == '容器':
+                        anim_names.append(node['name'])
+            except Exception:
+                anim_names = []
+
+            for anim in anim_names:
+                try:
+                    anim_resp = api_post(api_base, '/api/wz/renderImgPath',
+                                         {'type': 'npc', 'code': code,
+                                          'path': f'Npc/{code}.img/{anim}'})
+                    if anim_resp.get('success') and anim_resp.get('images'):
+                        for p in anim_resp['images']:
+                            parts = p.split('/')
+                            if 'info' in parts:
+                                continue
+                            if len(parts) < 2 or not parts[-1].isdigit():
+                                continue
+                            groups[anim].append((int(parts[-1]), p))
+                except Exception:
+                    pass
+
+        for action in sorted(groups):
+            groups[action].sort(key=lambda x: x[0])
+
+        if groups:
+            print(f'    Actions: {", ".join(sorted(groups.keys()))} ({sum(len(v) for v in groups.values())} frames)')
+        return dict(groups)
+    else:
+        # Original mob logic
+        try:
+            paths_resp = api_post(api_base, '/api/wz/renderImgPath',
                               {'type': 'mob', 'code': code,
                                'path': f'Mob/_Canvas/{code}.img'})
     except Exception:
@@ -387,15 +448,15 @@ def _fetch_code_groups(code, api_base):
     return dict(groups)
 
 
-def _process_batch(codes, api_base, out_dir, raw_dir):
+def _process_batch(codes, api_base, out_dir, raw_dir, entity_type='mob'):
     """Batch merge: fetch frames from multiple codes, merge with {action}-{code} naming."""
     first_code = codes[0]
 
     # ── 1. Get mob name from first code ──
-    print(f' [1/5] Fetching mob name for merged mob (primary: {first_code})...')
+    print(f' [1/5] Fetching name for merged {entity_type} (primary: {first_code})...')
     try:
         name_data = api_post(api_base, '/api/wz/data/query/string',
-                             {'type': 'mob', 'code': first_code})
+                             {'type': entity_type, 'code': first_code})
         if isinstance(name_data, list) and name_data:
             mob_name = name_data[0].get('name', ','.join(codes))
         elif isinstance(name_data, dict):
@@ -412,9 +473,9 @@ def _process_batch(codes, api_base, out_dir, raw_dir):
     all_groups = {}  # {code: {action: [(frame_num, path), ...]}}
     for code in codes:
         print(f'  Code {code}:')
-        groups = _fetch_code_groups(code, api_base)
+        groups = _fetch_code_groups(code, api_base, entity_type)
         if groups is None:
-            print(f'    -> links to another mob, skipping')
+            print(f'    -> links to another {entity_type}, skipping')
             continue
         if groups:
             all_groups[code] = groups
@@ -480,7 +541,7 @@ def _process_batch(codes, api_base, out_dir, raw_dir):
     all_wz_origins = []
     for code, anims_frames in code_anims.items():
         for action in anims_frames:
-            xml_path = f'Mob/{code}.img/{action}'
+            xml_path = f'{entity_type.title()}/{code}.img/{action}'
             xml_text = fetch_wz_xml(api_base, xml_path)
             origin_dict = parse_origins_from_xml(xml_text)
             for fn, _ in anims_frames[action]:
@@ -537,18 +598,18 @@ def _process_batch(codes, api_base, out_dir, raw_dir):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
-    print(f'\nDone!  Merged mob: {",".join(codes)} ({mob_name})')
+    print(f'\nDone!  Merged {entity_type}: {",".join(codes)} ({mob_name})')
     print(f'  Output: {out_dir}/')
     print(f'  Config: {config_path}')
 
 
-def _process_mob(code, api_base, out_dir, raw_dir):
-    """Process a single mob: download frames, align, generate strips."""
-    # ── 1. Get mob name ──
-    print(f' [1/5] Fetching mob name for {code}...')
+def _process_mob(code, api_base, out_dir, raw_dir, entity_type='mob'):
+    """Process a single mob/npc: download frames, align, generate strips."""
+    # ── 1. Get name ──
+    print(f' [1/5] Fetching {entity_type} name for {code}...')
     try:
         name_data = api_post(api_base, '/api/wz/data/query/string',
-                             {'type': 'mob', 'code': code})
+                             {'type': entity_type, 'code': code})
         if isinstance(name_data, list) and name_data:
             mob_name = name_data[0].get('name', code)
         elif isinstance(name_data, dict):
@@ -562,7 +623,7 @@ def _process_mob(code, api_base, out_dir, raw_dir):
 
     # ── 2. Get frame paths ──
     print(f' [2/5] Fetching frame paths...')
-    groups = _fetch_code_groups(code, api_base)
+    groups = _fetch_code_groups(code, api_base, entity_type)
     if groups is None:
         return
     if not groups:
@@ -647,7 +708,7 @@ def _process_mob(code, api_base, out_dir, raw_dir):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
-    print(f'\nDone!  Mob: {code} ({mob_name})')
+    print(f'\nDone!  {entity_type.title()}: {code} ({mob_name})')
     print(f'  Output: {out_dir}/')
     print(f'  Config: {config_path}')
 
