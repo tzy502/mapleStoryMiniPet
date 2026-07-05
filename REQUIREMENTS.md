@@ -364,10 +364,6 @@ MiniPet  ←→  Hermes Client (pet-chat 人格)
 | **clr 读取** | `POST /api/wz/property` 不可用时默认 `-1`（白色），后续通过设置页面自定义 |
 | **后端交互** | 所有 wiki 后端通信通过 `APIClient`（Swift），不走独立 Python 脚本 |
 
-**与 bot 的关系**:
-- 气泡是宠物「说话」的视觉载体
-- bot（QQ Bot）负责与 hermes pet-chat 人格交互产生文本
-- MiniPet `BotClient` 接收 bot 回复 → 展示到气泡
 
 **验收标准**:
 - [ ] 右键菜单可测试气泡显示（预置文本）

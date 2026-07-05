@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=960, initial-scale=1.0">
+<title>MiniPet 设置面板 — macOS 原生风格</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a22;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+    padding: 40px 20px;
+  }
+
+  /* ─── Window Frame ─── */
+  .win {
+    width: 920px; height: 680px;
+    background: rgba(38,38,46,0.96);
+    backdrop-filter: blur(32px);
+    -webkit-backdrop-filter: blur(32px);
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── Title Bar ─── */
+  .titlebar {
+    display: flex; align-items: center;
+    padding: 10px 14px 8px; gap: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+  .dots { display: flex; gap: 7px; -webkit-app-region: no-drag; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #FF5F57; }
+  .dot.y { background: #FEBC2E; }
+  .dot.g { background: #28C840; }
+  .title-label { flex:1; text-align:center; font-size:12px; font-weight:600; color:rgba(255,255,255,0.7); letter-spacing:.3px; }
+
+  /* ─── Toolbar ─── */
+  .toolbar {
+    display: flex; padding: 6px 14px 0; gap: 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+  }
+  .tb {
+    padding: 6px 16px 8px; font-size:12px; font-weight:500;
+    color:rgba(255,255,255,0.4); cursor:pointer;
+    border-bottom:2px solid transparent; transition:.15s;
+    -webkit-app-region: no-drag;
+  }
+  .tb:hover { color:rgba(255,255,255,0.7); }
+  .tb.act { color:#5E9CFF; border-bottom-color:#5E9CFF; }
+
+  /* ─── Content ─── */
+  .content { flex:1; display:flex; overflow:hidden; }
+  .tab { display:none; flex:1; }
+  .tab.act { display:flex; }
+
+  /* ─── Panels ─── */
+  .side {
+    width: 240px; flex-shrink:0;
+    border-right:1px solid rgba(255,255,255,0.04);
+    display:flex; flex-direction:column; padding:10px 10px 0;
+  }
+  .side.search { position:relative; }
+  .side.search input {
+    width:100%; padding:7px 8px 7px 28px; border-radius:6px;
+    border:1px solid rgba(255,255,255,0.06);
+    background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.8);
+    font-size:12px; outline:none; font-family:inherit;
+  }
+  .side.search input::placeholder { color:rgba(255,255,255,0.2); }
+  .side.search input:focus { border-color:rgba(94,156,255,0.3); }
+  .side.search .ic { position:absolute; left:8px; top:7px; font-size:11px; color:rgba(255,255,255,0.2); }
+  .seg {
+    display:flex; margin:8px 0;
+    background:rgba(255,255,255,0.04); border-radius:5px;
+    border:1px solid rgba(255,255,255,0.06); overflow:hidden;
+  }
+  .seg div {
+    flex:1; text-align:center; padding:4px 0;
+    font-size:11px; font-weight:500;
+    color:rgba(255,255,255,0.3); cursor:pointer; transition:.12s;
+  }
+  .seg div:hover { color:rgba(255,255,255,0.6); }
+  .seg div.act { background:rgba(94,156,255,0.15); color:#5E9CFF; }
+
+  .list { flex:1; overflow-y:auto; margin:0 -10px; padding:0 10px; }
+  .list::-webkit-scrollbar { width:3px; }
+  .list::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); border-radius:2px; }
+  .lsec { font-size:10px; font-weight:600; color:rgba(255,255,255,0.2); text-transform:uppercase; letter-spacing:.5px; padding:10px 4px 4px; }
+  .li {
+    display:flex; align-items:center; gap:8px; padding:6px 8px;
+    border-radius:5px; cursor:pointer; transition:background .1s;
+  }
+  .li:hover { background:rgba(255,255,255,0.04); }
+  .li.sel { background:rgba(94,156,255,0.1); }
+  .li .thumb {
+    width:28px; height:28px; border-radius:4px;
+    background:rgba(255,255,255,0.03); flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:14px;
+  }
+  .li .info { flex:1; min-width:0; }
+  .li .n { font-size:11px; font-weight:500; color:rgba(255,255,255,0.75); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .li .s { font-size:10px; color:rgba(255,255,255,0.25); font-family:"SF Mono",monospace; }
+  .li .fav { font-size:10px; color:rgba(255,255,255,0.15); cursor:pointer; flex-shrink:0; }
+  .li .fav.on { color:#FFD700; }
+
+  /* Preview area */
+  .pv { flex:1; display:flex; flex-direction:column; padding:14px; }
+  .pv.ct { align-items:center; justify-content:center; }
+
+  .cv {
+    flex:1;
+    background:
+      linear-gradient(45deg, rgba(255,255,255,0.02) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(255,255,255,0.02) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.02) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.02) 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    border-radius:8px; border:1px solid rgba(255,255,255,0.04);
+    display:flex; align-items:center; justify-content:center;
+    position:relative; overflow:hidden;
+  }
+
+  .pv-bar {
+    display:flex; align-items:center; gap:8px; padding-top:10px; flex-wrap:wrap;
+  }
+  .pv-bar input[type=text] {
+    padding:3px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.05);
+    background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.7);
+    font-size:11px; outline:none; font-family:"SF Mono",monospace;
+  }
+  .pv-bar input:focus { border-color:rgba(94,156,255,0.25); }
+  .pv-bar .ab {
+    padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);
+    background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.5);
+    font-size:10px; font-weight:500; cursor:pointer; font-family:inherit; transition:.1s;
+  }
+  .pv-bar .ab:hover { background:rgba(94,156,255,0.1); color:#5E9CFF; }
+  .pv-bar .ab.pri { background:#5E9CFF; color:#fff; border-color:transparent; }
+  .pv-bar .ab.pri:hover { background:#4A8AEE; }
+
+  .pv-bar .nm { font-size:12px; font-weight:500; color:rgba(255,255,255,0.7); }
+
+  /* Zoom */
+  .zr {
+    display:flex; align-items:center; gap:6px; margin-top:6px;
+    & label { font-size:10px; color:rgba(255,255,255,0.3); }
+    & input[type=range] { -webkit-appearance:none; width:100px; height:3px; background:rgba(255,255,255,0.08); border-radius:2px; outline:none; }
+    & input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; border-radius:50%; background:rgba(255,255,255,0.5); cursor:pointer; }
+    & .zv { font-size:10px; color:rgba(255,255,255,0.3); min-width:28px; font-family:"SF Mono",monospace; }
+  }
+
+  /* bg cards */
+  .bgbar { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+  .bgbar > span { font-size:9px; color:rgba(255,255,255,0.2); margin-right:2px; }
+  .bgc {
+    width:48px; cursor:pointer; transition:.1s;
+    & .sw { width:48px; height:32px; border-radius:4px; border:1px solid rgba(255,255,255,0.04); transition:.1s; }
+    &.act .sw { border-color:#5E9CFF; box-shadow:0 0 0 1px rgba(94,156,255,0.2); }
+    & .bl { font-size:8px; color:rgba(255,255,255,0.2); text-align:center; margin-top:2px; white-space:nowrap; }
+  }
+
+  /* Player controls */
+  .pgrid {
+    display:grid; grid-template-columns:1fr 1fr; gap:4px;
+    & .ps {
+      display:flex; align-items:center; gap:6px; padding:4px 6px;
+      border-radius:5px; border:1px solid rgba(255,255,255,0.03);
+      background:rgba(255,255,255,0.015); cursor:pointer; transition:.1s;
+    }
+    & .ps:hover { background:rgba(255,255,255,0.03); }
+    & .ps .pi { width:24px; height:24px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+    & .ps .pn { font-size:10px; color:rgba(255,255,255,0.6); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    & .ps .pid { font-size:9px; color:rgba(255,255,255,0.15); font-family:"SF Mono",monospace; }
+    & .ps .px { font-size:7px; color:rgba(255,255,255,0.15); flex-shrink:0; }
+  }
+
+  .group { margin-bottom:10px; }
+  .gt { font-size:10px; font-weight:600; color:rgba(255,255,255,0.2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; padding-bottom:3px; border-bottom:1px solid rgba(255,255,255,0.04); }
+  .row { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  .row label { font-size:11px; color:rgba(255,255,255,0.45); min-width:44px; flex-shrink:0; }
+  .row input[type=text] { flex:1; padding:3px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.05); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.7); font-size:11px; outline:none; font-family:"SF Mono",monospace; }
+  .row input:focus { border-color:rgba(94,156,255,0.25); }
+  .row .br { font-size:10px; padding:2px 8px; border-radius:3px; border:1px solid rgba(255,255,255,0.05); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.4); cursor:pointer; font-family:inherit; }
+  .row .br:hover { background:rgba(94,156,255,0.08); color:#5E9CFF; }
+
+  .gens { display:flex; border-radius:4px; border:1px solid rgba(255,255,255,0.06); overflow:hidden; }
+  .gens div { padding:2px 12px; font-size:11px; color:rgba(255,255,255,0.3); cursor:pointer; transition:.1s; }
+  .gens div.act { background:rgba(94,156,255,0.12); color:#5E9CFF; }
+
+  .pop { display:flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); color:rgba(255,255,255,0.5); font-size:11px; cursor:pointer; min-width:80px; }
+  .pop::after { content:'▼'; font-size:7px; margin-left:auto; color:rgba(255,255,255,0.2); }
+
+  .nssw { position:relative; width:30px; height:16px; display:inline-block; }
+  .nssw input { display:none; }
+  .nssw .tr { position:absolute; inset:0; background:rgba(255,255,255,0.08); border-radius:8px; cursor:pointer; transition:.2s; }
+  .nssw .tr::before { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; background:#fff; border-radius:50%; transition:.2s; }
+  .nssw input:checked + .tr { background:#5E9CFF; }
+  .nssw input:checked + .tr::before { transform:translateX(14px); }
+
+  .cl { font-size:10px; color:rgba(255,255,255,0.4); }
+
+  .ctrl-row { display:flex; align-items:center; gap:10px; padding-top:8px; flex-wrap:wrap; }
+  .zo {
+    display:flex; align-items:center; gap:4px;
+    & button { width:22px; height:22px; border-radius:4px; border:1px solid rgba(255,255,255,0.05); background:transparent; color:rgba(255,255,255,0.4); font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+    & button:hover { background:rgba(255,255,255,0.04); color:#fff; }
+    & .zv { font-size:10px; color:rgba(255,255,255,0.3); min-width:28px; text-align:center; font-family:"SF Mono",monospace; }
+  }
+
+  /* ─── Player figure ─── */
+  .fig { position:relative; width:100px; height:160px; }
+  .fig .body { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); width:36px; height:58px; background:linear-gradient(135deg,#6B8DFF,#5E9CFF); border-radius:10px 10px 5px 5px; opacity:.5; }
+  .fig .head { position:absolute; top:28px; left:50%; transform:translateX(-50%); width:40px; height:40px; background:linear-gradient(135deg,#7D9DFF,#5E9CFF); border-radius:50%; opacity:.55; }
+  .fig .hair { position:absolute; top:18px; left:50%; transform:translateX(-50%); width:48px; height:20px; background:rgba(255,200,100,0.3); border-radius:50% 50% 0 0; opacity:.4; }
+  .fig .wp { position:absolute; top:70px; left:64%; width:4px; height:50px; background:rgba(200,200,255,0.3); border-radius:2px; transform:rotate(-15deg); opacity:.3; }
+  .fig .cape { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); width:42px; height:50px; background:linear-gradient(180deg,rgba(94,156,255,0.1),transparent); border-radius:0 0 8px 8px; opacity:.25; }
+
+  /* ─── Balloon panel ─── */
+  .bll { flex:1; display:flex; flex-direction:column; padding:16px 20px; }
+
+  .bl-side { width:260px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.04); padding:10px; overflow-y:auto; }
+  .bl-side::-webkit-scrollbar { width:3px; }
+  .bl-side::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); border-radius:2px; }
+
+  .bc {
+    display:flex; align-items:center; gap:10px; padding:8px 10px;
+    border-radius:6px; border:1px solid rgba(255,255,255,0.03);
+    background:rgba(255,255,255,0.01); cursor:pointer; transition:.1s; margin-bottom:4px;
+  }
+  .bc:hover { background:rgba(255,255,255,0.03); }
+  .bc.act { border-color:#5E9CFF; background:rgba(94,156,255,0.06); }
+  .bc .mini { width:60px; height:28px; border-radius:4px; background:rgba(255,255,255,0.04); flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  .bc .bn { font-size:11px; color:rgba(255,255,255,0.6); flex:1; }
+  .bc .bid { font-size:10px; color:rgba(255,255,255,0.2); font-family:"SF Mono",monospace; }
+  .bc .chk { width:16px; height:16px; border-radius:50%; border:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; font-size:8px; color:transparent; flex-shrink:0; }
+  .bc.act .chk { background:#5E9CFF; border-color:#5E9CFF; color:#fff; }
+
+  .bl-cfg { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; padding:8px 10px; background:rgba(255,255,255,0.02); border-radius:6px; }
+  .bl-cfg label { font-size:10px; color:rgba(255,255,255,0.3); }
+  .bl-cfg input[type=text] { width:60px; padding:2px 4px; border-radius:3px; border:1px solid rgba(255,255,255,0.05); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.6); font-size:10px; font-family:"SF Mono",monospace; outline:none; }
+  .bl-cfg input[type=color] { width:24px; height:24px; border:none; border-radius:3px; background:none; cursor:pointer; padding:0; }
+  .bl-cfg .ap { padding:3px 10px; border-radius:4px; border:none; background:#5E9CFF; color:#fff; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .bl-cfg .ap:hover { background:#4A8AEE; }
+
+  .bl-pv { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; }
+
+  .bub { padding:14px 20px; border-radius:14px; font-size:13px; line-height:1.5; max-width:340px; text-align:center; }
+  .bub::after { content:''; position:absolute; bottom:-10px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:10px solid transparent; border-right:10px solid transparent; border-top:10px solid; }
+  .bub .ts { font-size:9px; margin-top:4px; text-align:right; }
+
+  .bub-wrap { position:relative; }
+  .bub .pn { font-size:10px; color:rgba(255,255,255,0.3); margin-bottom:4px; text-align:center; }
+
+  .bub.bs1 { background:linear-gradient(135deg,#5E9CFF,#4A8AEE); color:#fff; }
+  .bub.bs1::after { border-top-color:#5E9CFF; }
+  .bub.bs2 { background:rgba(40,40,50,0.9); border:1px solid rgba(255,255,255,0.1); color:#ddd; }
+  .bub.bs2::after { border-top-color:rgba(40,40,50,0.9); }
+  .bub.bs3 { background:linear-gradient(135deg,#FF6B8A,#FF8AAB); color:#fff; }
+  .bub.bs3::after { border-top-color:#FF6B8A; }
+  .bub.bs4 { background:linear-gradient(135deg,#34C759,#28A745); color:#fff; }
+  .bub.bs4::after { border-top-color:#34C759; }
+  .bub.bs5 { background:linear-gradient(135deg,#8B5CF6,#6B3FA0); color:#fff; }
+  .bub.bs5::after { border-top-color:#8B5CF6; }
+  .bub.bs6 { background:linear-gradient(135deg,#FF9500,#E68600); color:#fff; }
+  .bub.bs6::after { border-top-color:#FF9500; }
+  .bub.cus { }
+  .bub.cus::after { }
+
+  .bl-action { display:flex; gap:8px; }
+  .bl-action .ab { padding:5px 20px; border-radius:6px; border:none; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; }
+  .bl-action .ab.pri { background:#5E9CFF; color:#fff; }
+  .bl-action .ab.pri:hover { background:#4A8AEE; }
+  .bl-action .ab.sec { background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.5); border:1px solid rgba(255,255,255,0.06); }
+  .bl-action .ab.sec:hover { background:rgba(255,255,255,0.08); }
+
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="titlebar">
+    <div class="dots"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div></div>
+    <div class="title-label">🐾 MiniPet 设置</div>
+  </div>
+
+  <div class="toolbar">
+    <div class="tb act" onclick="st(this,0)">游戏内素材</div>
+    <div class="tb" onclick="st(this,1)">Player（纸娃娃）</div>
+    <div class="tb" onclick="st(this,2)">聊天气泡</div>
+  </div>
+
+  <div class="content">
+    <!-- ═══ Tab 0: 素材 ═══ -->
+    <div class="tab act">
+      <div class="side">
+        <div class="side search">
+          <span class="ic">🔍</span>
+          <input type="text" placeholder="搜索怪物/NPC ID 或名称…">
+        </div>
+        <div class="seg">
+          <div class="act" onclick="sg(this,0)">怪物</div>
+          <div onclick="sg(this,1)">NPC</div>
+        </div>
+        <div class="list">
+          <div class="lsec">★ 收藏</div>
+          <div class="li sel">
+            <div class="thumb">👾</div>
+            <div class="info"><div class="n">路西德</div><div class="s">8880150</div></div>
+            <div class="fav on">★</div>
+          </div>
+          <div class="li">
+            <div class="thumb">👹</div>
+            <div class="info"><div class="n">品克缤</div><div class="s">8860000</div></div>
+            <div class="fav on">★</div>
+          </div>
+          <div class="lsec">最近使用</div>
+          <div class="li">
+            <div class="thumb">🦊</div>
+            <div class="info"><div class="n">狐狸</div><div class="s">9300573</div></div>
+            <div class="fav">☆</div>
+          </div>
+          <div class="li">
+            <div class="thumb">🐉</div>
+            <div class="info"><div class="n">龙</div><div class="s">8600001</div></div>
+            <div class="fav">☆</div>
+          </div>
+          <div class="li">
+            <div class="thumb">🤖</div>
+            <div class="info"><div class="n">机器人</div><div class="s">2230000</div></div>
+            <div class="fav">☆</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pv">
+        <div class="cv" id="matCv">
+          <div style="text-align:center;animation:breathe 2.4s ease-in-out infinite;">
+            <div style="position:relative;width:70px;height:100px;margin:0 auto;">
+              <div style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:28px;height:40px;background:linear-gradient(135deg,#6B8DFF,#5E9CFF);border-radius:8px 8px 4px 4px;opacity:.45;"></div>
+              <div style="position:absolute;top:8px;left:50%;transform:translateX(-50%);width:30px;height:30px;background:linear-gradient(135deg,#7D9DFF,#5E9CFF);border-radius:50%;opacity:.5;"></div>
+            </div>
+            <div style="margin-top:4px;font-size:11px;color:rgba(255,255,255,0.2);">WZ 素材展示区域</div>
+          </div>
+        </div>
+        <div class="pv-bar">
+          <span class="nm">路西德</span>
+          <input type="text" value="8880150" placeholder="ID">
+          <button class="ab">★ 收藏</button>
+          <button class="ab">▶ 播放</button>
+          <button class="ab pri" onclick="toast('已应用素材')">确定应用</button>
+        </div>
+        <div class="zr">
+          <label>缩放</label>
+          <input type="range" min="0.3" max="2" step="0.1" value="1" oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+'%'">
+          <span class="zv">100%</span>
+        </div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:4px;">
+          <span style="font-size:9px;color:rgba(255,255,255,0.2);">背景</span>
+          <div class="bgbar" id="matBgB">
+            <div class="bgc act" onclick="setBg('matCv',this,'transparent')"><div class="sw" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02);"></div><div class="bl">透明</div></div>
+            <div class="bgc" onclick="setBg('matCv',this,'grid')"><div class="sw" style="background:linear-gradient(45deg,rgba(200,200,200,0.06)25%,transparent 25%),linear-gradient(-45deg,rgba(200,200,200,0.06)25%,transparent 25%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0px;"></div><div class="bl">网格</div></div>
+            <div class="bgc" onclick="setBg('matCv',this,'henesy')"><div class="sw" style="background:linear-gradient(180deg,#2d5a2d,#4a8c4a,#6ba86b);"></div><div class="bl">弓箭手村</div></div>
+            <div class="bgc" onclick="setBg('matCv',this,'market')"><div class="sw" style="background:linear-gradient(180deg,#4a3a20,#c4a45a,#e8d48a);"></div><div class="bl">市场</div></div>
+            <div class="bgc" onclick="setBg('matCv',this,'forest')"><div class="sw" style="background:linear-gradient(180deg,#1a2e1a,#2a5a2a,#1e3a1e);"></div><div class="bl">森林</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Tab 1: Player ═══ -->
+    <div class="tab">
+      <div class="side">
+        <div style="display:flex;gap:4px;margin-bottom:8px;">
+          <input type="text" style="flex:1;padding:3px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.05);background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.7);font-size:11px;font-family:inherit;outline:none;" value="冒险家" placeholder="角色名称">
+          <button style="padding:2px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.05);background:transparent;color:rgba(255,255,255,0.5);font-size:10px;cursor:pointer;">🎲</button>
+          <button style="padding:2px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.05);background:transparent;color:rgba(255,255,255,0.5);font-size:10px;cursor:pointer;">📤</button>
+          <button style="padding:2px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.05);background:transparent;color:rgba(255,255,255,0.5);font-size:10px;cursor:pointer;">📥</button>
+        </div>
+
+        <div class="group">
+          <div class="gt">🧍 身体基础</div>
+          <div class="row">
+            <label>性别</label>
+            <div class="gens"><div class="act">♂ 男</div><div>♀ 女</div></div>
+          </div>
+          <div class="row">
+            <label>发型</label>
+            <input type="text" value="30000123">
+            <button class="br">浏览</button>
+          </div>
+          <div class="row">
+            <label>脸型</label>
+            <input type="text" value="20000123">
+            <button class="br">浏览</button>
+          </div>
+          <div class="row">
+            <label>皮肤</label>
+            <input type="text" value="0">
+            <button class="br">浏览</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gt">🎽 装备</div>
+          <div class="pgrid">
+            <div class="ps"><div class="pi">🎩</div><div class="info"><div class="pn">暗夜魔术帽</div><div class="pid">1002554</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">👕</div><div class="info"><div class="pn">暗夜上衣</div><div class="pid">1042031</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">👖</div><div class="info"><div class="pn">暗夜裤子</div><div class="pid">1062015</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">👟</div><div class="info"><div class="pn">暗夜鞋</div><div class="pid">1072340</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">⚔️</div><div class="info"><div class="pn">暗夜单手剑</div><div class="pid">1302037</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">🧣</div><div class="info"><div class="pn">暗夜披风</div><div class="pid">1102041</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">🛡️</div><div class="info"><div class="pn">暗夜盾牌</div><div class="pid">1092030</div></div><span class="px">▼</span></div>
+            <div class="ps"><div class="pi">🧤</div><div class="info"><div class="pn">暗夜手套</div><div class="pid">1082174</div></div><span class="px">▼</span></div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gt">🐴 坐骑 / 椅子</div>
+          <div class="row"><label>坐骑</label><div class="pop">飞天扫帚</div></div>
+          <div class="row"><label>椅子</label><div class="pop">无</div></div>
+        </div>
+
+        <div class="group">
+          <div class="gt">🎨 染色</div>
+          <div class="row">
+            <label>启用</label>
+            <label class="nssw"><input type="checkbox"><span class="tr"></span></label>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <input type="range" min="0" max="360" value="215" style="flex:1;height:2px;" oninput="this.nextElementSibling.textContent=this.value">
+            <span style="font-size:9px;color:rgba(255,255,255,0.2);min-width:24px;font-family:'SF Mono',monospace;">215</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pv">
+        <div class="cv" id="plCv">
+          <div class="fig" style="position:relative;">
+            <div class="hair"></div>
+            <div class="head"></div>
+            <div class="cape"></div>
+            <div class="body"></div>
+            <div class="wp"></div>
+          </div>
+        </div>
+        <div class="ctrl-row">
+          <label class="nssw"><input type="checkbox" checked><span class="tr"></span></label>
+          <span class="cl">动画</span>
+          <div class="zo">
+            <button>−</button>
+            <span class="zv">100%</span>
+            <button>⟲</button>
+            <button>+</button>
+          </div>
+          <button class="ab pri" style="margin-left:auto;" onclick="toast('已应用纸娃娃配置')">确定应用</button>
+        </div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:4px;">
+          <span style="font-size:9px;color:rgba(255,255,255,0.2);">背景</span>
+          <div class="bgbar" id="plBgB">
+            <div class="bgc act" onclick="setBg('plCv',this,'transparent')"><div class="sw" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02);"></div><div class="bl">透明</div></div>
+            <div class="bgc" onclick="setBg('plCv',this,'grid')"><div class="sw" style="background:linear-gradient(45deg,rgba(200,200,200,0.06)25%,transparent 25%),linear-gradient(-45deg,rgba(200,200,200,0.06)25%,transparent 25%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0px;"></div><div class="bl">网格</div></div>
+            <div class="bgc" onclick="setBg('plCv',this,'henesy')"><div class="sw" style="background:linear-gradient(180deg,#2d5a2d,#4a8c4a,#6ba86b);"></div><div class="bl">弓箭手村</div></div>
+            <div class="bgc" onclick="setBg('plCv',this,'market')"><div class="sw" style="background:linear-gradient(180deg,#4a3a20,#c4a45a,#e8d48a);"></div><div class="bl">市场</div></div>
+            <div class="bgc" onclick="setBg('plCv',this,'forest')"><div class="sw" style="background:linear-gradient(180deg,#1a2e1a,#2a5a2a,#1e3a1e);"></div><div class="bl">森林</div></div>
+            <div class="bgc" onclick="setBg('plCv',this,'sky')"><div class="sw" style="background:linear-gradient(180deg,#1a1a3a,#4a3a8a,#6a5aaa);"></div><div class="bl">天空</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Tab 2: 聊天气泡 ═══ -->
+    <div class="tab">
+      <div class="bl-side">
+        <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.6);margin-bottom:8px;">💬 气泡样式</div>
+        <div class="bc act" onclick="selBub(this,1)">
+          <div class="mini"><div style="width:50px;height:18px;background:linear-gradient(135deg,#5E9CFF,#4A8AEE);border-radius:6px;"></div></div>
+          <span class="bn">经典蓝</span><span class="bid">#560</span>
+          <div class="chk">✓</div>
+        </div>
+        <div class="bc" onclick="selBub(this,2)">
+          <div class="mini"><div style="width:50px;height:18px;background:rgba(40,40,50,0.9);border:1px solid rgba(255,255,255,0.1);border-radius:6px;"></div></div>
+          <span class="bn">暗黑玻璃</span><span class="bid">#3</span>
+          <div class="chk">✓</div>
+        </div>
+        <div class="bc" onclick="selBub(this,3)">
+          <div class="mini"><div style="width:50px;height:18px;background:linear-gradient(135deg,#FF6B8A,#FF8AAB);border-radius:6px;"></div></div>
+          <span class="bn">樱花粉</span><span class="bid">#5</span>
+          <div class="chk">✓</div>
+        </div>
+        <div class="bc" onclick="selBub(this,4)">
+          <div class="mini"><div style="width:50px;height:18px;background:linear-gradient(135deg,#34C759,#28A745);border-radius:6px;"></div></div>
+          <span class="bn">自然绿</span><span class="bid">#50</span>
+          <div class="chk">✓</div>
+        </div>
+        <div class="bc" onclick="selBub(this,5)">
+          <div class="mini"><div style="width:50px;height:18px;background:linear-gradient(135deg,#8B5CF6,#6B3FA0);border-radius:6px;"></div></div>
+          <span class="bn">紫罗兰</span><span class="bid">#100</span>
+          <div class="chk">✓</div>
+        </div>
+        <div class="bc" onclick="selBub(this,6)">
+          <div class="mini"><div style="width:50px;height:18px;background:linear-gradient(135deg,#FF9500,#E68600);border-radius:6px;"></div></div>
+          <span class="bn">暖阳橙</span><span class="bid">#200</span>
+          <div class="chk">✓</div>
+        </div>
+
+        <div class="bl-cfg">
+          <label>ID</label>
+          <input type="text" value="560" id="customBubId">
+          <label>文字</label>
+          <input type="color" value="#ffffff" id="cusTxtClr">
+          <label>气泡</label>
+          <input type="color" value="#5E9CFF" id="cusBubClr">
+          <button class="ap" onclick="cusBub()">应用</button>
+        </div>
+      </div>
+
+      <div class="pv">
+        <div class="bl-pv">
+          <div class="bub-wrap">
+            <div class="bub bs1" id="bubDemo">
+              <div class="pn">🐾 路西德</div>
+              你好呀胶水！今天想让我帮你做什么呀？🎀
+              <div class="ts">刚刚</div>
+            </div>
+          </div>
+          <div class="bl-action">
+            <button class="ab sec" onclick="toast('预览测试')">预览测试</button>
+            <button class="ab sec" onclick="toast('已隐藏')">隐藏</button>
+            <button class="ab pri" onclick="toast('气泡样式已应用')">确定应用</button>
+          </div>
+          <div style="margin-top:8px;font-size:10px;color:rgba(255,255,255,0.15);">选择一种样式或自定义颜色 → 确定应用</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let curSkin=1, curBg='#5E9CFF', curTxt='#ffffff';
+
+  function st(el,i){
+    document.querySelectorAll('.tb').forEach((b,j)=>b.classList.toggle('act',j===i));
+    document.querySelectorAll('.tab').forEach((p,j)=>p.classList.toggle('act',j===i));
+  }
+  function sg(el,i){
+    el.parentElement.querySelectorAll('div').forEach(b=>b.classList.remove('act'));
+    el.classList.add('act');
+  }
+  function setBg(cvId,el,mode){
+    el.parentElement.querySelectorAll('.bgc').forEach(b=>b.classList.remove('act'));
+    el.classList.add('act');
+    const cv=document.getElementById(cvId);
+    const m={
+      transparent:'linear-gradient(45deg,rgba(255,255,255,0.02)25%,transparent 25%),linear-gradient(-45deg,rgba(255,255,255,0.02)25%,transparent 25%),linear-gradient(45deg,transparent 75%,rgba(255,255,255,0.02)75%),linear-gradient(-45deg,transparent 75%,rgba(255,255,255,0.02)75%)',
+      grid:'linear-gradient(45deg,rgba(200,200,200,0.06)25%,transparent 25%),linear-gradient(-45deg,rgba(200,200,200,0.06)25%,transparent 25%),linear-gradient(45deg,transparent 75%,rgba(200,200,200,0.06)75%),linear-gradient(-45deg,transparent 75%,rgba(200,200,200,0.06)75%)',
+      henesy:'radial-gradient(ellipse at 30% 80%,rgba(94,156,255,0.05) 0%,transparent 50%),linear-gradient(180deg,rgba(30,30,50,0.9),rgba(40,80,50,0.6),rgba(60,100,60,0.4))',
+      market:'radial-gradient(ellipse at 50% 90%,rgba(200,180,100,0.08) 0%,transparent 50%),linear-gradient(180deg,rgba(40,30,20,0.85),rgba(80,70,40,0.6),rgba(160,140,80,0.3))',
+      forest:'radial-gradient(ellipse at 40% 85%,rgba(0,80,40,0.06) 0%,transparent 60%),linear-gradient(180deg,rgba(10,15,10,0.95),rgba(20,40,20,0.7),rgba(30,60,30,0.4))',
+      sky:'radial-gradient(ellipse at 50% 20%,rgba(100,80,200,0.06) 0%,transparent 50%),linear-gradient(180deg,rgba(20,20,50,0.95),rgba(50,40,100,0.6),rgba(80,70,140,0.3))'
+    };
+    cv.style.background=m[mode]||m.transparent;
+    cv.style.backgroundSize=(mode==='transparent'||mode==='grid')?'20px 20px':'';
+    cv.style.backgroundPosition=(mode==='transparent'||mode==='grid')?'0 0, 0 10px, 10px -10px, -10px 0px':'';
+  }
+  function selBub(el,skin){
+    document.querySelectorAll('.bc').forEach(b=>b.classList.remove('act'));
+    el.classList.add('act');
+    curSkin=skin;
+    const d=document.getElementById('bubDemo');
+    d.className='bub bs'+skin;
+  }
+  function cusBub(){
+    const id=document.getElementById('customBubId').value;
+    curBg=document.getElementById('cusBubClr').value;
+    curTxt=document.getElementById('cusTxtClr').value;
+    document.querySelectorAll('.bc').forEach(b=>b.classList.remove('act'));
+    const d=document.getElementById('bubDemo');
+    d.className='bub cus';
+    d.style.background=curBg; d.style.color=curTxt;
+    const s=document.getElementById('cusArrow')||document.createElement('style');
+    s.id='cusArrow';
+    s.textContent='.bub.cus::after{border-top-color:'+curBg+'!important}';
+    document.head.appendChild(s);
+    toast('已应用自定义气泡 #'+id);
+  }
+  function toast(m){
+    const o=document.querySelector('.toast');
+    if(o)o.remove();
+    const t=document.createElement('div');
+    t.className='toast';
+    Object.assign(t.style,{
+      position:'fixed',bottom:'20px',left:'50%',transform:'translateX(-50%)',
+      background:'rgba(30,30,40,0.95)',color:'rgba(255,255,255,0.8)',
+      padding:'8px 20px',borderRadius:'8px',fontSize:'12px',
+      backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.06)',
+      zIndex:'9999',animation:'toastIn .2s'
+    });
+    t.textContent=m;
+    document.body.appendChild(t);
+    setTimeout(()=>t.remove(),2000);
+  }
+</script>
+<style>@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}}
+@keyframes breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+</style>
+</body>
+</html>
