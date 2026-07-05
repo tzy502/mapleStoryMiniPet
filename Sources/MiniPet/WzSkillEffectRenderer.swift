@@ -207,13 +207,6 @@ class WzSkillEffectRenderer {
 
     // MARK: - 合成到角色
 
-    /// 角色合成结果（图像+origin）
-    struct CompositedCharacter {
-        let image: NSImage
-        let originX: Int
-        let originY: Int
-    }
-
     /// 将技能特效帧合成到角色帧上。
     ///
     /// - Parameters:
@@ -286,8 +279,8 @@ class WzSkillEffectRenderer {
         stripOriginX: Int,
         stripOriginY: Int
     ) -> CGImage? {
-        let canvasW = max(CGFloat(frameWidth), CGFloat(effectFrame.image.size.width.rounded()))
-        let canvasH = max(CGFloat(stripImage.height), CGFloat(effectFrame.image.size.height.rounded()))
+        let canvasW = max(frameWidth, effectFrame.image.size.width.rounded())
+        let canvasH = max(CGFloat(stripImage.height), effectFrame.image.size.height.rounded())
 
         let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -363,9 +356,8 @@ class WzSkillEffectRenderer {
 
         // 特效帧按角色帧循环匹配
         let efIndex = frame % frames.count
-        let compositedCharacter = CompositedCharacter(image: character.image, originX: character.originX, originY: character.originY)
         return Self.compositeWithCharacter(
-            character: compositedCharacter,
+            character: character,
             effectFrames: frames,
             frameIndex: efIndex
         )
@@ -462,12 +454,12 @@ class EffectLayer: CALayer {
         CVDisplayLinkCreateWithActiveCGDisplays(&displayLink)
         guard let link = displayLink else { return }
 
-        let unmanaged = Unmanaged.passUnretained(self).toOpaque()
-        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, displayLinkContext) -> CVReturn in
+        let unmanaged = Unmanaged.passUnretained(self)
+        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, displayLinkContext) -> CVReturn in
             let layer = Unmanaged<EffectLayer>.fromOpaque(displayLinkContext!).takeUnretainedValue()
             layer.tick()
             return kCVReturnSuccess
-        }, unmanaged)
+        }, unmanaged.toOpaque())
         CVDisplayLinkStart(link)
     }
 

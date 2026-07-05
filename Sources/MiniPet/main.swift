@@ -47,7 +47,6 @@ win.makeKeyAndOrderFront(nil)
 let hermes = HermesClient()
 hermes.terminalView = tv
 tv.hermesClient = hermes
-pv.hermesClient = hermes
 
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { tv.focus() }
 
