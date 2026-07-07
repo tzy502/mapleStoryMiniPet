@@ -67,11 +67,11 @@ class APIClient {
         return nil
     }
 
-    func fetchAndGenerateSprites(mobId: String) async -> Bool {
+    func fetchAndGenerateSprites(mobId: String, type: String = "mob") async -> Bool {
         let cm = CacheManager(mobId: mobId)
 
         if cm.isCached {
-            logDebug("Sprites already cached for mob \(mobId)")
+            logDebug("Sprites already cached for \(type) \(mobId)")
             return true
         }
 
@@ -83,7 +83,7 @@ class APIClient {
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [scriptPath, mobId]
+        task.arguments = [scriptPath, mobId, "--type", type]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
 

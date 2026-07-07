@@ -19,6 +19,10 @@ class PetView: NSView {
     var dragActive = false
     var lastSessionSize: Int = 0
 
+    /// 当前动画帧中，可见内容（非透明像素）顶部到 frame 顶部的距离（以 AppKit Y-up 计）。
+    /// 用于 ContainerView 定位气泡 arrow，使其对齐内容顶部而非 origin（脚部）。
+    var frameContentTopY: Int = 0
+
     // Timers
     var frameTimer: Timer?
     var idleTimer: Timer?
@@ -49,7 +53,7 @@ class PetView: NSView {
         d.fillColor = NSColor.red.cgColor
         d.strokeColor = NSColor.white.cgColor
         d.lineWidth = 1
-        d.isHidden = !cli.debugAPI
+        d.isHidden = true
         return d
     }()
 
@@ -75,6 +79,37 @@ class PetView: NSView {
         win.setFrameOrigin(NSPoint(x: screenCenter.x - originInView.x,
                                     y: screenCenter.y - originInView.y))
         statusBar?.refresh()
+    }
+
+    // MARK: - Content Top Detection
+
+    /// 分析 CGImage 的 alpha 通道，找到可见内容的最小 Y（从顶部开始计）。
+    /// 用于气泡 arrow 对齐精灵图内容顶部。
+    private func detectContentTopY(cg: CGImage) -> Int {
+        let h = cg.height
+        let w = cg.width
+        guard let data = cg.dataProvider?.data,
+              let ptr = CFDataGetBytePtr(data) else { return h }
+        let bpp = 4 // RGBA (8 bits per component)
+        let minAlpha: UInt8 = 10
+        for y in 0..<h {
+            for x in 0..<w {
+                let alpha = ptr[y * w * bpp + x * bpp + 3]
+                if alpha > minAlpha {
+                    return y
+                }
+            }
+        }
+        return h // 全透明帧，取底部
+    }
+
+    /// 根据当前动画条的 CGImage 检测帧内容顶部 Y，并更新 frameContentTopY。
+    private func updateFrameContentTopY() {
+        guard let s = strips[cur] else { return }
+        let contentTopY = detectContentTopY(cg: s.cg)
+        // frameContentTopY = 帧高度 - 内容顶部 Y（AppKit Y-up 坐标转换）
+        // contentTopY 是从顶部开始的像素数，frameContentTopY 是从底部开始的像素数
+        frameContentTopY = s.fh - contentTopY
     }
 
     // MARK: - Loading
@@ -156,6 +191,9 @@ class PetView: NSView {
         }
         logDebug("applyConfig: \(config.name) → \(strips.count) animations")
         window?.title = "MiniPet - \(config.name)"
+
+        // 检测首选动画的帧内容顶部 Y
+        updateFrameContentTopY()
 
         if let firstKey = strips.keys.sorted().first {
             cur = firstKey
@@ -248,13 +286,6 @@ class PetView: NSView {
         }
         let rect = CGRect(x: CGFloat(fi * s.fw), y: 0, width: CGFloat(s.fw), height: CGFloat(s.fh))
         layer?.contents = s.cg.cropping(to: rect)
-
-        debugDot.position = CGPoint(x: CGFloat(s.ox), y: CGFloat(s.fh) - CGFloat(s.oy))
-        if cli.debugAPI {
-            let op = originScreenPosition() ?? .zero
-            let msg = "\(cur)[\(fi)/\(frameCount)] canvas=\(s.fw)x\(s.fh) origin=(\(s.ox),\(s.oy)) win=(\(Int(window?.frame.origin.x ?? 0)),\(Int(window?.frame.origin.y ?? 0))) originScreen=(\(Int(op.x)),\(Int(op.y)))"
-            FileHandle.standardError.write(Data(("[MiniPet] " + msg + "\n").utf8))
-        }
     }
 
     // MARK: - Animation Switching
@@ -270,11 +301,6 @@ class PetView: NSView {
         cur = name
         fi = 0
         isOneShot = (name.hasPrefix("attack") || name.hasPrefix("skill") || name.hasPrefix("die") || name.hasPrefix("hit"))
-        if cli.debugAPI {
-            var msg = "switchTo: \(name) canvas=\(s.fw)x\(s.fh) origin=(\(s.ox),\(s.oy)) isOneShot=\(isOneShot)"
-            if let pos = savedOrigin { msg += " savedOrigin=(\(Int(pos.x)),\(Int(pos.y)))" }
-            FileHandle.standardError.write(Data(("[MiniPet] " + msg + "\n").utf8))
-        }
 
         if animated {
             resize()
@@ -292,6 +318,9 @@ class PetView: NSView {
             layer?.contents = s.cg.cropping(to: rect)
             if let pos = savedOrigin { restoreOriginScreenPosition(pos) }
         }
+
+        // 切换动画时更新帧内容顶部 Y
+        updateFrameContentTopY()
 
         resetIdleTimer()
     }
@@ -391,12 +420,19 @@ class PetView: NSView {
                 }
             }
             if let clr = await api.fetchBalloonClr(balloonId: bid) {
-                let a = CGFloat((clr >> 24) & 0xFF) / 255.0
-                let r = CGFloat((clr >> 16) & 0xFF) / 255.0
-                let g = CGFloat((clr >> 8) & 0xFF) / 255.0
-                let b = CGFloat(clr & 0xFF) / 255.0
+                // MapleSalon2: getWzClrColor(clr) = 0xffffff + 1 + clr
+                // clr is subtracted from white, negative clr → white
+                let rgb: Int
+                if clr <= 0 {
+                    rgb = 0xffffff
+                } else {
+                    rgb = 0xffffff + 1 + clr
+                }
+                let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
+                let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
+                let b = CGFloat(rgb & 0xFF) / 255.0
                 await MainActor.run {
-                    self.balloonView?.textColor = NSColor(calibratedRed: r, green: g, blue: b, alpha: a)
+                    self.balloonView?.textColor = NSColor(calibratedRed: r, green: g, blue: b, alpha: 1.0)
                 }
             }
         }
@@ -467,6 +503,10 @@ class PetView: NSView {
         balloonItem.submenu = balloonMenu
         menu.addItem(balloonItem)
 
+        menu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "设置中心…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MiniPet", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -629,6 +669,10 @@ class PetView: NSView {
     }
 
     // MARK: - Balloon Actions
+
+    @objc func openSettings() {
+        SettingsWindowController.show()
+    }
 
     @objc func testBalloon() {
         let text = "倒到妈妈牛逼"

@@ -1,15 +1,67 @@
 import AppKit
 
 // MARK: - Chat Balloon View (冒险岛聊天戒指风格)
+// 对照 MapleSalon2 完整重写
+// 参考: MapleSalon2/src/renderer/chatBalloon/chatBalloonBackground.ts
+//       MapleSalon2/src/renderer/chatBalloon/chatBalloon.ts
+//       MapleSalon2/src/renderer/chatBalloon/chatBalloonPiece.ts
 
 class ChatBalloonView: NSView {
     private(set) var tileData: [String: Data] = [:]
+    private var origins: [String: CGPoint] = [:]
     private var balloonText: NSAttributedString?
     private var autoDismissWork: DispatchWorkItem?
+    private var tileImages: [String: CGImage] = [:]
+
+    // 对照 MapleSalon2 的 11 个瓦片字段
+    private static let pieceFields = ["nw", "n", "head", "ne", "w", "c", "e", "sw", "s", "arrow", "se"]
 
     var hasTiles: Bool { tileData.count >= 9 }
     var textColor: NSColor = .white
     var balloonId: Int = 560
+
+    // ---- 九宫格核心属性 ----
+
+    /// colWidth = c 瓦片的宽度 (MapleSalon2: assets[4].width)
+    private var colWidth: CGFloat {
+        guard let c = cgImage(for: "c") else { return 1 }
+        return CGFloat(c.width)
+    }
+
+    /// colHeight = c 瓦片的高度 (MapleSalon2: assets[4].height)
+    private var colHeight: CGFloat {
+        guard let c = cgImage(for: "c") else { return 1 }
+        return CGFloat(c.height)
+    }
+
+    /// topOffset = max(nw.origin.y, n.origin.y) (MapleSalon2: math.max(pieces[0]?.origin.y, pieces[1]?.origin.y))
+    private var topOffset: CGFloat {
+        max(origin(for: "nw").y, origin(for: "n").y)
+    }
+
+    /// leftOffset = nw.origin.x (MapleSalon2: Math.min(pieces[0]?.origin.x))
+    private var leftOffset: CGFloat {
+        origin(for: "nw").x
+    }
+
+    /// topLeftPadding = 文字左上角内边距 (MapleSalon2: {x: nw.width - leftOffset, y: nw.height - topOffset})
+    private var topLeftPadding: NSPoint {
+        let nw = cgImage(for: "nw")
+        return NSPoint(
+            x: (nw.map { CGFloat($0.width) } ?? 5) - leftOffset,
+            y: (nw.map { CGFloat($0.height) } ?? 5) - topOffset
+        )
+    }
+
+    /// xOffsetByArrow: 当 arrow 比 s 窄时，右边需要补偿 (MapleSalon2 逻辑)
+    private var xOffsetByArrow: CGFloat {
+        guard origins["arrow"] != nil else { return 0 }
+        let sW = cgImage(for: "s").map { CGFloat($0.width) } ?? 0
+        let arrW = cgImage(for: "arrow").map { CGFloat($0.width) } ?? 0
+        return sW > arrW ? sW - arrW : 0
+    }
+
+    // MARK: - Init
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -35,7 +87,10 @@ class ChatBalloonView: NSView {
         autoDismissWork?.cancel()
         isHidden = false
         layer?.opacity = 0.0
-        frame.size = desiredSize(for: attributedText)
+        tileImages = [:]
+
+        let sz = desiredSize(for: attributedText)
+        frame.size = sz
         setNeedsDisplay(bounds)
 
         if let sv = superview { sv.needsLayout = true }
@@ -64,8 +119,37 @@ class ChatBalloonView: NSView {
         layer?.opacity = 0.0
     }
 
-    // MARK: - 9-Slice Layout Calculation
+    // MARK: - 瓦片 + origin 缓存
 
+    private func cgImage(for name: String) -> CGImage? {
+        if let cached = tileImages[name] { return cached }
+        guard let data = tileData[name], let img = loadCGImage(from: data) else { return nil }
+        tileImages[name] = img
+        return img
+    }
+
+    private func origin(for name: String) -> CGPoint {
+        origins[name] ?? .zero
+    }
+
+    /// MapleSalon2 特殊处理: origin.x === -1 且 xOffsetByArrow === 0 时 pivot.x = 0
+    private func pivotOrigin(for name: String) -> CGPoint {
+        let o = origin(for: name)
+        if o.x == -1 && xOffsetByArrow == 0 {
+            return CGPoint(x: 0, y: o.y)
+        }
+        return o
+    }
+
+    private func loadCGImage(from data: Data) -> CGImage? {
+        guard let img = NSImage(data: data),
+              let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        return cg
+    }
+
+    // MARK: - 尺寸计算
+
+    /// 文字测量
     private func textSize(for text: NSAttributedString) -> NSSize {
         let tc = NSTextContainer(size: NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude))
         let ts = NSTextStorage(attributedString: text)
@@ -77,272 +161,275 @@ class ChatBalloonView: NSView {
         return lm.usedRect(for: tc).size
     }
 
-    private func loadCGImage(from data: Data) -> CGImage? {
-        guard let img = NSImage(data: data),
-              let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        return cg
-    }
-
     func desiredSize(for text: NSAttributedString) -> NSSize {
         guard !tileData.isEmpty else { return .zero }
         let textSize = self.textSize(for: text)
         return canvasSize(textContentSize: textSize)
     }
 
-    func arrowTipX() -> CGFloat {
-        guard let cImg = tileData["c"].flatMap({ loadCGImage(from: $0) }),
-              let wImg = tileData["w"].flatMap({ loadCGImage(from: $0) }),
-              let nwImg = tileData["nw"].flatMap({ loadCGImage(from: $0) }),
-              let swImg = tileData["sw"].flatMap({ loadCGImage(from: $0) }) else { return 0 }
-        let leftColW = max(CGFloat(nwImg.width), CGFloat(wImg.width), CGFloat(swImg.width))
-        let cW = CGFloat(cImg.width)
-        guard let text = balloonText else { return leftColW + cW / 2 }
-        let sz = canvasSize(textContentSize: textSize(for: text))
-        let rightColW = max(
-            CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0),
-            CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0),
-            CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0))
-        let midAreaW = sz.width - leftColW - rightColW
-        let midCount = Int(round(midAreaW / cW))
-        return leftColW + CGFloat(midCount / 2) * cW + cW / 2
-    }
-
+    /// 对照 MapleSalon2 chatBalloonBackground.ts:
+    ///   colCount = ceil(minWidth / colWidth) (最小 3)
+    ///   rowCount = ceil(minHeight / colHeight) (最小 2)
+    ///   totalW = (nw.width - nw.origin.x) + colCount * colWidth + (ne.width - ne.origin.x) - xOffsetByArrow
+    ///   totalH = max(nw.height, n.height) + rowCount * colHeight + max(sw.height, s.height, arrow.height)
     private func canvasSize(textContentSize: NSSize) -> NSSize {
-        guard let cData = tileData["c"],
-              let cImg = loadCGImage(from: cData) else { return .zero }
+        let cW = colWidth
+        let cH = colHeight
 
-        let padX: CGFloat = 10
-        let padY: CGFloat = 6
-        let contentW = textContentSize.width + padX * 2
-        let contentH = textContentSize.height + padY * 2
+        let colCount = max(3, Int(ceil(textContentSize.width / cW)))
+        let rowCount = max(2, Int(ceil(textContentSize.height / cH)))
 
-        let cW = CGFloat(cImg.width)
-        let cH = CGFloat(cImg.height)
+        let nw = cgImage(for: "nw")
+        let ne = cgImage(for: "ne")
+        let n = cgImage(for: "n")
+        let sw = cgImage(for: "sw")
+        let s = cgImage(for: "s")
 
-        let nwW = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let nH = CGFloat(tileData["n"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let nwH = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let neW = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let neH = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let wW = CGFloat(tileData["w"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let eW = CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let swW = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let swH = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let sH = CGFloat(tileData["s"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let seW = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let seH = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let arrH = CGFloat(tileData["arrow"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        let nwW = nw.map { CGFloat($0.width) } ?? 0
+        let neW = ne.map { CGFloat($0.width) } ?? 0
+        let nwH = nw.map { CGFloat($0.height) } ?? 0
+        let nH = n.map { CGFloat($0.height) } ?? 0
+        let swH = sw.map { CGFloat($0.height) } ?? 0
+        let sH = s.map { CGFloat($0.height) } ?? 0
+        let arrH = cgImage(for: "arrow").map { CGFloat($0.height) } ?? 0
 
-        let leftColW = max(nwW, wW, swW)
-        let rightColW = max(neW, eW, seW)
-        let minCols = 3
-        let minRows = 2
-        let cols = max(minCols, Int(ceil(contentW / cW)))
-        let rows = max(minRows, Int(ceil(contentH / cH)))
+        let leftPad = nwW - leftOffset        // nw.width - nw.origin.x
+        let rightPad = neW - origin(for: "ne").x  // ne.width - ne.origin.x
 
-        let totalW = leftColW + CGFloat(cols) * cW + rightColW
-        let topH = max(nwH, nH, neH)
-        let midH = cH * CGFloat(rows)
-        let botH = max(swH, sH, seH, arrH)
-        let totalH = topH + midH + botH
+        let totalW = leftPad + CGFloat(colCount) * cW + rightPad - xOffsetByArrow
+        let topH = max(nwH, nH)
+        var botH = max(swH, sH)
+        if origins["arrow"] != nil { botH = max(botH, arrH) }
+        let totalH = topH + CGFloat(rowCount) * cH + botH
 
         return NSSize(width: totalW, height: totalH)
+    }
+
+    // MARK: - Arrow Tip X (气泡箭头尖端在气泡坐标系中的 X 位置)
+
+    /// MapleSalon2: Arrow 在底部行最左侧 (i=0)，替换 S 瓦片
+    /// 尖端 = arrow 绘制位置的 x + arrow.width/2
+    func arrowTipX() -> CGFloat {
+        guard origins["arrow"] != nil else { return bounds.width / 2 }
+
+        let sw = cgImage(for: "sw")
+        let swW = sw.map { CGFloat($0.width) } ?? 0
+        let afterSW = swW - origin(for: "sw").x  // 放完 sw 后的 x 坐标
+
+        // Arrow 放在 i=0: x = afterSW, 绘制位置 = afterSW - arrow.origin.x
+        let arrW = cgImage(for: "arrow").map { CGFloat($0.width) } ?? 0
+        let drawX = afterSW - origin(for: "arrow").x
+        let tip = drawX + arrW / 2
+
+        // 如果 arrow 比 colWidth 窄，居中调整
+        let cW = colWidth
+        if cW > arrW {
+            return tip + (cW - arrW) / 2
+        }
+        return tip
     }
 
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
         guard let attr = balloonText, !tileData.isEmpty else { return }
-
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        let textSize = self.textSize(for: attr)
-        let canvasSize = self.canvasSize(textContentSize: textSize)
-        guard let cData = tileData["c"], let cImg = loadCGImage(from: cData) else { return }
-        let cW = CGFloat(cImg.width), cH = CGFloat(cImg.height)
+        let canvasSz = self.canvasSize(textContentSize: attr.size())
+        let textOrigin = topLeftPadding
+        let canvasW = canvasSz.width
+        let canvasH = canvasSz.height
 
-        let nwW = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let nwH = CGFloat(tileData["nw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let nH = CGFloat(tileData["n"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let neW = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let neH = CGFloat(tileData["ne"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let wW = CGFloat(tileData["w"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let swW = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let swH = CGFloat(tileData["sw"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let sH = CGFloat(tileData["s"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let eW = CGFloat(tileData["e"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let seW = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.width } ?? 0)
-        let seH = CGFloat(tileData["se"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
-        let arrH = CGFloat(tileData["arrow"].flatMap { loadCGImage(from: $0)?.height } ?? 0)
+        drawNineSlice(in: ctx, canvasSize: canvasSz)
 
-        let leftEdge = max(nwW, wW, swW)
-        let rightEdge = canvasSize.width - max(neW, eW, seW)
-        let midCount = Int(round((rightEdge - leftEdge) / cW))
-        let topH = max(nwH, nH, neH)
-        let botMax = max(swH, sH, seH, arrH)
-        let rowCount = max(2, Int(round((canvasSize.height - topH - botMax) / cH)))
-        let botH = canvasSize.height - topH - cH * CGFloat(rowCount)
+        // 内容区 = 文字在气泡内的可用区域
+        // 左 = textOrigin.x (nw.width - nw.origin.x)
+        // 上 = textOrigin.y (nw.height - topOffset)
+        // 右 = ne.width - ne.origin.x
+        // 下 = max(sw.height, s.height, arrow.height)
+        let rightPad = (cgImage(for: "ne").map { CGFloat($0.width) } ?? 0) - origin(for: "ne").x
+        var botH: CGFloat = 0
+        if let sw = cgImage(for: "sw") { botH = max(botH, CGFloat(sw.height)) }
+        if let s  = cgImage(for: "s")  { botH = max(botH, CGFloat(s.height)) }
+        if origins["arrow"] != nil, let a = cgImage(for: "arrow") { botH = max(botH, CGFloat(a.height)) }
 
-        drawNineSlice(in: ctx, canvasSize: canvasSize)
+        let contentW = canvasW - textOrigin.x - rightPad
+        let contentH = canvasH - textOrigin.y - botH
 
-        let centerW = CGFloat(midCount) * cW
-        let textX = leftEdge + (centerW - textSize.width) / 2
-        let textY = botH + (cH * CGFloat(rowCount) - textSize.height) / 2
-
-        let tc = NSTextContainer(size: NSSize(width: textSize.width, height: textSize.height))
+        // 用 contentW 限制宽度重新测量文字（自动折行）
+        let tc = NSTextContainer(size: NSSize(width: contentW, height: CGFloat.greatestFiniteMagnitude))
         let ts = NSTextStorage(attributedString: attr)
         let lm = NSLayoutManager()
         lm.addTextContainer(tc)
         ts.addLayoutManager(lm)
         tc.lineFragmentPadding = 0
-        let glyphRange = lm.glyphRange(for: tc)
-        lm.drawGlyphs(forGlyphRange: glyphRange, at: NSPoint(x: textX, y: textY))
+        _ = lm.glyphRange(for: tc)
+        let textSz = lm.usedRect(for: tc).size
+        let textW = textSz.width
+        let textH = textSz.height
+
+        // 文字在内容区内水平垂直居中
+        let textX = textOrigin.x + (contentW - textW) / 2
+        // AppKit Y-up: 文字底部坐标，内容区底部 = canvasH - botH
+        let textY = canvasH - botH - (contentH - textH) / 2 - textH
+
+        let tc2 = NSTextContainer(size: NSSize(width: textW, height: textH))
+        let ts2 = NSTextStorage(attributedString: attr)
+        let lm2 = NSLayoutManager()
+        lm2.addTextContainer(tc2)
+        ts2.addLayoutManager(lm2)
+        tc2.lineFragmentPadding = 0
+        let glyphRange = lm2.glyphRange(for: tc2)
+        lm2.drawGlyphs(forGlyphRange: glyphRange, at: NSPoint(x: textX, y: textY))
+    }
+
+    // MARK: - 九宫格绘制 (对照 MapleSalon2 chatBalloonBackground.ts)
+
+    private func drawPiece(_ ctx: CGContext, _ img: CGImage, pixiX x: CGFloat, pixiY y: CGFloat, origin o: CGPoint, canvasH: CGFloat) {
+        ctx.draw(img, in: CGRect(
+            x: x - o.x,
+            y: canvasH - y + o.y - CGFloat(img.height),
+            width: CGFloat(img.width),
+            height: CGFloat(img.height)
+        ))
     }
 
     private func drawNineSlice(in ctx: CGContext, canvasSize: NSSize) {
-        guard let nwData = tileData["nw"], let nData = tileData["n"],
-              let neData = tileData["ne"], let wData = tileData["w"], let cData = tileData["c"],
-              let eData = tileData["e"], let swData = tileData["sw"], let sData = tileData["s"],
-              let arrowData = tileData["arrow"], let seData = tileData["se"] else { return }
+        guard let text = balloonText else { return }
+        let textSz = self.textSize(for: text)
 
-        guard let nw = loadCGImage(from: nwData), let n = loadCGImage(from: nData),
-              let ne = loadCGImage(from: neData),
-              let w = loadCGImage(from: wData), let c = loadCGImage(from: cData),
-              let e = loadCGImage(from: eData), let sw = loadCGImage(from: swData),
-              let s = loadCGImage(from: sData), let arrow = loadCGImage(from: arrowData),
-              let se = loadCGImage(from: seData) else { return }
+        let cW = colWidth
+        let cH = colHeight
+        let colCount = max(3, Int(ceil(textSz.width / cW)))
+        let rowCount = max(2, Int(ceil(textSz.height / cH)))
 
-        let cW = CGFloat(c.width), cH = CGFloat(c.height)
-        let nW = CGFloat(n.width), nH = CGFloat(n.height)
-        let sW = CGFloat(s.width), sH = CGFloat(s.height)
+        guard let nwImg = cgImage(for: "nw"),
+              let nImg  = cgImage(for: "n"),
+              let neImg = cgImage(for: "ne"),
+              let wImg  = cgImage(for: "w"),
+              let cImg  = cgImage(for: "c"),
+              let eImg  = cgImage(for: "e"),
+              let swImg = cgImage(for: "sw"),
+              let sImg  = cgImage(for: "s"),
+              let seImg = cgImage(for: "se") else { return }
 
-        // All tiles use the SAME grid: each mid-cell is cW wide.
-        // Left column tiles (NW, W, SW) right-align at leftColW.
-        // Right column tiles (NE, E, SE) left-align at rightStartX.
-        let maxLeftW = max(CGFloat(nw.width), CGFloat(w.width), CGFloat(sw.width))
-        let maxRightW = max(CGFloat(ne.width), CGFloat(e.width), CGFloat(se.width))
-        let midAreaW = canvasSize.width - maxLeftW - maxRightW
-        let midCount = Int(round(midAreaW / cW))
-        let actualMidW = CGFloat(midCount) * cW
+        let headImg = cgImage(for: "head")
+        let arrowImg = cgImage(for: "arrow")
+        let oxa = xOffsetByArrow
 
-        let topRowH = max(CGFloat(nw.height), CGFloat(n.height), CGFloat(ne.height))
-        let botRowH = max(CGFloat(sw.height), CGFloat(s.height), CGFloat(se.height), CGFloat(arrow.height))
-        let rowCount = max(2, Int(round((canvasSize.height - topRowH - botRowH) / cH)))
-        let actualMidH = CGFloat(rowCount) * cH
+        let canvasH = canvasSize.height
 
-        let midStartX = maxLeftW
-        let rightStartX = maxLeftW + actualMidW
+        // === 所有坐标运算在 Pixi Y-down 中进行 ===
 
-        // --- Top row: bottom-aligned at ch ---
-        let topY_bottom = canvasSize.height  // bottom edge of top row = canvas height
-        ctx.draw(nw, in: CGRect(x: maxLeftW - CGFloat(nw.width), y: topY_bottom - CGFloat(nw.height),
-                                width: CGFloat(nw.width), height: CGFloat(nw.height)))
-        for i in 0..<midCount {
-            let x = midStartX + CGFloat(i) * cW
-            ctx.draw(n, in: CGRect(x: x, y: topY_bottom - nH, width: nW, height: nH))
-        }
-        ctx.draw(ne, in: CGRect(x: rightStartX, y: topY_bottom - CGFloat(ne.height),
-                                width: CGFloat(ne.width), height: CGFloat(ne.height)))
+        // --- 1. 顶部行 ---
+        var px: CGFloat = 0
+        var py: CGFloat = 0
 
-        // head tile (optional) — replaces N at middle column
-        if let headData = tileData["head"], let head = loadCGImage(from: headData) {
-            let headCol = midCount / 2
-            let hx = midStartX + CGFloat(headCol) * cW
-            let hw = CGFloat(head.width), hh = CGFloat(head.height)
-            ctx.draw(head, in: CGRect(x: hx, y: topY_bottom - hh, width: hw, height: hh))
-        }
+        // nw
+        drawPiece(ctx, nwImg, pixiX: px, pixiY: py, origin: origin(for: "nw"), canvasH: canvasH)
+        px += CGFloat(nwImg.width) - origin(for: "nw").x
 
-        // --- Middle rows ---
-        for r in 0..<rowCount {
-            let y = botRowH + CGFloat(r) * cH
-            // Left column tile: right-aligned
-            ctx.draw(w, in: CGRect(x: maxLeftW - CGFloat(w.width), y: y,
-                                   width: CGFloat(w.width), height: CGFloat(w.height)))
-            for i in 0..<midCount {
-                ctx.draw(c, in: CGRect(x: midStartX + CGFloat(i) * cW, y: y, width: cW, height: cH))
-            }
-            ctx.draw(e, in: CGRect(x: rightStartX, y: y,
-                                   width: CGFloat(e.width), height: CGFloat(e.height)))
-        }
-
-        // --- Bottom row: top-aligned at y=0 ---
-        ctx.draw(sw, in: CGRect(x: maxLeftW - CGFloat(sw.width), y: 0,
-                                width: CGFloat(sw.width), height: CGFloat(sw.height)))
-        let midCol = midCount / 2
-        for i in 0..<midCount {
-            let x = midStartX + CGFloat(i) * cW
-            if i == midCol {
-                let aw = CGFloat(arrow.width), ah = CGFloat(arrow.height)
-                let ax = x + (cW - aw) / 2
-                ctx.draw(arrow, in: CGRect(x: ax, y: 0, width: aw, height: ah))
+        let half = colCount / 2
+        let nImgW = CGFloat(nImg.width)
+        for i in 0..<colCount {
+            if i == half, let h = headImg {
+                drawPiece(ctx, h, pixiX: px, pixiY: py, origin: origin(for: "head"), canvasH: canvasH)
             } else {
-                ctx.draw(s, in: CGRect(x: x, y: 0, width: sW, height: sH))
+                drawPiece(ctx, nImg, pixiX: px, pixiY: py, origin: origin(for: "n"), canvasH: canvasH)
             }
+            px += nImgW
         }
-        ctx.draw(se, in: CGRect(x: rightStartX, y: 0,
-                                width: CGFloat(se.width), height: CGFloat(se.height)))
+        px -= oxa
 
-        // --- Debug borders ---
-        ctx.setLineWidth(1.0)
+        // ne
+        drawPiece(ctx, neImg, pixiX: px, pixiY: py, origin: origin(for: "ne"), canvasH: canvasH)
 
-        ctx.setStrokeColor(NSColor.red.cgColor)
-        ctx.stroke(CGRect(x: maxLeftW - CGFloat(nw.width), y: topY_bottom - CGFloat(nw.height),
-                          width: CGFloat(nw.width), height: CGFloat(nw.height)))
-        for i in 0..<midCount {
-            ctx.stroke(CGRect(x: midStartX + CGFloat(i) * cW, y: topY_bottom - nH, width: nW, height: nH))
-        }
-        ctx.stroke(CGRect(x: rightStartX, y: topY_bottom - CGFloat(ne.height),
-                          width: CGFloat(ne.width), height: CGFloat(ne.height)))
+        // y 往下移到中间区域顶部
+        px = 0
+        py += CGFloat(nwImg.height) - topOffset
 
-        ctx.setStrokeColor(NSColor.blue.cgColor)
-        for r in 0..<rowCount {
-            let y = botRowH + CGFloat(r) * cH
-            ctx.stroke(CGRect(x: maxLeftW - CGFloat(w.width), y: y,
-                              width: CGFloat(w.width), height: CGFloat(w.height)))
-            for i in 0..<midCount {
-                ctx.stroke(CGRect(x: midStartX + CGFloat(i) * cW, y: y, width: cW, height: cH))
+        // --- 2. 中间行 ---
+        let leftEdgeX = CGFloat(wImg.width) - origin(for: "w").x
+        let rightEdgeX = leftEdgeX + cW * CGFloat(colCount) - oxa
+
+        for _ in 0..<rowCount {
+            // w
+            drawPiece(ctx, wImg, pixiX: px, pixiY: py, origin: origin(for: "w"), canvasH: canvasH)
+
+            // c 平铺 (不带 origin 偏移)
+            for i in 0..<colCount {
+                ctx.draw(cImg, in: CGRect(
+                    x: leftEdgeX + CGFloat(i) * cW,
+                    y: canvasH - py - cH,  // Pixi y→AppKit, 无 pivot
+                    width: cW,
+                    height: cH
+                ))
             }
-            ctx.stroke(CGRect(x: rightStartX, y: y,
-                              width: CGFloat(e.width), height: CGFloat(e.height)))
+
+            // e
+            drawPiece(ctx, eImg, pixiX: rightEdgeX, pixiY: py, origin: origin(for: "e"), canvasH: canvasH)
+
+            py += cH
         }
 
-        ctx.setStrokeColor(NSColor.green.cgColor)
-        ctx.stroke(CGRect(x: maxLeftW - CGFloat(sw.width), y: 0,
-                          width: CGFloat(sw.width), height: CGFloat(sw.height)))
-        for i in 0..<midCount {
-            let x = midStartX + CGFloat(i) * cW
-            if i == midCol {
-                let aw = CGFloat(arrow.width), ah = CGFloat(arrow.height)
-                let ax = x + (cW - aw) / 2
-                ctx.stroke(CGRect(x: ax, y: 0, width: aw, height: ah))
+        // --- 3. 底部行 ---
+        // sw
+        drawPiece(ctx, swImg, pixiX: 0, pixiY: py, origin: origin(for: "sw"), canvasH: canvasH)
+
+        var bx = CGFloat(swImg.width) - origin(for: "sw").x
+        let sImgW = CGFloat(sImg.width)
+
+        for i in 0..<colCount {
+            if i == 0, let arr = arrowImg {
+                drawPiece(ctx, arr, pixiX: bx, pixiY: py, origin: origin(for: "arrow"), canvasH: canvasH)
+                if sImgW > CGFloat(arr.width) {
+                    bx -= sImgW - CGFloat(arr.width)
+                }
             } else {
-                ctx.stroke(CGRect(x: x, y: 0, width: sW, height: sH))
+                drawPiece(ctx, sImg, pixiX: bx, pixiY: py, origin: origin(for: "s"), canvasH: canvasH)
             }
+            bx += cW
         }
-        ctx.stroke(CGRect(x: rightStartX, y: 0,
-                          width: CGFloat(se.width), height: CGFloat(se.height)))
 
-        ctx.setStrokeColor(NSColor.yellow.cgColor)
-        ctx.beginPath()
-        ctx.move(to: CGPoint(x: 0, y: botRowH))
-        ctx.addLine(to: CGPoint(x: canvasSize.width, y: botRowH))
-        ctx.move(to: CGPoint(x: 0, y: canvasSize.height - topRowH))
-        ctx.addLine(to: CGPoint(x: canvasSize.width, y: canvasSize.height - topRowH))
-        ctx.strokePath()
+        // se
+        drawPiece(ctx, seImg, pixiX: bx, pixiY: py, origin: origin(for: "se"), canvasH: canvasH)
     }
 
     // MARK: - Tile Loading
 
-    func loadTileData(_ newTiles: [String: Data]) {
+    func loadTileData(_ newTiles: [String: Data], origins newOrigins: [String: CGPoint] = [:]) {
         tileData = newTiles
+        tileImages = [:]
+        if !newOrigins.isEmpty {
+            origins = newOrigins
+        }
+    }
+
+    func setOrigins(_ newOrigins: [String: CGPoint]) {
+        origins = newOrigins
+    }
+
+    func loadOriginsFromCache(balloonId: Int) -> Bool {
+        let path = "\(cacheRoot)/balloons/\(balloonId)/origins.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: CGFloat]] else { return false }
+        var loaded: [String: CGPoint] = [:]
+        for (key, dict) in json {
+            if let x = dict["x"], let y = dict["y"] {
+                loaded[key] = CGPoint(x: x, y: y)
+            }
+        }
+        if !loaded.isEmpty {
+            origins = loaded
+            return true
+        }
+        return false
     }
 
     func loadTilesFromCache(balloonId: Int) -> Bool {
         let dir = "\(cacheRoot)/balloons/\(balloonId)"
-        let _ = FileManager.default
         var loaded: [String: Data] = [:]
-        let names = ["nw", "n", "head", "ne", "w", "c", "e", "sw", "s", "arrow", "se"]
-        for name in names {
+        for name in Self.pieceFields {
             let path = "\(dir)/\(name).png"
             if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
                 loaded[name] = data
@@ -350,6 +437,8 @@ class ChatBalloonView: NSView {
         }
         if loaded.count >= 9 {
             tileData = loaded
+            tileImages = [:]
+            _ = loadOriginsFromCache(balloonId: balloonId)
             return true
         }
         return false
@@ -360,6 +449,15 @@ class ChatBalloonView: NSView {
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         for (name, data) in tileData {
             try? data.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+        }
+        if !origins.isEmpty {
+            var json: [String: [String: CGFloat]] = [:]
+            for (key, pt) in origins {
+                json[key] = ["x": pt.x, "y": pt.y]
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: json, options: .sortedKeys) {
+                try? data.write(to: URL(fileURLWithPath: "\(dir)/origins.json"))
+            }
         }
     }
 }

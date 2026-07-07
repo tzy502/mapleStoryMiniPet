@@ -110,3 +110,33 @@ python3 refix_strip.py --strip stand.png --frames 16 --frameW 312 --out stand_fi
 - `maplestory-wiki-backend` — Java WZ 解析 + GIF 导出
 - `mxd-spine` — PIXI v4 网页渲染
 - API 文档: /Volumes/docker/hermes/download/api-docs/
+
+## Claude Code 行为准则
+
+1. **全中文输出** — 所有确认/选项/提示零英文
+2. **只给结果不给过程** — 不展示代码 diff/测试/中间步骤
+3. **给结果不给理由** — 不做无用推荐/不搞分化
+4. **禁止发散思维** — 不准可能/或许/我觉得/有望/预计
+5. **禁止编造欺骗** — 数据必须从API获取，不估算
+6. **禁止期盼** — 不准预测/预估/预期
+7. **禁止加码** — 用户说什么做什么，不扩大范围
+8. **模型标签诚实** — 实际跑什么模型标什么名
+9. **Java 项目必须编译通过才结束** — mvn compile -q 无报错才交付 — 实际跑什么模型标什么名
+
+
+## CodeGraph 项目记忆
+
+- 回答涉及项目上下文、架构、代码关系的问题时，先使用 `codegraph_memory_search` 查询项目记忆
+- 修改代码前，先使用 `codegraph_get_edit_context` 了解调用方、测试覆盖和最近的改动
+- 排查问题路径时，使用 `codegraph_get_callers` / `codegraph_get_callees` 追踪调用链
+
+## AppKit UI 调试经验
+
+**编译通过但窗口不显示**时按以下顺序排查：
+
+1. **先确认进程是否崩溃** — `pgrep -f MiniPet` 检查进程存活，`ls -lt ~/Library/Logs/DiagnosticReports/ | grep -i minipet` 查崩溃日志
+2. **断点布局递归** — `lldb -o "b _NSDetectedLayoutRecursion" -o "run" .build/debug/MiniPet`，递归布局会导致窗口静默不显示
+3. **用 osascript 绕过 UI 测试事件链路** — 即使窗口不可见，也能通过菜单触发逻辑，排除菜单事件传递问题
+4. **直接调 show() 隔离问题** — main.swift 加 `asyncAfter` 直接调 `SettingsWindowController.show()`，判断是初始化崩还是事件没传到
+5. **Auto Layout 异常** — `NSGenericException: no common ancestor` 意味着 addSubview 缺失
+6. **避免存储属性初始化时创建重量级视图** — 用 `lazy var` 或移到 `commonInit()`

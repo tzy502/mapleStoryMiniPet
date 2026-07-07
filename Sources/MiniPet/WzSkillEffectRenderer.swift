@@ -216,7 +216,7 @@ class WzSkillEffectRenderer {
     ///   - characterOffset: 角色位置偏移（用于在场景中定位）
     /// - Returns: 合成后的图像
     static func compositeWithCharacter(
-        character: CompositedCharacter,
+        character: CompositedResult,
         effectFrames: [SkillEffectFrame],
         frameIndex: Int,
         characterOffset: (x: Int, y: Int) = (0, 0)
@@ -253,7 +253,7 @@ class WzSkillEffectRenderer {
 
     /// 将多帧特效序列合成到角色上（全帧合成）。
     static func compositeWithCharacterAllFrames(
-        character: CompositedCharacter,
+        character: CompositedResult,
         effectFrames: [SkillEffectFrame],
         characterOffset: (x: Int, y: Int) = (0, 0)
     ) -> [NSImage] {
@@ -279,7 +279,7 @@ class WzSkillEffectRenderer {
         stripOriginX: Int,
         stripOriginY: Int
     ) -> CGImage? {
-        let canvasW = max(frameWidth, effectFrame.image.size.width.rounded())
+        let canvasW = max(CGFloat(frameWidth), effectFrame.image.size.width.rounded())
         let canvasH = max(CGFloat(stripImage.height), effectFrame.image.size.height.rounded())
 
         let rep = NSBitmapImageRep(
@@ -455,7 +455,7 @@ class EffectLayer: CALayer {
         guard let link = displayLink else { return }
 
         let unmanaged = Unmanaged.passUnretained(self)
-        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, displayLinkContext) -> CVReturn in
+        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, displayLinkContext) -> CVReturn in
             let layer = Unmanaged<EffectLayer>.fromOpaque(displayLinkContext!).takeUnretainedValue()
             layer.tick()
             return kCVReturnSuccess

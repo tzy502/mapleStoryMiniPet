@@ -15,9 +15,6 @@ let petW: CGFloat = 312, petH: CGFloat = 355, termH: CGFloat = 320
 let pv = PetView(frame: NSRect(x: 0, y: 0, width: petW, height: petH))
 pv.wantsLayer = true
 pv.layer?.contentsGravity = .topLeft
-pv.layer?.addSublayer(pv.debugDot)
-pv.layer?.borderWidth = 1
-pv.layer?.borderColor = NSColor.magenta.cgColor
 
 let tv = TerminalView(frame: NSRect(x: 0, y: 0, width: petW, height: termH))
 pv.terminalView = tv

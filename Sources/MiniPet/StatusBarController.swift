@@ -4,9 +4,6 @@ import AppKit
 
 class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
-    private var statusLine: NSMenuItem!
-    private var animLine: NSMenuItem!
-    private var terminalItem: NSMenuItem!
     weak var petView: PetView?
 
     init(petView: PetView) {
@@ -74,23 +71,14 @@ class StatusBarController: NSObject, NSMenuDelegate {
     func refresh() {
         guard let pv = petView else { return }
         statusItem.button?.title = "🐾 \(pv.mobName)"
-        statusLine?.title = "当前: \(pv.mobName) (\(pv.mobId))"
-        animLine?.title = "动画: \(pv.cur)"
-        terminalItem?.title = (pv.terminalView?.isHidden ?? true) ? "内嵌终端" : "关闭终端"
+    }
+
+    @objc func openSettings() {
+        SettingsWindowController.show()
     }
 
     private func buildMenu(_ pv: PetView) -> NSMenu {
         let menu = NSMenu()
-
-        statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        statusLine.isEnabled = false
-        menu.addItem(statusLine)
-
-        animLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        animLine.isEnabled = false
-        menu.addItem(animLine)
-
-        menu.addItem(.separator())
 
         let animMenu = NSMenu()
         animMenu.addItem(NSMenuItem(title: "加载中…", action: nil, keyEquivalent: ""))
@@ -105,12 +93,13 @@ class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(mobParent)
 
         menu.addItem(.separator())
+        let settingsItem = NSMenuItem(title: "设置中心…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
         let centerItem = NSMenuItem(title: "居中", action: #selector(PetView.centerOriginOnScreen), keyEquivalent: "c")
         centerItem.target = pv
         menu.addItem(centerItem)
-        terminalItem = NSMenuItem(title: "内嵌终端", action: #selector(PetView.toggleTerminal), keyEquivalent: "t")
-        terminalItem.target = pv
-        menu.addItem(terminalItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 MiniPet", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
