@@ -149,6 +149,9 @@ body{min-height:100vh;display:flex;align-items:center;justify-content:center;bac
 .ab.pr{background:var(--nt-act);color:#fff;border-color:transparent}
 .ab.pr:hover{background:#4A8AEE}
 
+/* ── Sub Tab Container ── */
+.sub{display:none}
+.sub.act{display:flex}
 /* ── Zoom Row ── */
 .zr{display:flex;align-items:center;gap:6px;padding-top:4px}
 .zr label{font-size:9px;color:rgba(255,255,255,.3)}
@@ -548,13 +551,16 @@ tr:hover .ca button{opacity:.7}
           </div>
         </div>
         <div class="pv">
-          <div class="cv" id="cv0">
-            <div style="text-align:center;animation:br 2.4s ease-in-out infinite;">
-              <div style="position:relative;width:60px;height:80px;margin:0 auto;">
-                <div style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:24px;height:32px;background:linear-gradient(135deg,#6B8DFF,var(--nt-act));border-radius:6px 6px 3px 3px;opacity:.45"></div>
-                <div style="position:absolute;top:8px;left:50%;transform:translateX(-50%);width:26px;height:26px;background:linear-gradient(135deg,#7D9DFF,var(--nt-act));border-radius:50%;opacity:.5"></div>
+          <div class="cv" id="cv0" style="background:linear-gradient(45deg,rgba(200,200,200,.04)25%,transparent 25%),linear-gradient(-45deg,rgba(200,200,200,.04)25%,transparent 25%);background-size:16px 16px">
+            <div style="text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px">
+              <div style="width:100px;height:140px;background:linear-gradient(180deg,#2a3f6e,#16254a);border-radius:10px;position:relative;filter:drop-shadow(0 4px 14px rgba(0,0,0,.45))">
+                <div style="position:absolute;top:-36px;left:50%;transform:translateX(-50%);width:70px;height:70px;border-radius:50%;background:linear-gradient(180deg,#3d5a94,#1e3668);box-shadow:0 2px 8px rgba(0,0,0,.3)">
+                  <div style="position:absolute;width:9px;height:9px;border-radius:50%;background:#fff;box-shadow:0 0 5px rgba(255,255,255,.5);top:28px;left:19px"></div>
+                  <div style="position:absolute;width:9px;height:9px;border-radius:50%;background:#fff;box-shadow:0 0 5px rgba(255,255,255,.5);top:28px;right:19px"></div>
+                </div>
               </div>
-              <div style="margin-top:4px;font-size:10px;color:var(--txt-mute)">WZ 素材展示</div>
+              <div style="font-size:14px;color:rgba(255,255,255,.9);font-weight:600">路西德</div>
+              <div style="font-size:10px;color:var(--txt-dim);margin-top:-6px">8880150</div>
             </div>
           </div>
           <div class="pbar">
