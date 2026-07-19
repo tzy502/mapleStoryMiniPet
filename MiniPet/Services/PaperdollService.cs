@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using MiniPet.Models;
 
@@ -49,14 +50,18 @@ public class PaperdollService
             if (pngData == null) continue;
             
             var (ox, oy) = _wz.GetOrigin(wzPath);
-            using var ms = new System.IO.MemoryStream(pngData);
+            using var ms = new MemoryStream(pngData);
             var bmp = new Bitmap(ms);
             layers.Add((bmp, ox, oy, zi));
         }
         
+        return CompositeLayers(layers);
+    }
+
+    private Bitmap? CompositeLayers(List<(Bitmap img, int ox, int oy, int z)> layers)
+    {
         if (layers.Count == 0) return null;
         
-        // Calculate bounds
         int minX = 0, minY = 0, maxX = 0, maxY = 0;
         foreach (var (img, ox, oy, _) in layers)
         {
@@ -86,7 +91,7 @@ public class PaperdollService
         string? capId = a.Cap?.Id.ToString(), capeId = a.Cape?.Id.ToString(), coatId = a.Coat?.Id.ToString();
         string? pantsId = a.Pants?.Id.ToString(), shoesId = a.Shoes?.Id.ToString(), weaponId = a.Weapon?.Id.ToString();
         string? shieldId = a.Shield?.Id.ToString(), gloveId = a.Glove?.Id.ToString(), earId = a.Earring?.Id.ToString();
-        string hairId = a.Hair.Id.ToString(), faceId = a.Face.Id.ToString(), skinId = a.Skin.ToString();
+        string hairId = a.Hair.Id.ToString(), faceId = a.Face.Id.ToString();
         string bodyCode = a.Gender == 0 ? "00002000" : "00012000";
         
         return slot switch
@@ -107,7 +112,7 @@ public class PaperdollService
         };
     }
 
-    public List<string> GetActionList() => new() { "stand", "walk", "jump", "alert", "swingOF", "swingOB", "stabOF", "stabOB" };
+    public List<string> GetActionList() => new() { "stand", "walk", "jump", "alert", "swingOF", "stabOF" };
 
     public List<EquippedItem> GetEquipList(string category) => new();
 
@@ -144,16 +149,8 @@ public class PaperdollService
         }
     }
 
-    public void SavePreset(string name, CharacterAppearance appearance)
-    {
-        _presets[name] = appearance;
-    }
-
-    public CharacterAppearance? LoadPreset(string name)
-    {
-        return _presets.TryGetValue(name, out var p) ? p : null;
-    }
-
+    public void SavePreset(string name, CharacterAppearance appearance) { _presets[name] = appearance; }
+    public CharacterAppearance? LoadPreset(string name) => _presets.TryGetValue(name, out var p) ? p : null;
     public Bitmap? CompositeWithMount(MountInfo mount, string action, int frame) => CompositeFrame(action, frame);
     public Bitmap? CompositeWithChair(ChairInfo chair, string action, int frame) => CompositeFrame(action, frame);
 }

@@ -62,7 +62,7 @@
                 <Grid ColumnDefinitions="*,Auto" Spacing="8">
                     <TextBox x:Name="WzLibPathInput"
                             Watermark="选择 wzlib DLL…"
-                            Text="{Binding WzLibPath, Mode=TwoWay}" />
+                            Text="" />
                     <Button Grid.Column="1" Content="浏览…"
                            Class="secondary" FontSize="10"
                            Height="28" Click="OnBrowseWzLibClick" />
@@ -81,7 +81,7 @@
                 <Grid ColumnDefinitions="*,Auto" Spacing="8">
                     <TextBox x:Name="BaseWzPathInput"
                             Watermark="选择 Data 目录…"
-                            Text="{Binding BaseWzPath, Mode=TwoWay}" />
+                            Text="" />
                     <Button Grid.Column="1" Content="浏览…"
                            Class="secondary" FontSize="10"
                            Height="28" Click="OnBrowseBaseWzClick" />

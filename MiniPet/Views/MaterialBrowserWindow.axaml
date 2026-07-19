@@ -1,0 +1,62 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MiniPet.Views.MaterialBrowserWindow"
+        Title="素材浏览" Width="860" Height="600"
+        WindowStartupLocation="CenterScreen">
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Search bar -->
+        <Border Grid.Row="0" Padding="10" Background="{DynamicResource SystemAltMediumColor}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox x:Name="SearchBox" Watermark="搜索素材名称或 ID…" />
+                <Button Grid.Column="1" Content="搜索" Margin="8,0,0,0" Click="OnSearch" />
+            </Grid>
+        </Border>
+
+        <!-- Body: three columns -->
+        <Grid Grid.Row="1" ColumnDefinitions="200,*,240" Margin="10">
+            <!-- Left: category tree -->
+            <TreeView x:Name="CategoryTree" Grid.Column="0" SelectionChanged="OnCategorySelected">
+                <TreeViewItem Header="怪物" Tag="mob" />
+                <TreeViewItem Header="NPC" Tag="npc" />
+                <TreeViewItem Header="装备" Tag="equip" />
+                <TreeViewItem Header="发型" Tag="hair" />
+                <TreeViewItem Header="脸型" Tag="face" />
+                <TreeViewItem Header="坐骑" Tag="mount" />
+                <TreeViewItem Header="椅子" Tag="chair" />
+            </TreeView>
+
+            <!-- Middle: list -->
+            <ListBox x:Name="MaterialList" Grid.Column="1" Margin="8,0" SelectionChanged="OnItemSelected">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="{Binding Name}" />
+                            <TextBlock Text="{Binding Id}" Foreground="Gray" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- Right: preview -->
+            <Border Grid.Column="2" Padding="10" BorderThickness="1" BorderBrush="{DynamicResource SystemBaseLowColor}">
+                <StackPanel>
+                    <Border x:Name="PreviewImage" Height="180" Background="Transparent" />
+                    <TextBlock x:Name="DetailName" FontSize="16" FontWeight="Bold" Margin="0,10,0,0" />
+                    <TextBlock x:Name="DetailId" Foreground="Gray" />
+                    <TextBlock x:Name="DetailType" Foreground="{DynamicResource SystemAccentColor}" />
+                    <Button Content="选择此素材" Click="OnConfirm" Margin="0,10,0,0" />
+                    <Button Content="取消" Click="OnCancel" Margin="0,5,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Bottom: pagination -->
+        <Border Grid.Row="2" Padding="10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                <Button Content="◀" Click="OnPrevPage" x:Name="PrevBtn" />
+                <TextBlock x:Name="PageInfo">第 1/1 页</TextBlock>
+                <Button Content="▶" Click="OnNextPage" x:Name="NextBtn" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
