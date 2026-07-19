@@ -121,7 +121,8 @@ python3 refix_strip.py --strip stand.png --frames 16 --frameW 312 --out stand_fi
 6. **禁止期盼** — 不准预测/预估/预期
 7. **禁止加码** — 用户说什么做什么，不扩大范围
 8. **模型标签诚实** — 实际跑什么模型标什么名
-9. **Java 项目必须编译通过才结束** — mvn compile -q 无报错才交付 — 实际跑什么模型标什么名
+9. **Java 项目必须编译通过才结束** — mvn compile -q 无报错才交付
+10. **涉及代码查询必须用 MCP（CodeGraph）** — 禁止使用 find/grep/rg/ag 等终端搜索命令搜索源码 — mvn compile -q 无报错才交付 — 实际跑什么模型标什么名
 
 
 ## CodeGraph 项目记忆
