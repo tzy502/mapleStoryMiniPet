@@ -32,7 +32,8 @@ public class PetWindow : Window
         Height = 240;
         Topmost = true;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.FromRgb(40, 40, 40));
+        Background = Brushes.Transparent;
+        TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
 
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
@@ -40,7 +41,6 @@ public class PetWindow : Window
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         Content = grid;
 
-        // Row 0: 标题
         _infoText = new TextBlock
         {
             Text = "🐾 MiniPet 桌宠",
@@ -52,12 +52,10 @@ public class PetWindow : Window
         Grid.SetRow(_infoText, 0);
         grid.Children.Add(_infoText);
 
-        // Row 1: 精灵图
         _spriteImage = new Image { Width = 200, Height = 120, Stretch = Stretch.Uniform };
         Grid.SetRow(_spriteImage, 1);
         grid.Children.Add(_spriteImage);
 
-        // Row 2: 状态
         var statusBar = new TextBlock
         {
             Text = "右键菜单",
@@ -68,35 +66,51 @@ public class PetWindow : Window
         Grid.SetRow(statusBar, 2);
         grid.Children.Add(statusBar);
 
-        // 右键菜单
         ContextMenu = BuildContextMenu();
+        SetupDragEvents();
 
-        // 指针事件
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _timer.Tick += OnTimerTick;
+        _animService.Play("stand", PlayMode.Loop);
+        _timer.Start();
+    }
+
+    private void SetupDragEvents()
+    {
         PointerPressed += (_, e) =>
         {
-            var point = e.GetCurrentPoint(this);
-            if (point.Properties.IsRightButtonPressed)
+            try
             {
-                ContextMenu?.Open(this);
-                return;
+                var point = e.GetCurrentPoint(this);
+                if (point.Properties.IsRightButtonPressed)
+                {
+                    ContextMenu?.Open(this);
+                    return;
+                }
+                _isDragging = true;
+                _dragStart = e.GetPosition(this);
+                _windowStartPos = Position;
             }
-            _isDragging = true;
-            _dragStart = e.GetPosition(this);
-            _windowStartPos = Position;
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerPressed: {ex.Message}"); }
         };
         PointerMoved += (_, e) =>
         {
-            if (!_isDragging) return;
-            var pos = e.GetPosition(this);
-            Position = new PixelPoint(
-                (int)(_windowStartPos.X + pos.X - _dragStart.X),
-                (int)(_windowStartPos.Y + pos.Y - _dragStart.Y));
+            try
+            {
+                if (!_isDragging) return;
+                var pos = e.GetPosition(this);
+                Position = new PixelPoint(
+                    (int)(_windowStartPos.X + pos.X - _dragStart.X),
+                    (int)(_windowStartPos.Y + pos.Y - _dragStart.Y));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerMoved: {ex.Message}"); }
         };
         PointerReleased += (_, _) => _isDragging = false;
+    }
 
-        // 帧循环
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-        _timer.Tick += (_, _) =>
+    private void OnTimerTick(object? sender, EventArgs e)
+    {
+        try
         {
             _tickCount++;
             var (fd, bmp) = _animService.Tick(500);
@@ -108,27 +122,45 @@ public class PetWindow : Window
                 _spriteImage.Source = new Avalonia.Media.Imaging.Bitmap(ms);
             }
             _infoText.Text = $"🐾 Tick #{_tickCount}";
-        };
-
-        _animService.Play("stand", PlayMode.Loop);
-        _timer.Start();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
     }
 
     private ContextMenu BuildContextMenu()
     {
         var cm = new ContextMenu();
-        var animItem = new MenuItem { Header = "切换动画" };
-        var standItem = new MenuItem { Header = "stand" };
-        standItem.Click += (_, _) => _animService.Play("stand", PlayMode.Loop);
-        animItem.Items.Add(standItem);
-        var flyItem = new MenuItem { Header = "fly" };
-        flyItem.Click += (_, _) => _animService.Play("fly", PlayMode.Loop);
-        animItem.Items.Add(flyItem);
-        cm.Items.Add(animItem);
-        cm.Items.Add(new Separator());
-        var exitItem = new MenuItem { Header = "退出" };
-        exitItem.Click += (_, _) => Close();
-        cm.Items.Add(exitItem);
+        try
+        {
+            var mobItem = new MenuItem { Header = "切换人物" };
+            mobItem.Items.Add(new MenuItem { Header = "怪物列表 (待实现)" });
+            mobItem.Items.Add(new MenuItem { Header = "NPC 列表 (待实现)" });
+            cm.Items.Add(mobItem);
+
+            var animItem = new MenuItem { Header = "切换动画" };
+            var standItem = new MenuItem { Header = "stand" };
+            standItem.Click += (_, _) => _animService.Play("stand", PlayMode.Loop);
+            animItem.Items.Add(standItem);
+            var flyItem = new MenuItem { Header = "fly" };
+            flyItem.Click += (_, _) => _animService.Play("fly", PlayMode.Loop);
+            animItem.Items.Add(flyItem);
+            var sayItem = new MenuItem { Header = "say" };
+            sayItem.Click += (_, _) => _animService.Play("say", PlayMode.OneShot);
+            animItem.Items.Add(sayItem);
+            cm.Items.Add(animItem);
+
+            cm.Items.Add(new Separator());
+
+            var settingsItem = new MenuItem { Header = "设置中心" };
+            settingsItem.Click += (_, _) => _infoText.Text = "设置中心 (待实现)";
+            cm.Items.Add(settingsItem);
+
+            cm.Items.Add(new Separator());
+
+            var exitItem = new MenuItem { Header = "退出" };
+            exitItem.Click += (_, _) => Close();
+            cm.Items.Add(exitItem);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BuildMenu: {ex.Message}"); }
         return cm;
     }
 }
