@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1020, initial-scale=1.0">
+<title>📦 素材浏览弹窗</title>
+<style>
+/* ── Theme Variables ── */
+:root {
+  --bg-body: radial-gradient(ellipse at 20% 30%,#1f2335 0%,transparent 60%),radial-gradient(ellipse at 80% 20%,#1a1e30 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,#151824 0%,transparent 60%),linear-gradient(135deg,#0d0f16 0%,#141822 40%,#181c2a 70%,#0d0f16 100%);
+  --win-bg: rgba(30,30,38,.88);
+  --win-brd: rgba(80,80,90,.6);
+  --win-shdw: 0 4px 32px rgba(0,0,0,.5);
+  --txt-pri: #f0f0f4;
+  --txt-sec: #a0a0b0;
+  --txt-dim: #707080;
+  --txt-mute: rgba(255,255,255,.15);
+  --nt-bg: rgba(28,28,36,.6);
+  --nt-brd: rgba(120,120,140,.3);
+  --nt-act: #5E9CFF;
+  --pt-act: rgba(94,156,255,.15);
+  --pt-hov: rgba(255,255,255,.04);
+  --li-sel: rgba(94,156,255,.22);
+  --li-hov: rgba(94,156,255,.12);
+  --input-bg: rgba(30,30,36,.7);
+  --input-brd: rgba(120,120,140,.3);
+  --input-brd-focus: #5E9CFF;
+  --btn-sc-bg: rgba(60,60,70,.5);
+  --btn-sc-hov: rgba(94,156,255,.15);
+  --btn-pr: #5E9CFF;
+  --btn-pr-hov: #7BB4FF;
+  --tag-mob: #FF5E5E;
+  --tag-npc: #4CD964;
+  --tag-eq: #E8924A;
+  --tag-hair: #FF6B8A;
+  --tag-face: #FFB347;
+  --tag-mount: #8B4513;
+  --tag-chair: #9370DB;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg-body);font-family:-apple-system,"SF Pro","SF Pro Display","Helvetica Neue",sans-serif;color:var(--txt-pri);-webkit-font-smoothing:antialiased;user-select:none}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:var(--nt-brd);border-radius:2px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ── Modal Overlay ── */
+.m-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center}
+.m-win{width:860px;height:600px;background:var(--win-bg);backdrop-filter:blur(48px) saturate(140%);-webkit-backdrop-filter:blur(48px) saturate(140%);border-radius:12px;border:1px solid var(--win-brd);box-shadow:var(--win-shdw);display:flex;flex-direction:column;overflow:hidden;animation:mi .2s ease-out}
+
+/* ── Title Bar ── */
+.m-tb{display:flex;align-items:center;height:42px;padding:0 14px;border-bottom:1px solid var(--nt-brd);flex-shrink:0;gap:10px}
+.m-dts{display:flex;gap:7px}
+.m-dt{width:12px;height:12px;border-radius:50%}
+.m-dt.r{background:#FF5F57}
+.m-dt.y{background:#FEBC2E}
+.m-dt.g{background:#28C840}
+.m-tt{font-size:13px;font-weight:600;letter-spacing:.3px;color:var(--txt-pri)}
+.m-ts{font-size:10px;color:var(--txt-dim);font-weight:400;margin-left:auto}
+
+/* ── Search Bar ── */
+.m-srch{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--nt-brd);flex-shrink:0}
+.m-srch .srch{position:relative;flex:1}
+.m-srch .srch input{width:100%;height:30px;padding:0 30px 0 30px;border-radius:8px;border:1px solid var(--input-brd);background:var(--input-bg);color:var(--txt-pri);font-size:12px;outline:none;font-family:inherit;transition:border-color .2s}
+.m-srch .srch input::placeholder{color:var(--txt-dim)}
+.m-srch .srch input:focus{border-color:var(--input-brd-focus);box-shadow:0 0 0 2px rgba(94,156,255,0.2)}
+.m-srch .srch .ic{position:absolute;left:10px;top:7px;font-size:13px;color:var(--txt-dim);pointer-events:none}
+.m-srch .srch .sc{position:absolute;right:5px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;border:none;background:rgba(120,120,140,0.3);color:var(--txt-sec);font-size:10px;cursor:pointer;display:none;align-items:center;justify-content:center;line-height:1}
+.m-srch .srch input:not(:placeholder-shown)~.sc{display:flex}
+.m-srch .srch .sc:hover{background:rgba(94,156,255,.2);color:var(--nt-act)}
+
+/* ── Filter Chips ── */
+.m-chips{display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--nt-brd);flex-shrink:0;flex-wrap:wrap}
+.m-chip{padding:3px 12px;border-radius:12px;border:1px solid var(--nt-brd);background:rgba(30,30,36,.5);color:var(--txt-sec);font-size:11px;cursor:pointer;transition:all .15s;font-weight:500}
+.m-chip:hover{border-color:var(--nt-act);color:var(--txt-pri);background:rgba(94,156,255,.08)}
+.m-chip.act{background:rgba(94,156,255,.18);border-color:var(--nt-act);color:var(--nt-act)}
+
+/* ── Body: Three Columns ── */
+.m-body{flex:1;display:flex;overflow:hidden}
+
+/* ── Left: Category Tree ── */
+.m-left{width:200px;min-width:200px;display:flex;flex-direction:column;border-right:1px solid var(--nt-brd);background:rgba(36,36,42,.4)}
+.m-lhd{padding:8px 12px;font-size:10px;font-weight:600;color:var(--txt-dim);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--nt-brd);flex-shrink:0}
+.m-tree{flex:1;overflow-y:auto;padding:4px 0}
+.m-ti{display:flex;align-items:center;padding:5px 10px;cursor:pointer;font-size:12px;color:var(--txt-sec);transition:background .1s;border-left:3px solid transparent}
+.m-ti:hover{background:var(--pt-hov);color:var(--txt-pri)}
+.m-ti.sel{background:var(--li-sel);color:var(--nt-act);border-left-color:var(--nt-act)}
+.m-ti .ar{width:14px;text-align:center;font-size:8px;color:var(--txt-dim);flex-shrink:0;transition:transform .15s}
+.m-ti .ar.o{transform:rotate(90deg)}
+.m-ti .ic{width:18px;text-align:center;flex-shrink:0;font-size:13px}
+.m-ti .lb{flex:1;margin-left:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-ti .ct{font-size:9px;color:var(--txt-mute);font-family:"SF Mono",monospace;margin-left:4px}
+.m-ch{overflow:hidden;max-height:0;transition:max-height .2s}
+.m-ch.op{max-height:999px}
+.m-ci{padding-left:32px;display:flex;align-items:center;padding-top:4px;padding-bottom:4px;cursor:pointer;font-size:11px;color:var(--txt-dim);border-left:3px solid transparent;transition:background .1s}
+.m-ci:hover{background:var(--pt-hov);color:var(--txt-sec)}
+.m-ci.sel{background:var(--li-sel);color:var(--nt-act);border-left-color:var(--nt-act)}
+.m-ci .ic{width:16px;text-align:center;flex-shrink:0;font-size:11px;margin-right:4px}
+
+/* ── Middle: Material List ── */
+.m-mid{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.m-mhd{display:flex;align-items:center;height:28px;padding:0 10px;border-bottom:1px solid var(--nt-brd);flex-shrink:0;gap:6px}
+.m-mhd .m-th{font-size:10px;font-weight:600;color:var(--txt-dim);cursor:pointer;display:flex;align-items:center;gap:3px}
+.m-mhd .m-th:hover{color:var(--txt-sec)}
+.m-mhd .m-th.sd{color:var(--nt-act)}
+.m-thic{width:40px;justify-content:center;flex-shrink:0}
+.m-thnm{flex:1;min-width:0}
+.m-thid{width:70px;text-align:right;justify-content:flex-end}
+.m-lst{flex:1;overflow-y:auto}
+.m-lr{display:flex;align-items:center;height:38px;padding:0 10px;cursor:pointer;border-bottom:1px solid rgba(80,80,90,.1);transition:background .08s;gap:6px}
+.m-lr:hover{background:var(--li-hov)}
+.m-lr.sel{background:var(--li-sel)}
+.m-thmb{width:40px;height:40px;border-radius:6px;background:repeating-conic-gradient(rgba(60,60,70,.3) 0% 25%,transparent 0% 50%) 0 0/10px 10px;border:1px solid rgba(80,80,90,.2);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.m-rn{flex:1;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.m-rid{font-family:"SF Mono",monospace;font-size:10px;color:var(--txt-dim);flex-shrink:0;text-align:right;width:70px}
+.m-rid .tg{display:inline-block;padding:0 5px;border-radius:3px;font-size:8px;font-weight:600;margin-left:4px;color:#fff;vertical-align:middle}
+
+/* ── Pagination ── */
+.m-lf{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;border-top:1px solid var(--nt-brd);flex-shrink:0}
+.m-lf .st{font-size:10px;color:var(--txt-dim)}
+.m-pg{display:flex;gap:2px}
+.m-pg button{min-width:22px;height:22px;padding:0 5px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--txt-sec);font-size:10px;cursor:pointer;transition:all .1s;font-family:inherit;font-weight:500}
+.m-pg button:hover:not(:disabled){background:var(--btn-sc-hov);border-color:var(--nt-brd);color:var(--txt-pri)}
+.m-pg button:disabled{opacity:.3;cursor:default}
+.m-pg button.act{background:var(--nt-act);color:#fff;border-color:var(--nt-act)}
+
+/* ── Right: Detail Preview ── */
+.m-right{width:240px;min-width:240px;display:flex;flex-direction:column;border-left:1px solid var(--nt-brd);background:rgba(38,38,44,.5)}
+.m-rhd{padding:8px 12px;font-size:10px;font-weight:600;color:var(--txt-dim);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--nt-brd);flex-shrink:0}
+.m-det{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column}
+.m-pv{width:100%;aspect-ratio:212/160;border-radius:8px;background:repeating-conic-gradient(rgba(60,60,70,.35) 0% 25%,transparent 0% 50%) 0 0/16px 16px;border:1px solid var(--nt-brd);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;margin-bottom:14px}
+.m-pv .m-pl{font-size:48px;opacity:.4}
+.m-pv .m-plb{position:absolute;bottom:8px;font-size:9px;color:var(--txt-dim)}
+.m-dn{font-size:16px;font-weight:700;color:var(--txt-pri);margin-bottom:2px}
+.m-did{font-family:"SF Mono",monospace;font-size:11px;color:var(--txt-dim);margin-bottom:6px}
+.m-dtg{display:flex;gap:4px;margin-bottom:10px}
+.m-dtg span{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:500;color:#fff}
+.m-spacer{flex:1}
+.m-act{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.m-act button{display:flex;align-items:center;justify-content:center;gap:5px;padding:7px 12px;border-radius:6px;border:1px solid transparent;font-size:12px;cursor:pointer;transition:all .15s;font-weight:500;font-family:inherit}
+.m-act .pr{background:var(--nt-act);color:#fff;border-color:var(--nt-act)}
+.m-act .pr:hover{background:var(--btn-pr-hov)}
+.m-act .sc{background:rgba(60,60,70,.5);color:var(--txt-sec);border-color:var(--nt-brd)}
+.m-act .sc:hover{background:var(--btn-sc-hov);color:var(--nt-act)}
+
+/* ── Empty State ── */
+.m-empt{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--txt-dim);font-size:12px;gap:6px}
+.m-empt .m-ei{font-size:28px;opacity:.4}
+
+/* ── Keyframes ── */
+@keyframes mi{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+/* ── Tag Colors ── */
+.tg-mob{background:var(--tag-mob)}
+.tg-npc{background:var(--tag-npc)}
+.tg-eq{background:var(--tag-eq)}
+.tg-hair{background:var(--tag-hair)}
+.tg-face{background:var(--tag-face)}
+.tg-mount{background:var(--tag-mount)}
+.tg-chair{background:var(--tag-chair)}
+</style>
+</head>
+<body>
+
+<div class="m-overlay" id="overlay">
+<div class="m-win">
+
+  <!-- Title Bar -->
+  <div class="m-tb">
+    <div class="m-dts"><div class="m-dt r" onclick="closeModal()"></div><div class="m-dt y"></div><div class="m-dt g"></div></div>
+    <div class="m-tt">📦 素材浏览</div>
+    <div class="m-ts">选择要使用的素材</div>
+  </div>
+
+  <!-- Search + Chips -->
+  <div class="m-srch">
+    <div class="srch">
+      <span class="ic">🔍</span>
+      <input type="text" id="searchInput" placeholder="搜索素材名称或 ID…" oninput="onSearch()">
+      <button class="sc" onclick="clearSearch()">✕</button>
+    </div>
+  </div>
+  <div class="m-chips" id="chips"></div>
+
+  <!-- Body: Three Columns -->
+  <div class="m-body">
+    <!-- Left: Category Tree -->
+    <div class="m-left">
+      <div class="m-lhd">分类目录</div>
+      <div class="m-tree" id="tree"></div>
+    </div>
+
+    <!-- Middle: Material List -->
+    <div class="m-mid">
+      <div class="m-mhd">
+        <div class="m-th m-thic"></div>
+        <div class="m-th m-thnm sd" onclick="sortList('name')">名称 <span id="sortArrow">▲</span></div>
+        <div class="m-th m-thid" onclick="sortList('id')">ID</div>
+      </div>
+      <div class="m-lst" id="list"></div>
+      <div class="m-lf">
+        <span class="st" id="statusBar">共 0 个素材 · 第 0/0 页</span>
+        <div class="m-pg" id="pagination"></div>
+      </div>
+    </div>
+
+    <!-- Right: Detail Preview -->
+    <div class="m-right">
+      <div class="m-rhd">详情预览</div>
+      <div class="m-det" id="detail"></div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════
+// Mock Data
+// ══════════════════════════════════
+const CATEGORIES = {
+  '怪物': { icon: '👹', children: ['普通怪物', 'BOSS', '精英怪'] },
+  'NPC':  { icon: '👤', children: ['村庄NPC', '功能NPC', '活动NPC'] },
+  '装备':  { icon: '⚔️', children: ['帽子', '上衣', '裤子', '鞋', '武器', '披风', '盾牌', '手套'] },
+  '发型':  { icon: '💇', children: ['男发', '女发'] },
+  '脸型':  { icon: '😊', children: ['男脸', '女脸'] },
+  '坐骑':  { icon: '🐴', children: ['陆地', '飞行', '水上'] },
+  '椅子':  { icon: '🪑', children: ['普通椅', '功能椅', '特效椅'] }
+};
+
+const TYPE_ORDER = ['怪物', 'NPC', '装备', '发型', '脸型', '坐骑', '椅子'];
+const TAG_CLASSES = {
+  '怪物': 'tg-mob', '普通怪物': 'tg-mob', 'BOSS': 'tg-mob', '精英怪': 'tg-mob',
+  'NPC': 'tg-npc', '村庄NPC': 'tg-npc', '功能NPC': 'tg-npc', '活动NPC': 'tg-npc',
+  '装备': 'tg-eq', '帽子': 'tg-eq', '上衣': 'tg-eq', '裤子': 'tg-eq', '鞋': 'tg-eq',
+  '武器': 'tg-eq', '披风': 'tg-eq', '盾牌': 'tg-eq', '手套': 'tg-eq',
+  '发型': 'tg-hair', '男发': 'tg-hair', '女发': 'tg-hair',
+  '脸型': 'tg-face', '男脸': 'tg-face', '女脸': 'tg-face',
+  '坐骑': 'tg-mount', '陆地': 'tg-mount', '飞行': 'tg-mount', '水上': 'tg-mount',
+  '椅子': 'tg-chair', '普通椅': 'tg-chair', '功能椅': 'tg-chair', '特效椅': 'tg-chair'
+};
+const ICONS = {
+  '怪物': '👹', '普通怪物': '👾', 'BOSS': '🐉', '精英怪': '👺',
+  'NPC': '👤', '村庄NPC': '👴', '功能NPC': '🧙', '活动NPC': '🎪',
+  '装备': '⚔️', '帽子': '🎩', '上衣': '👕', '裤子': '👖', '鞋': '👟',
+  '武器': '⚔️', '披风': '🧣', '盾牌': '🛡️', '手套': '🧤',
+  '发型': '💇', '男发': '💇‍♂️', '女发': '💇‍♀️',
+  '脸型': '😊', '男脸': '😎', '女脸': '🥰',
+  '坐骑': '🐴', '陆地': '🐎', '飞行': '🦅', '水上': '🐬',
+  '椅子': '🪑', '普通椅': '💺', '功能椅': '🛋️', '特效椅': '✨'
+};
+
+// Generate 30 mock items (怪物/NPC/装备 each 10)
+const MOCK_NAMES = {
+  '怪物': ['绿蘑菇', '蓝蘑菇', '蜗牛', '木妖', '黑木妖', '火独眼兽', '冰独眼兽', '石头人', '黑石头人', '蘑菇王'],
+  '普通怪物': ['绿蘑菇', '蓝蘑菇', '蜗牛', '木妖', '黑木妖'],
+  'BOSS': ['蘑菇王', '火独眼兽', '冰独眼兽'],
+  '精英怪': ['石头人', '黑石头人'],
+  'NPC': ['赫丽娜', '南希', '雪姬', '武德', '麦格', '伊林', '阿勒斯', '卡米拉', '鲁克', '珍'],
+  '村庄NPC': ['赫丽娜', '南希', '雪姬'],
+  '功能NPC': ['武德', '麦格', '伊林'],
+  '活动NPC': ['阿勒斯', '卡米拉', '鲁克', '珍'],
+  '装备': ['暗夜帽', '传说头盔', '神秘上衣', '远古裤子', '混沌鞋', '灿烂披风', '永恒手套', '暴风剑', '冰霜盾', '雷霆弓'],
+  '帽子': ['暗夜帽', '传说头盔'],
+  '上衣': ['神秘上衣'],
+  '裤子': ['远古裤子'],
+  '鞋': ['混沌鞋'],
+  '武器': ['暴风剑', '雷霆弓'],
+  '披风': ['灿烂披风'],
+  '盾牌': ['冰霜盾'],
+  '手套': ['永恒手套'],
+  '发型': ['飘逸短发', '双马尾', '碎发', '长直发', '卷发', '莫西干', '丸子头', '侧分', '背头', '刘海'],
+  '男发': ['飘逸短发', '碎发', '莫西干', '侧分', '背头'],
+  '女发': ['双马尾', '长直发', '卷发', '丸子头', '刘海'],
+  '脸型': ['阳光笑脸', '冷酷眼神', '温柔微笑', '调皮鬼脸', '忧郁表情', '可爱圆脸', '帅气侧脸', '甜美酒窝', '自信微笑', '神秘表情'],
+  '男脸': ['阳光笑脸', '冷酷眼神', '调皮鬼脸', '帅气侧脸', '自信微笑'],
+  '女脸': ['温柔微笑', '忧郁表情', '可爱圆脸', '甜美酒窝', '神秘表情'],
+  '坐骑': ['飞天扫帚', '独角兽', '魔法飞毯', '云朵', '摩托', '滑板', '翅膀', '飞船', '彩虹桥', '巨龙'],
+  '陆地': ['飞天扫帚', '独角兽'],
+  '飞行': ['魔法飞毯', '云朵', '翅膀'],
+  '水上': ['摩托', '滑板', '飞船', '彩虹桥', '巨龙'],
+  '椅子': ['王座', '摇椅', '秋千', '沙发', '魔法阵', '浴缸', '气球', '水晶', '王冠', '宝箱'],
+  '普通椅': ['王座', '摇椅', '沙发', '浴缸'],
+  '功能椅': ['秋千', '魔法阵', '水晶'],
+  '特效椅': ['气球', '王冠', '宝箱']
+};
+
+let allItems = [];
+let filteredItems = [];
+let currentPage = 0;
+let pageSize = 10;
+let selectedIdx = -1;
+let sortField = 'name';
+let sortAsc = true;
+let activeChip = null;
+let activeSubCategory = null;
+
+function generateData() {
+  const items = [];
+  let idBase = 1000000;
+  const types = ['怪物', 'NPC', '装备']; // Only 3 types × 10 = 30 items
+  for (const type of types) {
+    const names = MOCK_NAMES[type];
+    for (let i = 0; i < names.length; i++) {
+      items.push({
+        id: idBase + i,
+        name: names[i],
+        type: type,
+        subType: null,
+        desc: `${type}「${names[i]}」是冒险岛中的一种${type}类型素材，可用于桌宠装扮。`
+      });
+    }
+    idBase += 100;
+  }
+  // Assign subTypes
+  for (const item of items) {
+    const cats = CATEGORIES[item.type];
+    if (cats) {
+      for (const sub of cats.children) {
+        if ((MOCK_NAMES[sub] || []).includes(item.name)) {
+          item.subType = sub;
+          break;
+        }
+      }
+    }
+  }
+  return items;
+}
+
+// ══════════════════════════════════
+// Rendering
+// ══════════════════════════════════
+
+function renderChips() {
+  const el = document.getElementById('chips');
+  el.innerHTML = TYPE_ORDER.map(t =>
+    `<span class="m-chip${activeChip === t ? ' act' : ''}" onclick="toggleChip('${t}')">${ICONS[t] || '📦'} ${t}</span>`
+  ).join('');
+}
+
+function renderTree() {
+  const el = document.getElementById('tree');
+  let h = '';
+  for (const type of TYPE_ORDER) {
+    const cat = CATEGORIES[type];
+    const isOpen = activeChip === type || activeSubCategory && CATEGORIES[activeSubCategory]?.children?.includes?.(type);
+    const hasActiveChild = activeSubCategory && cat.children.includes(activeSubCategory);
+    h += `<div class="m-ti${activeChip === type && !activeSubCategory ? ' sel' : ''}" onclick="toggleTree('${type}')">`;
+    h += `<span class="ar${isOpen ? ' o' : ''}">▶</span>`;
+    h += `<span class="ic">${cat.icon}</span>`;
+    h += `<span class="lb">${type}</span>`;
+    h += `<span class="ct">${cat.children.length}</span></div>`;
+    h += `<div class="m-ch${isOpen ? ' op' : ''}">`;
+    for (const sub of cat.children) {
+      h += `<div class="m-ci${activeSubCategory === sub ? ' sel' : ''}" onclick="selectSub('${sub}')">`;
+      h += `<span class="ic">${ICONS[sub] || '•'}</span>${sub}</div>`;
+    }
+    h += '</div>';
+  }
+  el.innerHTML = h;
+}
+
+function toggleTree(type) {
+  if (activeChip === type && !activeSubCategory) {
+    // toggle off
+    activeChip = null;
+  } else {
+    activeChip = type;
+    activeSubCategory = null;
+  }
+  renderChips();
+  renderTree();
+  applyFilter();
+}
+
+function selectSub(sub) {
+  // Find parent type
+  for (const [type, cat] of Object.entries(CATEGORIES)) {
+    if (cat.children.includes(sub)) {
+      activeChip = type;
+      activeSubCategory = sub;
+      break;
+    }
+  }
+  renderChips();
+  renderTree();
+  applyFilter();
+}
+
+function toggleChip(type) {
+  if (activeChip === type) {
+    activeChip = null;
+    activeSubCategory = null;
+  } else {
+    activeChip = type;
+    activeSubCategory = null;
+  }
+  renderChips();
+  renderTree();
+  applyFilter();
+}
+
+function applyFilter() {
+  const q = document.getElementById('searchInput').value.toLowerCase().trim();
+  filteredItems = allItems.filter(item => {
+    if (activeChip && item.type !== activeChip) return false;
+    if (activeSubCategory && item.subType !== activeSubCategory) return false;
+    if (q && !item.name.toLowerCase().includes(q) && !String(item.id).includes(q)) return false;
+    return true;
+  });
+  // Sort
+  filteredItems.sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'name') cmp = a.name.localeCompare(b.name);
+    else cmp = a.id - b.id;
+    return sortAsc ? cmp : -cmp;
+  });
+  currentPage = 0;
+  selectedIdx = -1;
+  renderList();
+  renderDetail();
+}
+
+function onSearch() {
+  applyFilter();
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  applyFilter();
+}
+
+function sortList(field) {
+  if (sortField === field) {
+    sortAsc = !sortAsc;
+  } else {
+    sortField = field;
+    sortAsc = true;
+  }
+  document.getElementById('sortArrow').textContent = sortAsc ? '▲' : '▼';
+  applyFilter();
+}
+
+function renderList() {
+  const el = document.getElementById('list');
+  const status = document.getElementById('statusBar');
+  const pg = document.getElementById('pagination');
+  const start = currentPage * pageSize;
+  const page = filteredItems.slice(start, start + pageSize);
+
+  if (page.length === 0) {
+    el.innerHTML = '<div class="m-empt"><div class="m-ei">📭</div>没有匹配的素材</div>';
+    pg.innerHTML = '';
+    status.textContent = '共 0 个素材 · 第 0/0 页';
+    return;
+  }
+
+  el.innerHTML = page.map((item, i) => {
+    const idx = start + i;
+    const tagCls = TAG_CLASSES[item.type] || '';
+    return `<div class="m-lr${idx === selectedIdx ? ' sel' : ''}" onclick="selectItem(${idx})">
+      <div class="m-thmb">${ICONS[item.type] || '📦'}</div>
+      <span class="m-rn">${item.name}</span>
+      <span class="m-rid">${item.id}<span class="tg ${tagCls}">${item.type}</span></span>
+    </div>`;
+  }).join('');
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  status.textContent = `共 ${filteredItems.length} 个素材 · 第 ${currentPage + 1}/${totalPages} 页`;
+
+  // Pagination
+  let ph = '';
+  if (currentPage > 0) ph += `<button onclick="goPage(${currentPage - 1})">‹</button>`;
+  const maxBtns = 5;
+  const half = Math.floor(maxBtns / 2);
+  let s = Math.max(0, currentPage - half);
+  let e = Math.min(totalPages, s + maxBtns);
+  if (e - s < maxBtns) s = Math.max(0, e - maxBtns);
+  for (let i = s; i < e; i++) {
+    ph += `<button${i === currentPage ? ' class="act"' : ''} onclick="goPage(${i})">${i + 1}</button>`;
+  }
+  if (currentPage < totalPages - 1) ph += `<button onclick="goPage(${currentPage + 1})">›</button>`;
+  pg.innerHTML = ph;
+}
+
+function goPage(p) {
+  currentPage = p;
+  renderList();
+  // If selected item not on current page, deselect
+  if (selectedIdx >= 0) {
+    const s = currentPage * pageSize;
+    const e = s + pageSize;
+    if (selectedIdx < s || selectedIdx >= e) {
+      selectedIdx = -1;
+      renderDetail();
+    }
+  }
+}
+
+function selectItem(idx) {
+  selectedIdx = idx;
+  renderList();
+  renderDetail();
+}
+
+function renderDetail() {
+  const el = document.getElementById('detail');
+  const item = selectedIdx >= 0 && selectedIdx < filteredItems.length ? filteredItems[selectedIdx] : null;
+  if (!item) {
+    el.innerHTML = '<div class="m-empt"><div class="m-ei">🔍</div>选择一个素材查看详情</div>';
+    return;
+  }
+  const tagCls = TAG_CLASSES[item.type] || '';
+  el.innerHTML = `
+    <div class="m-pv"><div class="m-pl">${ICONS[item.type] || '📦'}</div><div class="m-plb">${item.id} — 预览占位</div></div>
+    <div class="m-dn">${item.name}</div>
+    <div class="m-did">#${item.id}</div>
+    <div class="m-dtg"><span class="${tagCls}">${item.type}</span></div>
+    <div class="m-spacer"></div>
+    <div class="m-act">
+      <button class="pr" onclick="confirmSelect()">✅ 选择此素材</button>
+      <button class="sc" onclick="closeModal()">取消</button>
+    </div>`;
+}
+
+function confirmSelect() {
+  if (selectedIdx < 0) return;
+  const item = filteredItems[selectedIdx];
+  alert(`✅ 已选择素材：${item.name} (#${item.id})\n类型：${item.type}`);
+}
+
+function closeModal() {
+  document.getElementById('overlay').style.display = 'none';
+}
+
+function reopen() {
+  document.getElementById('overlay').style.display = 'flex';
+}
+
+// ══════════════════════════════════
+// Init
+// ══════════════════════════════════
+allItems = generateData();
+filteredItems = [...allItems];
+renderChips();
+renderTree();
+applyFilter();
+</script>
+</body>
+</html>

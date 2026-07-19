@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🐾 MiniPet — 桌面悬浮宠物</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="%234a6fa5"/><stop offset="50%" stop-color="%23365a8a"/><stop offset="100%" stop-color="%232d4a78"/></linearGradient></defs><rect fill="url(%23g)" width="1440" height="900"/><circle cx="1100" cy="180" r="320" fill="%23ffffff08"/><circle cx="340" cy="620" r="280" fill="%23ffffff05"/></svg>');
+  background-size:cover;font-family:-apple-system,"SF Pro","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;user-select:none;
+}
+body::before{content:'桌面背景 · 宠物窗口为透明悬浮';position:absolute;top:12px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.2);z-index:1}
+.dk{position:absolute;top:40px;right:60px;display:flex;flex-direction:column;gap:20px;align-items:center}
+.dk .di{display:flex;flex-direction:column;align-items:center;gap:3px;width:70px;text-align:center}
+.dk .di .ic{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px}
+.dk .di .lb{font-size:10px;color:rgba(255,255,255,.8);text-shadow:0 1px 2px rgba(0,0,0,.4)}
+.ic.a{background:rgba(255,255,255,.14)}.ic.b{background:rgba(255,255,255,.11)}.ic.c{background:rgba(255,255,255,.09)}.ic.d{background:rgba(255,255,255,.07)}
+.tb{position:absolute;bottom:0;left:0;right:0;height:38px;background:rgba(18,20,28,.88);backdrop-filter:blur(12px);border-top:1px solid rgba(255,255,255,.05);display:flex;align-items:center;padding:0 10px;gap:6px;z-index:50}
+.tb .ti{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;background:rgba(255,255,255,.07)}
+.tb .ti.ac{background:#5E9CFF}
+.tb .tt{margin-left:auto;font-size:11px;color:rgba(255,255,255,.5)}
+
+/* ── layout: pet (left) + context menu (right) ── */
+.stage{position:relative;display:flex;align-items:center;gap:0;z-index:100}
+
+/* pet */
+.pet{display:flex;flex-direction:column;align-items:center;animation:float 3s ease-in-out infinite;width:180px}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+
+/* balloon */
+.bl{background:linear-gradient(135deg,#5e9cff,#4080ee);border-radius:12px 12px 12px 4px;padding:8px 12px;max-width:200px;box-shadow:0 2px 14px rgba(30,60,120,.40);position:relative;margin-bottom:10px;animation:in .3s ease-out}
+.bl .bn{font-size:9px;color:rgba(255,255,255,.55);margin-bottom:1px}
+.bl .bt{font-size:13px;color:#fff;line-height:1.35}
+.bl .tm{font-size:8px;color:rgba(255,255,255,.35);text-align:right;margin-top:3px}
+.bl::after{content:'';position:absolute;bottom:-7px;left:20px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:7px solid #4080ee}
+@keyframes in{from{opacity:0;transform:translateY(4px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+/* sprite */
+.sr{width:160px;height:190px;position:relative}
+.sr .bdy{width:64px;height:100px;background:linear-gradient(180deg,#2a3f6e 0%,#16254a 100%);border-radius:12px;margin:0 auto;position:relative;box-shadow:0 8px 28px rgba(0,0,0,.5),0 0 40px rgba(94,156,255,.06)}
+.sr .hd{position:absolute;top:-50px;left:50%;transform:translateX(-50%);width:56px;height:56px;border-radius:50%;background:linear-gradient(180deg,#3d5a94 0%,#1e3668 100%);box-shadow:0 3px 12px rgba(0,0,0,.35)}
+.sr .ey{position:absolute;width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 5px rgba(255,255,255,.5)}
+.sr .ey.l{top:22px;left:14px}.sr .ey.r{top:22px;right:14px}
+.sr .lg{position:absolute;bottom:0;width:100%;display:flex;justify-content:center;gap:16px}
+.sr .lg .ft{width:14px;height:10px;border-radius:50%;background:rgba(255,255,255,.06);box-shadow:0 2px 4px rgba(0,0,0,.35)}
+.sr .nm{text-align:center;font-size:10px;color:rgba(255,255,255,.45);text-shadow:0 1px 3px rgba(0,0,0,.6);margin-top:4px}
+
+/* interaction hints under pet */
+.hints{display:flex;gap:12px;margin-top:4px;font-size:9px;color:rgba(255,255,255,.16);text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.hints span{padding:2px 6px;border-radius:3px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.04)}
+
+/* connector: pet → context menu */
+.bridge{display:flex;align-items:center;gap:8px;padding-left:20px}
+/* "right-click" arrow area */
+.rc{display:flex;flex-direction:column;align-items:center;gap:2px}
+.rc .dot{width:24px;height:24px;border-radius:50%;background:rgba(94,156,255,.08);border:2px dashed rgba(94,156,255,.25);display:flex;align-items:center;justify-content:center;font-size:14px;animation:pulse 2s ease-in-out infinite}
+.rc .hint{font-size:7px;color:rgba(94,156,255,.25);white-space:nowrap}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(94,156,255,.1)}50%{box-shadow:0 0 0 8px rgba(94,156,255,0)}}
+
+/* context menu */
+.ctx{
+  background:rgba(26,26,36,.97);backdrop-filter:blur(20px);
+  border-radius:8px;border:1px solid rgba(94,156,255,.12);
+  box-shadow:0 4px 24px rgba(0,0,0,.55),0 0 0 1px rgba(94,156,255,.04);
+  padding:4px;min-width:150px;font-size:12px;
+}
+.ctx .mi{padding:6px 10px;border-radius:4px;cursor:pointer;color:rgba(255,255,255,.82);display:flex;justify-content:space-between;align-items:center}
+.ctx .mi:hover{background:rgba(94,156,255,.14)}
+.ctx .mi.gh{color:rgba(255,255,255,.2)}
+.ctx .mi .ar{font-size:10px;color:rgba(255,255,255,.15)}
+.ctx hr{border:none;border-top:1px solid rgba(255,255,255,.05);margin:3px 0}
+</style>
+</head>
+<body>
+<div class="dk">
+  <div class="di"><div class="ic a">🗂️</div><div class="lb">文件夹</div></div>
+  <div class="di"><div class="ic b">🌐</div><div class="lb">浏览器</div></div>
+  <div class="di"><div class="ic c">💻</div><div class="lb">终端</div></div>
+  <div class="di"><div class="ic d">⚙️</div><div class="lb">设置</div></div>
+</div>
+<div class="tb">
+  <div class="ti">⌂</div><div class="ti">🔍</div><div class="ti ac">🐾</div><div class="ti">💬</div>
+  <div class="tt">周六 14:32</div>
+</div>
+
+<div class="stage">
+  <!-- pet -->
+  <div class="pet">
+    <div class="bl"><div class="bn">路西德</div><div class="bt">你好呀！今天想让我帮你做什么呀？🎀</div><div class="tm">刚刚</div></div>
+    <div class="sr">
+      <div class="bdy"><div class="hd"><div class="ey l"></div><div class="ey r"></div></div></div>
+      <div class="lg"><div class="ft"></div><div class="ft"></div></div>
+      <div class="nm">路西德 · 8880150</div>
+    </div>
+    <div class="hints">
+      <span>⇱ 拖拽移动</span><span>↻ 双击切换动画</span>
+    </div>
+  </div>
+
+  <!-- bridge: right-click → context menu -->
+  <div class="bridge">
+    <div class="rc">
+      <div class="dot">🖱️</div>
+      <div class="hint">右键点击</div>
+    </div>
+    <div class="ctx">
+      <div class="mi">切换人物 <span class="ar">▶</span></div>
+      <div class="mi">切换动画 <span class="ar">▶</span></div>
+      <div class="mi">切换背景 <span class="ar">▶</span></div>
+      <div class="mi">切换气泡 <span class="ar">▶</span></div>
+      <div class="mi">切换椅子/骑宠 <span class="ar">▶</span></div>
+      <hr>
+      <div class="mi gh">Hermes 终端 <span class="ar">⏸</span></div>
+      <div class="mi">设置中心</div>
+      <hr>
+      <div class="mi">退出</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
