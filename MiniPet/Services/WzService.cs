@@ -164,11 +164,20 @@ namespace MiniPet.Services
         public int GetDelay(string wzPath)
         {
             if (!_wzLoaded) return 0;
-
-            if (_dllLoaded)
-                return GetDelayDll(wzPath);
-
+            if (_dllLoaded) return GetDelayDll(wzPath);
             return GetDelayFallback(wzPath);
+        }
+
+        public int GetIntProperty(string wzPath)
+        {
+            var node = FindNodeByPath(wzPath);
+            return node != null ? Convert.ToInt32(node) : 0;
+        }
+
+        public string? GetStringProperty(string wzPath)
+        {
+            var node = FindNodeByPath(wzPath);
+            return node?.ToString();
         }
 
         /// <summary>
