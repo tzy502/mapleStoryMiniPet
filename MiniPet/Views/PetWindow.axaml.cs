@@ -13,13 +13,13 @@ public class PetWindow : Window
     private readonly ConfigService _configService;
     private readonly AnimService _animService;
     private readonly SpriteService _spriteService;
-    private readonly Image _spriteImage;
     private readonly TextBlock _infoText;
-    private readonly TextBox _nameBox;
+    private readonly Image _spriteImage;
     private Point _dragStart;
     private bool _isDragging;
     private PixelPoint _windowStartPos;
     private readonly DispatcherTimer _timer;
+    private int _tickCount;
 
     public PetWindow(ConfigService configService, AnimService animService, SpriteService spriteService)
     {
@@ -27,125 +27,101 @@ public class PetWindow : Window
         _animService = animService;
         _spriteService = spriteService;
 
-        // Window setup
-        // WindowStyle removed for Avalonia 12.x
-        Background = Brushes.Transparent;
-        TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+        Title = "🐾 MiniPet";
+        Width = 320;
+        Height = 240;
         Topmost = true;
-        Width = 200;
-        Height = 250;
-        // SystemDecorations.None
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-        // Root panel
-        var panel = new Canvas();
-        Content = panel;
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        Content = grid;
 
-        // Sprite image
-        _spriteImage = new Image { Width = 140, Height = 160 };
-        Canvas.SetLeft(_spriteImage, 30);
-        Canvas.SetTop(_spriteImage, 10);
-        panel.Children.Add(_spriteImage);
-
-        // Name text
-        _nameBox = new TextBox { Width = 140 };
-        Canvas.SetLeft(_nameBox, 30);
-        Canvas.SetTop(_nameBox, 175);
-        panel.Children.Add(_nameBox);
-
-        // Status text
-        _infoText = new TextBlock { Foreground = Brushes.White, FontSize = 10 };
-        Canvas.SetLeft(_infoText, 30);
-        Canvas.SetTop(_infoText, 200);
-        panel.Children.Add(_infoText);
-
-        // Events
-        PointerPressed += OnPointerPressed;
-        PointerMoved += OnPointerMoved;
-        PointerReleased += OnPointerReleased;
-
-        // Context menu
-        ContextMenu = BuildContextMenu();
-
-        // Frame timer
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
-        _timer.Tick += OnTick;
-
-        // Start
-        LoadDefaultPet();
-        _timer.Start();
-    }
-
-    private void LoadDefaultPet()
-    {
-        var settings = _configService.LoadSettings();
-        _animService.Play("stand", PlayMode.Loop);
-        _infoText.Text = $"🐾 {settings.CurrentMobId}";
-        _nameBox.Text = "";
-    }
-
-    private void OnTick(object? sender, EventArgs e)
-    {
-        var (frameData, bmp) = _animService.Tick(120);
-        if (bmp != null)
+        // Row 0: 标题
+        _infoText = new TextBlock
         {
-            using var ms = new System.IO.MemoryStream();
-            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            ms.Position = 0;
-            _spriteImage.Source = new Avalonia.Media.Imaging.Bitmap(ms);
-        }
-    }
+            Text = "🐾 MiniPet 桌宠",
+            FontSize = 16,
+            Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 10),
+            Background = new SolidColorBrush(Color.FromRgb(0, 180, 255))
+        };
+        Grid.SetRow(_infoText, 0);
+        grid.Children.Add(_infoText);
 
-    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        _isDragging = true;
-        _dragStart = e.GetPosition(this);
-        _windowStartPos = Position;
-    }
+        // Row 1: 精灵图
+        _spriteImage = new Image { Width = 200, Height = 120 };
+        Grid.SetRow(_spriteImage, 1);
+        grid.Children.Add(_spriteImage);
 
-    private void OnPointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_isDragging) return;
-        var pos = e.GetPosition(this);
-        var dx = pos.X - _dragStart.X;
-        var dy = pos.Y - _dragStart.Y;
-        Position = new PixelPoint((int)(_windowStartPos.X + dx), (int)(_windowStartPos.Y + dy));
-    }
+        // Row 2: 状态
+        var statusBar = new TextBlock
+        {
+            Text = "右键菜单",
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 180)),
+            TextAlignment = TextAlignment.Center
+        };
+        Grid.SetRow(statusBar, 2);
+        grid.Children.Add(statusBar);
 
-    private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        _isDragging = false;
-    }
+        // 右键菜单 - 直接加 Click 回调
+        var cm = new ContextMenu();
+        var exitItem = new MenuItem();
+        exitItem.Header = "退出";
+        exitItem.Click += (_, _) =>
+        {
+            _infoText.Text = "正在退出...";
+            Close();
+        };
+        cm.Items.Add(exitItem);
+        ContextMenu = cm;
 
-    private ContextMenu BuildContextMenu()
-    {
-        var menu = new ContextMenu();
+        // 拖拽
+        PointerPressed += (_, e) =>
+        {
+            _isDragging = true;
+            _dragStart = e.GetPosition(this);
+            _windowStartPos = Position;
+            _infoText.Text = "拖动中...";
+        };
+        PointerMoved += (_, e) =>
+        {
+            if (!_isDragging) return;
+            var pos = e.GetPosition(this);
+            Position = new PixelPoint(
+                (int)(_windowStartPos.X + pos.X - _dragStart.X),
+                (int)(_windowStartPos.Y + pos.Y - _dragStart.Y));
+        };
+        PointerReleased += (_, _) =>
+        {
+            _isDragging = false;
+            _infoText.Text = "已放下";
+        };
 
-        var switchMob = new MenuItem { Header = "切换人物" };
-        switchMob.Items.Add(new MenuItem { Header = "怪物列表（WZ未加载）", IsEnabled = false });
-        switchMob.Items.Add(new MenuItem { Header = "NPC列表（WZ未加载）", IsEnabled = false });
-        menu.Items.Add(switchMob);
+        // 帧循环
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _timer.Tick += (_, _) =>
+        {
+            _tickCount++;
+            var (fd, bmp) = _animService.Tick(500);
+            if (bmp != null)
+            {
+                using var ms = new System.IO.MemoryStream();
+                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                ms.Position = 0;
+                _spriteImage.Source = new Avalonia.Media.Imaging.Bitmap(ms);
+            }
+            else
+            {
+                _infoText.Text = $"🐾 Tick #{_tickCount} | 右键菜单已就绪";
+            }
+        };
 
-        var switchAnim = new MenuItem { Header = "切换动画" };
-        switchAnim.Items.Add(new MenuItem { Header = "stand" });
-        switchAnim.Items.Add(new MenuItem { Header = "fly" });
-        switchAnim.Items.Add(new MenuItem { Header = "say" });
-        menu.Items.Add(switchAnim);
-
-        menu.Items.Add(new Separator());
-
-        var settings = new MenuItem { Header = "设置中心" };
-        settings.Click += (s, e) => new SettingsWindow(_configService).Show();
-        menu.Items.Add(settings);
-
-        var hermes = new MenuItem { Header = "Hermes 终端", IsEnabled = false };
-        menu.Items.Add(hermes);
-
-        menu.Items.Add(new Separator());
-
-        var exit = new MenuItem { Header = "退出" };
-        exit.Click += (s, e) => Close();
-        menu.Items.Add(exit);
-
-        return menu;
+        _animService.Play("stand", PlayMode.Loop);
+        _timer.Start();
     }
 }
