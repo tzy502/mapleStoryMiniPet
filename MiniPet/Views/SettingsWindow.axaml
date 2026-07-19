@@ -1,0 +1,1008 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1020" d:DesignHeight="740"
+        x:Class="MiniPet.Views.SettingsWindow"
+        Title="MiniPet 设置中心"
+        Width="1020"
+        Height="740"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackground}"
+        TransparencyLevelHint="AcrylicBlur">
+
+    <Window.Resources>
+        <!-- 样式资源 -->
+        <SolidColorBrush x:Key="WindowBackground" Color="#1E1E26E0" />
+        <SolidColorBrush x:Key="BorderBrush" Color="#50505A99" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#5E9CFF" />
+        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F0F0F4" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#A0A0B0" />
+        <SolidColorBrush x:Key="TextDimBrush" Color="#707080" />
+        <SolidColorBrush x:Key="InputBackgroundBrush" Color="#1E1E24B3" />
+        <SolidColorBrush x:Key="InputBorderBrush" Color="#78788C4D" />
+
+        <!-- 按钮样式 -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="FontWeight" Value="Medium" />
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background" Value="#3C3C4680" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <!-- Tab 样式 -->
+        <Style Selector="TabItem.mainTab">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Padding" Value="20,8" />
+            <Setter Property="Foreground" Value="#FFFFFF66" />
+        </Style>
+        <Style Selector="TabItem.mainTab:selected">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        </Style>
+        <Style Selector="TabItem.subTab">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Padding" Value="14,5" />
+            <Setter Property="Foreground" Value="#FFFFFF4D" />
+        </Style>
+        <Style Selector="TabItem.subTab:selected">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        </Style>
+
+        <!-- 输入框样式 -->
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        </Style>
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <!-- 标题栏 -->
+        <Border Grid.Row="0" Background="#1E1E26E0" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,0,1" Padding="20,0" Height="50">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                <!-- 红黄绿按钮 -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="12" Height="12" Fill="#FF5F57" />
+                    <Ellipse Width="12" Height="12" Fill="#FEBC2E" />
+                    <Ellipse Width="12" Height="12" Fill="#28C840" />
+                </StackPanel>
+
+                <!-- 标题 -->
+                <TextBlock Grid.Column="1" Text="🐾 MiniPet 桌宠"
+                          FontSize="14" FontWeight="SemiBold"
+                          Foreground="{DynamicResource TextPrimaryBrush}"
+                          VerticalAlignment="Center" Margin="12,0,0,0" />
+                <TextBlock Grid.Column="1" Text=" — 设置中心"
+                          FontSize="11" FontWeight="Normal"
+                          Foreground="{DynamicResource TextDimBrush}"
+                          VerticalAlignment="Center" Margin="145,0,0,0" />
+
+                <!-- WZ 配置按钮 -->
+                <Button Grid.Column="3" Content="⚙️ WZ 配置"
+                       Class="secondary" FontSize="10"
+                       VerticalAlignment="Center"
+                       Click="OnWzConfigClick" />
+
+                <!-- 暗黑模式切换 -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6"
+                           VerticalAlignment="Center" Margin="12,0,0,0">
+                    <TextBlock x:Name="ThemeLabel" Text="暗黑"
+                              FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                              VerticalAlignment="Center" />
+                    <ToggleSwitch x:Name="ThemeToggle"
+                                 OnContent="" OffContent=""
+                                 IsChecked="True"
+                                 VerticalAlignment="Center"
+                                 Checked="OnThemeToggleChanged"
+                                 Unchecked="OnThemeToggleChanged" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 主 Tab -->
+        <TabControl Grid.Row="1" x:Name="MainTabControl"
+                   Background="Transparent"
+                   Padding="14,0"
+                   SelectionChanged="OnMainTabChanged">
+            <TabControl.Styles>
+                <Style Selector="TabControl&gt;TabItem">
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="FontWeight" Value="Medium" />
+                    <Setter Property="Padding" Value="20,8" />
+                    <Setter Property="Foreground" Value="#FFFFFF66" />
+                    <Setter Property="BorderThickness" Value="0,0,0,2" />
+                    <Setter Property="BorderBrush" Value="Transparent" />
+                </Style>
+                <Style Selector="TabControl&gt;TabItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                </Style>
+                <Style Selector="TabControl&gt;TabItem:selected">
+                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                </Style>
+            </TabControl.Styles>
+            <TabItem Header="📦 桌宠设置" x:Name="PetSettingsTab" />
+            <TabItem Header="🔗 AI 设置" x:Name="AISettingsTab" />
+            <TabItem Header="💬 对话记录" x:Name="ChatLogTab" />
+        </TabControl>
+
+        <!-- Tab 内容区域 -->
+        <Border Grid.Row="2" Background="#1E1E26E0">
+            <!-- 桌宠设置 Tab 内容 -->
+            <Grid x:Name="PetSettingsContent" IsVisible="True">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- 子 Tab -->
+                <TabControl Grid.Row="0" x:Name="SubTabControl"
+                           Background="Transparent"
+                           Padding="14,0"
+                           SelectionChanged="OnSubTabChanged">
+                    <TabControl.Styles>
+                        <Style Selector="TabControl&gt;TabItem">
+                            <Setter Property="FontSize" Value="11" />
+                            <Setter Property="FontWeight" Value="Medium" />
+                            <Setter Property="Padding" Value="14,5" />
+                            <Setter Property="Foreground" Value="#FFFFFF4D" />
+                            <Setter Property="BorderThickness" Value="0,0,0,2" />
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                        </Style>
+                        <Style Selector="TabControl&gt;TabItem:selected">
+                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                        </Style>
+                    </TabControl.Styles>
+                    <TabItem Header="素材桌宠设置" x:Name="MaterialTab" />
+                    <TabItem Header="纸娃娃桌宠设置" x:Name="PaperdollTab" />
+                    <TabItem Header="背景设置" x:Name="BackgroundTab" />
+                    <TabItem Header="聊天气泡设置" x:Name="BalloonTab" />
+                </TabControl>
+
+                <!-- 子 Tab 内容 -->
+                <Grid Grid.Row="1" x:Name="SubTabContentContainer">
+                    <!-- 素材桌宠设置内容 -->
+                    <Grid x:Name="MaterialContent" IsVisible="True" ColumnDefinitions="240,*">
+                        <!-- 左侧边栏 -->
+                        <Border Grid.Column="0" Background="#28282EB3"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="0,0,1,0" Padding="10">
+                            <Grid RowDefinitions="Auto,Auto,Auto,*">
+                                <!-- 搜索框 -->
+                                <TextBox Grid.Row="0" x:Name="MaterialSearchBox"
+                                        Watermark="过滤当前列表…" Margin="0,0,0,8" />
+
+                                <!-- 分段控制器 -->
+                                <Grid Grid.Row="1" ColumnDefinitions="*,*" Margin="0,0,0,8"
+                                     Background="{DynamicResource BorderBrush}"
+                                     CornerRadius="5">
+                                    <Border x:Name="MobSegment"
+                                           Grid.Column="0" Background="#5E9CFF26"
+                                           CornerRadius="4" Margin="1"
+                                           PointerPressed="OnSegmentClick">
+                                        <TextBlock Text="怪物" FontSize="10" FontWeight="Medium"
+                                                  Foreground="{DynamicResource AccentBrush}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                                    </Border>
+                                    <Border x:Name="NpcSegment"
+                                           Grid.Column="1" CornerRadius="4" Margin="1"
+                                           PointerPressed="OnSegmentClick">
+                                        <TextBlock Text="NPC" FontSize="10" FontWeight="Medium"
+                                                  Foreground="#FFFFFF4D"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                                    </Border>
+                                </Grid>
+
+                                <!-- 浏览素材库按钮 -->
+                                <Button Grid.Row="2" Content="🔍 浏览素材库"
+                                       Class="secondary" FontSize="11"
+                                       HorizontalAlignment="Stretch"
+                                       Margin="0,0,0,6"
+                                       Click="OnBrowseMaterialClick" />
+
+                                <!-- 素材列表 -->
+                                <ScrollViewer Grid.Row="3">
+                                    <StackPanel Spacing="4">
+                                        <!-- 收藏区域 -->
+                                        <TextBlock Text="★ 收藏" FontSize="10" FontWeight="SemiBold"
+                                                  Foreground="{DynamicResource TextDimBrush}"
+                                                  Margin="4,10,4,4" />
+                                        <Border x:Name="Favorite1" Background="#5E9CFF1A"
+                                               CornerRadius="5" Padding="8,5"
+                                               PointerEntered="OnMaterialItemHover"
+                                               PointerExited="OnMaterialItemLeave"
+                                               PointerPressed="OnMaterialItemClick">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <TextBlock Grid.Column="0" Text="👾" FontSize="13"
+                                                          VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="路西德" FontSize="11" FontWeight="Medium"
+                                                              Foreground="#FFFFFFBF" />
+                                                    <TextBlock Text="8880150" FontSize="9"
+                                                              Foreground="#FFFFFF40"
+                                                              FontFamily="monospace" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="★" FontSize="10"
+                                                          Foreground="#FFD700" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                        <Border Background="Transparent" CornerRadius="5" Padding="8,5"
+                                               PointerEntered="OnMaterialItemHover"
+                                               PointerExited="OnMaterialItemLeave"
+                                               PointerPressed="OnMaterialItemClick">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <TextBlock Grid.Column="0" Text="👹" FontSize="13"
+                                                          VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="品克缤" FontSize="11" FontWeight="Medium"
+                                                              Foreground="#FFFFFFBF" />
+                                                    <TextBlock Text="8860000" FontSize="9"
+                                                              Foreground="#FFFFFF40"
+                                                              FontFamily="monospace" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="★" FontSize="10"
+                                                          Foreground="#FFD700" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 最近使用区域 -->
+                                        <TextBlock Text="最近使用" FontSize="10" FontWeight="SemiBold"
+                                                  Foreground="{DynamicResource TextDimBrush}"
+                                                  Margin="4,10,4,4" />
+                                        <Border Background="Transparent" CornerRadius="5" Padding="8,5"
+                                               PointerEntered="OnMaterialItemHover"
+                                               PointerExited="OnMaterialItemLeave"
+                                               PointerPressed="OnMaterialItemClick">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <TextBlock Grid.Column="0" Text="🦊" FontSize="13"
+                                                          VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="狐狸" FontSize="11" FontWeight="Medium"
+                                                              Foreground="#FFFFFFBF" />
+                                                    <TextBlock Text="9300573" FontSize="9"
+                                                              Foreground="#FFFFFF40"
+                                                              FontFamily="monospace" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="☆" FontSize="10"
+                                                          Foreground="#FFFFFF26" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+
+                        <!-- 右侧预览区域 -->
+                        <Border Grid.Column="1" Padding="14">
+                            <Grid RowDefinitions="*,Auto,Auto">
+                                <!-- 预览画布 -->
+                                <Border x:Name="MaterialPreviewCanvas"
+                                       Grid.Row="0" Background="#50505A26"
+                                       CornerRadius="8"
+                                       BorderBrush="{DynamicResource AccentBrush}"
+                                       BorderThickness="1">
+                                    <Viewbox Stretch="Uniform">
+                                        <StackPanel HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Spacing="10">
+                                            <!-- 模拟宠物预览 -->
+                                            <Border Width="100" Height="140"
+                                                   Background="Linear-Gradient(180deg, #2A3F6E, #16254A)"
+                                                   CornerRadius="10">
+                                                <Ellipse Width="70" Height="70"
+                                                        Fill="Linear-Gradient(180deg, #3D5A94, #1E3668)"
+                                                        Margin="0,-36,0,0" />
+                                            </Border>
+                                            <TextBlock x:Name="PreviewName" Text="路西德"
+                                                      FontSize="14" FontWeight="SemiBold"
+                                                      Foreground="#FFFFFFE6"
+                                                      HorizontalAlignment="Center" />
+                                            <TextBlock x:Name="PreviewId" Text="8880150"
+                                                      FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                      HorizontalAlignment="Center" />
+                                        </StackPanel>
+                                    </Viewbox>
+                                </Border>
+
+                                <!-- 操作栏 -->
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,8,0,0">
+                                    <TextBlock x:Name="CurrentMaterialName" Text="路西德"
+                                              FontSize="12" FontWeight="Medium"
+                                              Foreground="#FFFFFFB3" VerticalAlignment="Center" />
+                                    <TextBox x:Name="CurrentMaterialId" Text="8880150"
+                                            Width="80" FontFamily="monospace"
+                                            VerticalAlignment="Center" />
+                                    <Button Content="★ 收藏" Class="secondary" FontSize="10"
+                                           Click="OnFavoriteClick" />
+                                    <Button Content="▶ 播放" Class="secondary" FontSize="10"
+                                           Click="OnPlayClick" />
+                                    <Button Content="📋 复制为 OBJ" Class="primary" FontSize="10"
+                                           Click="OnCopyObjClick" />
+                                    <Button Content="✅ 应用" Class="primary" FontSize="10"
+                                           Click="OnApplyMaterialClick" />
+                                </StackPanel>
+
+                                <!-- 缩放和背景设置 -->
+                                <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="缩放" FontSize="9"
+                                                  Foreground="#FFFFFF4D" VerticalAlignment="Center" />
+                                        <Slider x:Name="ScaleSlider" Width="80" Minimum="0.3"
+                                               Maximum="2" Value="1"
+                                               VerticalAlignment="Center" />
+                                        <TextBlock x:Name="ScaleValue" Text="100%"
+                                                  FontSize="9" Foreground="#FFFFFF4D"
+                                                  FontFamily="monospace" VerticalAlignment="Center" />
+                                    </StackPanel>
+
+                                    <!-- 背景色卡 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
+                                        <TextBlock Text="背景设置" FontSize="9"
+                                                  Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" Margin="0,0,4,0" />
+                                        <Border x:Name="BgTransparent" Background="#50505A80"
+                                               Width="40" Height="26" CornerRadius="3"
+                                               BorderBrush="{DynamicResource AccentBrush}"
+                                               BorderThickness="1"
+                                               PointerPressed="OnBackgroundClick" />
+                                        <Border x:Name="BgGrid" Background="#C8C8C80D"
+                                               Width="40" Height="26" CornerRadius="3"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1"
+                                               PointerPressed="OnBackgroundClick" />
+                                        <Border x:Name="BgHeneseys"
+                                               Background="Linear-Gradient(180deg, #2D5A2D, #4A8C4A)"
+                                               Width="40" Height="26" CornerRadius="3"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1"
+                                               PointerPressed="OnBackgroundClick" />
+                                        <Border x:Name="BgMarket"
+                                               Background="Linear-Gradient(180deg, #4A3A20, #C4A45A)"
+                                               Width="40" Height="26" CornerRadius="3"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1"
+                                               PointerPressed="OnBackgroundClick" />
+                                        <Border x:Name="BgForest"
+                                               Background="Linear-Gradient(180deg, #1A2E1A, #2A5A2A)"
+                                               Width="40" Height="26" CornerRadius="3"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1"
+                                               PointerPressed="OnBackgroundClick" />
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- 纸娃娃桌宠设置内容 -->
+                    <Grid x:Name="PaperdollContent" IsVisible="False" ColumnDefinitions="240,*">
+                        <!-- 左侧设置面板 -->
+                        <Border Grid.Column="0" Background="#28282EB3"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="0,0,1,0" Padding="10">
+                            <ScrollViewer>
+                                <StackPanel Spacing="10">
+                                    <!-- 多套纸娃娃预设 -->
+                                    <TextBlock Text="👥 多套纸娃娃" FontSize="10" FontWeight="SemiBold"
+                                              Foreground="#FFFFFF66" />
+                                    <ItemsControl x:Name="PresetList">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal" ItemWidth="120" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <Border Background="#5E9CFF1F" CornerRadius="4" Padding="3,10"
+                                               BorderBrush="#5E9CFF33" BorderThickness="1">
+                                            <TextBlock Text="👱 冒险家" FontSize="10"
+                                                      Foreground="{DynamicResource AccentBrush}"
+                                                      HorizontalAlignment="Center" />
+                                        </Border>
+                                        <Border Background="Transparent" CornerRadius="4" Padding="3,10"
+                                               BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                            <TextBlock Text="🧝 精灵族" FontSize="10"
+                                                      Foreground="{DynamicResource TextSecondaryBrush}"
+                                                      HorizontalAlignment="Center" />
+                                        </Border>
+                                        <Border Background="Transparent" CornerRadius="4" Padding="3,10"
+                                               BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                                            <TextBlock Text="⚔️ 剑客" FontSize="10"
+                                                      Foreground="{DynamicResource TextSecondaryBrush}"
+                                                      HorizontalAlignment="Center" />
+                                        </Border>
+                                        <Border Background="Transparent" CornerRadius="4" Padding="3,10"
+                                               BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                               BorderDashArray="2,2">
+                                            <TextBlock Text="+ 新建" FontSize="10"
+                                                      Foreground="#FFFFFF26"
+                                                      HorizontalAlignment="Center" />
+                                        </Border>
+                                    </ItemsControl>
+
+                                    <!-- 基础设置 -->
+                                    <TextBlock Text="🧍 基础" FontSize="10" FontWeight="SemiBold"
+                                              Foreground="#FFFFFF66" Margin="0,6,0,0" />
+                                    <Grid ColumnDefinitions="34,*" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="性别"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <Grid Grid.Column="1" ColumnDefinitions="*,*"
+                                             Background="{DynamicResource InputBackgroundBrush}"
+                                             CornerRadius="3">
+                                            <Border x:Name="GenderMale" Grid.Column="0"
+                                                   Background="#5E9CFF26" CornerRadius="3" Margin="1">
+                                                <TextBlock Text="♂" FontSize="10"
+                                                          Foreground="{DynamicResource AccentBrush}"
+                                                          HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                            </Border>
+                                            <Border x:Name="GenderFemale" Grid.Column="1"
+                                                   CornerRadius="3" Margin="1">
+                                                <TextBlock Text="♀" FontSize="10"
+                                                          Foreground="#FFFFFF4D"
+                                                          HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                            </Border>
+                                        </Grid>
+                                    </Grid>
+                                    <Grid ColumnDefinitions="34,*,Auto" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="发型"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1" Text="30000123"
+                                                FontFamily="monospace" FontSize="10" />
+                                        <Button Grid.Column="2" Content="浏览" Class="secondary"
+                                               FontSize="9" Margin="4,0,0,0"
+                                               Click="OnBrowseHairClick" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="34,*,Auto" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="脸型"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1" Text="20000123"
+                                                FontFamily="monospace" FontSize="10" />
+                                        <Button Grid.Column="2" Content="浏览" Class="secondary"
+                                               FontSize="9" Margin="4,0,0,0"
+                                               Click="OnBrowseFaceClick" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="34,*,Auto" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="皮肤"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1" Text="0"
+                                                FontFamily="monospace" FontSize="10" />
+                                        <Button Grid.Column="2" Content="浏览" Class="secondary"
+                                               FontSize="9" Margin="4,0,0,0"
+                                               Click="OnBrowseSkinClick" />
+                                    </Grid>
+
+                                    <!-- 装备栏 -->
+                                    <TextBlock Text="🎽 装备" FontSize="10" FontWeight="SemiBold"
+                                              Foreground="#FFFFFF66" Margin="0,6,0,0" />
+                                    <ItemsControl x:Name="EquipmentList">
+                                        <Border Background="Transparent" CornerRadius="3" Padding="5,3"
+                                               PointerEntered="OnMaterialItemHover">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <TextBlock Grid.Column="0" Text="🎩" FontSize="12"
+                                                          Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="暗夜帽" FontSize="10"
+                                                              Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="1002554" FontSize="8"
+                                                              Foreground="#FFFFFF26" FontFamily="monospace" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="🔍 浏览" FontSize="10"
+                                                          Foreground="{DynamicResource AccentBrush}"
+                                                          Background="#5E9CFF1A" CornerRadius="4"
+                                                          Padding="6,1" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </ItemsControl>
+
+                                    <!-- 坐骑/椅子 -->
+                                    <TextBlock Text="🐴 坐骑/椅子" FontSize="10" FontWeight="SemiBold"
+                                              Foreground="#FFFFFF66" Margin="0,6,0,0" />
+                                    <Grid ColumnDefinitions="34,*" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="坐骑"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                               CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                               BorderThickness="1" Padding="5,2">
+                                            <TextBlock Text="飞天扫帚" FontSize="10"
+                                                      Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Border>
+                                    </Grid>
+                                    <Grid ColumnDefinitions="34,*" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="椅子"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                               CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                               BorderThickness="1" Padding="5,2">
+                                            <TextBlock Text="无" FontSize="10"
+                                                      Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Border>
+                                    </Grid>
+
+                                    <!-- 染色 -->
+                                    <TextBlock Text="🎨 染色" FontSize="10" FontWeight="SemiBold"
+                                              Foreground="#FFFFFF66" Margin="0,6,0,0" />
+                                    <Grid ColumnDefinitions="34,Auto" Margin="0,2,0,0">
+                                        <TextBlock Grid.Column="0" Text="开启"
+                                                  FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                                  VerticalAlignment="Center" />
+                                        <ToggleSwitch Grid.Column="1" IsChecked="False" />
+                                    </Grid>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- 右侧预览 -->
+                        <Border Grid.Column="1" Padding="14">
+                            <Grid RowDefinitions="*,Auto">
+                                <!-- 纸娃娃预览画布 -->
+                                <Border x:Name="PaperdollPreviewCanvas"
+                                       Grid.Row="0" Background="#50505A26"
+                                       CornerRadius="8"
+                                       BorderBrush="{DynamicResource AccentBrush}"
+                                       BorderThickness="1">
+                                    <!-- 模拟纸娃娃 -->
+                                    <Canvas Width="120" Height="200">
+                                        <Ellipse Canvas.Left="44" Canvas.Top="96"
+                                                Width="32" Height="32"
+                                                Fill="Linear-Gradient(180deg, #FFD2A0E6, #FFBE8CE6)" />
+                                        <Rectangle Canvas.Left="40" Canvas.Top="20"
+                                                  Width="40" Height="60"
+                                                  Fill="Linear-Gradient(180deg, #FFC896CC, #FFB482CC)"
+                                                  RadiusX="8" RadiusY="8" />
+                                    </Canvas>
+                                </Border>
+
+                                <!-- 控制栏 -->
+                                <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                                        <ToggleSwitch IsChecked="True" />
+                                        <TextBlock Text="动画" FontSize="10"
+                                                  Foreground="#FFFFFF66" VerticalAlignment="Center" />
+                                    </StackPanel>
+
+                                    <!-- 缩放控制 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                               HorizontalAlignment="Center" Spacing="2">
+                                        <Button Content="−" Width="22" Height="20"
+                                               Background="{DynamicResource InputBackgroundBrush}"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1" />
+                                        <TextBlock Text="100%" FontSize="9"
+                                                  Foreground="#FFFFFF66" Width="30"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                                        <Button Content="+" Width="22" Height="20"
+                                               Background="{DynamicResource InputBackgroundBrush}"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1" />
+                                        <Button Content="⟲" Width="22" Height="20" Margin="2,0,0,0"
+                                               Background="{DynamicResource InputBackgroundBrush}"
+                                               BorderBrush="{DynamicResource BorderBrush}"
+                                               BorderThickness="1" />
+                                    </StackPanel>
+
+                                    <Button Grid.Column="2" Content="✅ 应用"
+                                           Class="primary" FontSize="11"
+                                           Click="OnApplyPaperdollClick" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- 背景设置内容 -->
+                    <Grid x:Name="BackgroundContent" IsVisible="False" ColumnDefinitions="240,*">
+                        <!-- 左侧地图树 -->
+                        <Border Grid.Column="0" Background="#28282EB3"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="0,0,1,0" Padding="10">
+                            <Grid RowDefinitions="Auto,*">
+                                <TextBox Grid.Row="0" Watermark="搜索地图…" Margin="0,0,0,8" />
+                                <ScrollViewer Grid.Row="1">
+                                    <TreeView x:Name="MapTree" />
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+
+                        <!-- 右侧预览 -->
+                        <Border Grid.Column="1" Padding="14">
+                            <Grid RowDefinitions="*,Auto">
+                                <!-- 地图预览 -->
+                                <Border x:Name="MapPreviewCanvas"
+                                       Grid.Row="0" Background="Linear-Gradient(180deg, #1E1E32E6, #28503299)"
+                                       CornerRadius="8"
+                                       BorderBrush="{DynamicResource AccentBrush}"
+                                       BorderThickness="1">
+                                    <TextBlock Text="射手村 · 100000000" FontSize="8"
+                                              Foreground="#FFFFFF26" Background="#0000004D"
+                                              Padding="2,8" CornerRadius="4"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Bottom"
+                                              Margin="0,0,0,10" />
+                                </Border>
+
+                                <!-- OBJ 列表 -->
+                                <StackPanel Grid.Row="1" Spacing="2" Margin="0,6,0,0">
+                                    <Border Background="#50505A1A" CornerRadius="4" Padding="6,4"
+                                           BorderBrush="#FFFFFF08" BorderThickness="1">
+                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                            <TextBlock Grid.Column="0" Text="👾" FontSize="16"
+                                                      Margin="0,0,6,0" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="路西德 (复制)"
+                                                      FontSize="9" Foreground="#FFFFFF99"
+                                                      VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Text="8880150"
+                                                      FontSize="8" Foreground="#FFFFFF26"
+                                                      FontFamily="monospace"
+                                                      VerticalAlignment="Center" Margin="0,0,6,0" />
+                                            <TextBlock Grid.Column="3" Text="✕" FontSize="7"
+                                                      Foreground="#FFFFFF26"
+                                                      VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                                        <ComboBox Grid.Column="0" Watermark="— 选择素材添加 —"
+                                                 HorizontalAlignment="Stretch" />
+                                        <Button Grid.Column="1" Content="+ 添加" Class="secondary"
+                                               FontSize="9" Margin="4,0,0,0" />
+                                    </Grid>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <!-- 聊天气泡设置内容 -->
+                    <Grid x:Name="BalloonContent" IsVisible="False" ColumnDefinitions="240,*">
+                        <!-- 左侧气泡列表 -->
+                        <Border Grid.Column="0" Background="#28282EB3"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="0,0,1,0" Padding="10">
+                            <Grid RowDefinitions="Auto,Auto,*,Auto">
+                                <TextBox Grid.Row="0" Watermark="搜索气泡 ID 或名称…" Margin="0,0,0,8" />
+                                <TextBlock Grid.Row="1" Text="共 6 个样式"
+                                          FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                                          Margin="0,0,0,6" />
+                                <ScrollViewer Grid.Row="2">
+                                    <ItemsControl x:Name="BalloonList">
+                                        <Border Background="#5E9CFF0F" CornerRadius="5" Padding="7,8"
+                                               BorderBrush="{DynamicResource AccentBrush}"
+                                               BorderThickness="1" Margin="0,0,0,3">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <Border Grid.Column="0" Width="50" Height="22"
+                                                       Background="Linear-Gradient(135deg, #5E9CFF, #4A8AEE)"
+                                                       CornerRadius="4" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="经典蓝"
+                                                          FontSize="10" Foreground="#FFFFFF99"
+                                                          VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Text="#560"
+                                                          FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                                                          FontFamily="monospace"
+                                                          VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                <Border Grid.Column="3" Width="14" Height="14"
+                                                       Background="{DynamicResource AccentBrush}"
+                                                       CornerRadius="7" VerticalAlignment="Center">
+                                                    <TextBlock Text="✓" FontSize="7" Foreground="White"
+                                                              HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <Border Background="Transparent" CornerRadius="5" Padding="7,8"
+                                               BorderBrush="#FFFFFF08" BorderThickness="1" Margin="0,0,0,3">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <Border Grid.Column="0" Width="50" Height="22"
+                                                       Background="#282832E6"
+                                                       CornerRadius="4" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="暗黑玻璃"
+                                                          FontSize="10" Foreground="#FFFFFF99"
+                                                          VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Text="#3"
+                                                          FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                                                          FontFamily="monospace"
+                                                          VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                <Border Grid.Column="3" Width="14" Height="14"
+                                                       Background="{DynamicResource BorderBrush}"
+                                                       CornerRadius="7" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </ItemsControl>
+                                </ScrollViewer>
+
+                                <!-- 自定义颜色 -->
+                                <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*,Auto"
+                                     Background="{DynamicResource BorderBrush}"
+                                     CornerRadius="5" Padding="6,8" Margin="0,6,0,0">
+                                    <TextBlock Grid.Column="0" Text="ID"
+                                              FontSize="9" Foreground="#FFFFFF4D"
+                                              VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <TextBox Grid.Column="1" Text="560" Width="50"
+                                            FontSize="9" FontFamily="monospace" />
+                                    <TextBlock Grid.Column="2" Text="文字"
+                                              FontSize="9" Foreground="#FFFFFF4D"
+                                              VerticalAlignment="Center" Margin="6,0,4,0" />
+                                    <ColorPicker Grid.Column="3" Width="20" Height="20" />
+                                    <Button Grid.Column="4" Content="应用"
+                                           Background="{DynamicResource AccentBrush}"
+                                           Foreground="White" CornerRadius="3"
+                                           FontSize="9" Padding="8,2" Margin="4,0,0,0" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <!-- 右侧预览 -->
+                        <Border Grid.Column="1" Padding="14">
+                            <StackPanel Spacing="8" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center">
+                                <!-- 气泡预览 -->
+                                <Border Background="#5E9CFF08" CornerRadius="12" Padding="16"
+                                       BorderBrush="{DynamicResource AccentBrush}"
+                                       BorderThickness="1">
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="🐾 路西德" FontSize="9"
+                                                  Foreground="{DynamicResource AccentBrush}"
+                                                  FontWeight="SemiBold" />
+                                        <TextBlock Text="你好呀胶水！今天想让我帮你做什么呀？🎀"
+                                                  FontSize="12" Foreground="White" />
+                                        <TextBlock Text="刚刚" FontSize="8"
+                                                  Foreground="#FFFFFF40"
+                                                  HorizontalAlignment="Right" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 操作按钮 -->
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button Content="预览测试" Class="secondary" FontSize="10" />
+                                    <Button Content="隐藏" Class="secondary" FontSize="10" />
+                                    <Button Content="✅ 应用" Class="primary" FontSize="10"
+                                           Click="OnApplyBalloonClick" />
+                                </StackPanel>
+
+                                <TextBlock Text="选择一种样式或自定义颜色 → 确定应用"
+                                          FontSize="9" Foreground="#FFFFFF26"
+                                          HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Grid>
+
+            <!-- AI 设置 Tab 内容 -->
+            <Grid x:Name="AISettingsContent" IsVisible="False" Padding="14">
+                <ScrollViewer>
+                    <StackPanel Spacing="12">
+                        <!-- 连接状态 -->
+                        <Border Background="#28282E99" CornerRadius="8" Padding="14"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="🔗 AI 设置 关联"
+                                          FontSize="12" FontWeight="SemiBold"
+                                          Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <Border Background="#5E9CFF26" CornerRadius="8"
+                                       Padding="1,6" HorizontalAlignment="Left"
+                                       Margin="6,0,0,0">
+                                    <TextBlock Text="已连接" FontSize="9" FontWeight="Medium"
+                                              Foreground="{DynamicResource AccentBrush}" />
+                                </Border>
+                                <TextBlock Text="AI 浮窗与桌宠同级并排显示在桌面。"
+                                          FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                          Margin="0,6,0,0" />
+
+                                <!-- 状态指示 -->
+                                <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,10,0,0">
+                                    <Border Grid.Column="0" Width="28" Height="28"
+                                           Background="#34C759" CornerRadius="14"
+                                           BoxShadow="0 0 10 0 #34C7594D" />
+                                    <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                        <TextBlock Text="路西德 · 运行中"
+                                                  FontSize="14" FontWeight="Bold"
+                                                  Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock Text="gpt-4o 由 zai 提供 · 上下文 128K"
+                                                  FontSize="10" Foreground="#FFFFFF66">
+                                            <Run Text="gpt-4o" Background="#5E9CFF1F"
+                                                Foreground="{DynamicResource AccentBrush}"
+                                                FontSize="8" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Button Grid.Column="2" Content="断开连接"
+                                           Background="{DynamicResource InputBackgroundBrush}"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                           BorderBrush="{DynamicResource BorderBrush}"
+                                           BorderThickness="1" CornerRadius="5"
+                                           FontSize="10" Padding="10,4" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 反应规则表格 -->
+                        <Border Background="#28282E99" CornerRadius="8" Padding="14"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="1">
+                            <StackPanel>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Text="📋 反应规则"
+                                              FontSize="12" FontWeight="SemiBold"
+                                              Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    <Border Grid.Column="0" Background="#5E9CFF26"
+                                           CornerRadius="8" Padding="1,6"
+                                           HorizontalAlignment="Left" Margin="78,0,0,0">
+                                        <TextBlock Text="4 条" FontSize="9" FontWeight="Medium"
+                                                  Foreground="{DynamicResource AccentBrush}" />
+                                    </Border>
+                                    <Button Grid.Column="1" Content="+ 添加"
+                                           Background="{DynamicResource AccentBrush}"
+                                           Foreground="White" CornerRadius="4"
+                                           FontSize="10" Padding="8,3" />
+                                </Grid>
+
+                                <!-- 反应规则表格占位 -->
+                                <TextBlock Text="反应规则表格将在后续版本实现"
+                                          FontSize="10" Foreground="#FFFFFF66"
+                                          Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- 对话记录 Tab 内容 -->
+            <Grid x:Name="ChatLogContent" IsVisible="False" Padding="14">
+                <ScrollViewer>
+                    <StackPanel Spacing="12">
+                        <!-- 快捷键设置 -->
+                        <Border Background="#28282E99" CornerRadius="8" Padding="14"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="⌨️ 快捷键"
+                                          FontSize="12" FontWeight="SemiBold"
+                                          Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="对话记录通过快捷键从桌面呼出，轻量独立。"
+                                          FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                          Margin="0,4,0,0" />
+                                <Grid ColumnDefinitions="34,*,Auto" Margin="0,8,0,0">
+                                    <TextBlock Grid.Column="0" Text="呼出"
+                                              FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                              VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                           CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                           BorderThickness="1" Padding="5,2">
+                                        <TextBlock Text="⌘ + ⇧ + Space" FontSize="10"
+                                                  Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Border>
+                                    <Button Grid.Column="2" Content="录制"
+                                           Class="secondary" FontSize="10" Margin="4,0,0,0" />
+                                </Grid>
+                                <Grid ColumnDefinitions="34,*" Margin="0,4,0,0">
+                                    <TextBlock Grid.Column="0" Text="隐藏"
+                                              FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                              VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                           CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                           BorderThickness="1" Padding="5,2">
+                                        <TextBlock Text="Esc" FontSize="10"
+                                                  Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Border>
+                                </Grid>
+                                <Grid ColumnDefinitions="34,*,Auto" Margin="0,4,0,0">
+                                    <TextBlock Grid.Column="0" Text="语音输入"
+                                              FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                              VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                           CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                           BorderThickness="1" Padding="5,2">
+                                        <TextBlock Text="⌘ + ⇧ + M" FontSize="10"
+                                                  Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Border>
+                                    <Button Grid.Column="2" Content="录制"
+                                           Class="secondary" FontSize="10" Margin="4,0,0,0" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 外观设置 -->
+                        <Border Background="#28282E99" CornerRadius="8" Padding="14"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="🎨 外观"
+                                          FontSize="12" FontWeight="SemiBold"
+                                          Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <Grid ColumnDefinitions="34,*" Margin="0,8,0,0">
+                                    <TextBlock Grid.Column="0" Text="主题"
+                                              FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                              VerticalAlignment="Center" />
+                                    <Grid Grid.Column="1" ColumnDefinitions="*,*,*"
+                                         Background="{DynamicResource InputBackgroundBrush}"
+                                         CornerRadius="3">
+                                        <Border Grid.Column="0" Background="#5E9CFF26"
+                                               CornerRadius="3" Margin="1">
+                                            <TextBlock Text="跟随系统" FontSize="10"
+                                                      Foreground="{DynamicResource AccentBrush}"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border Grid.Column="1" CornerRadius="3" Margin="1">
+                                            <TextBlock Text="浅色" FontSize="10"
+                                                      Foreground="#FFFFFF4D"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border Grid.Column="2" CornerRadius="3" Margin="1">
+                                            <TextBlock Text="深色" FontSize="10"
+                                                      Foreground="#FFFFFF4D"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                        </Border>
+                                    </Grid>
+                                </Grid>
+                                <Grid ColumnDefinitions="34,*" Margin="0,4,0,0">
+                                    <TextBlock Grid.Column="0" Text="字体"
+                                              FontSize="10" Foreground="{DynamicResource TextDimBrush}"
+                                              VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="{DynamicResource InputBackgroundBrush}"
+                                           CornerRadius="3" BorderBrush="{DynamicResource InputBorderBrush}"
+                                           BorderThickness="1" Padding="5,2">
+                                        <TextBlock Text="SF Pro · 14px" FontSize="10"
+                                                  Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Border>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,8,0,0">
+                                    <TextBlock Text="透明度" FontSize="9"
+                                              Foreground="#FFFFFF4D" VerticalAlignment="Center" />
+                                    <Slider Width="100" Minimum="0.3" Maximum="1" Value="0.85" />
+                                    <TextBlock Text="85%" FontSize="9"
+                                              Foreground="#FFFFFF4D" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <!-- 底部状态栏 -->
+        <Border Grid.Row="3" Background="#1E1E26E0"
+               BorderBrush="{DynamicResource BorderBrush}"
+               BorderThickness="0,1,0,0"
+               Padding="20,5">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="💡 桌宠浮于桌面 · Hermes AI 浮窗显示 · 对话快捷键呼出"
+                          FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                          VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="v0.5 · macOS Native"
+                              FontSize="9" Foreground="{DynamicResource TextDimBrush}"
+                              VerticalAlignment="Center" />
+                    <TextBlock Text="AI 设置" FontSize="9"
+                              Foreground="{DynamicResource AccentBrush}"
+                              VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
