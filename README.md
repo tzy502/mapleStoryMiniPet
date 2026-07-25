@@ -1,59 +1,93 @@
 # MapleStory MiniPet
 
-冒险岛怪物桌面悬浮宠物，基于 Swift + AppKit 原生实现。
+冒险岛桌面悬浮宠物，基于 .NET 9 + Avalonia UI 实现。
 
 ## 功能
 
-- 透明无边框悬浮窗，置顶于桌面
-- 4 种动画：stand / move / attack1 / skill1
-- 左键拖拽移动，右键菜单切换动画
-- 感知 Hermes Agent 活动，自动切换到 move 动画
-- 内嵌终端（可选），可直接与 Hermes 对话
+- 透明无边框悬浮窗，桌面置顶
+- 精灵图动画播放：stand / move / fly / attack / skill / say / mouse / hand / laugh / eye / die
+- 左键拖拽移动，右键菜单切换动画 / 怪物 / 背景 / 气泡
+- 纸娃娃系统：装备渲染、z-order 排序
+- 聊天气泡：9-slice 渲染、淡入淡出
+- 地图背景：图层合成、视差偏移
+- 设置中心：WZ 路径配置、主题切换、素材浏览
+- Hermes 内嵌终端（可选）
+- macOS / Windows 双平台
 
 ## 快速启动
 
 ```bash
-./start.sh          # 启动（如已构建）
-./start.sh --build  # 构建并启动
+# 编译
+dotnet build MiniPet/MiniPet.csproj
+
+# 运行
+dotnet run --project MiniPet/MiniPet.csproj
 ```
 
 ## 项目结构
 
 ```
 mapleStoryMiniPet/
-├── start.sh                  # 启动脚本
-├── Package.swift             # Swift Package 配置
-├── Sources/MiniPet/main.swift # 主程序
-├── sprites/                  # 精灵图（固定 origin 对齐）
-│   ├── stand.png             #   16帧 × 312px
-│   ├── move.png              #   16帧 × 312px
-│   ├── attack1.png           #   16帧 × 679px
-│   └── skill1.png            #   32帧 × 887px
-├── regenerate_sprites.py     # 精灵图生成工具（WZ origin / 接地锚点）
-├── refix_strip.py            # 精灵图重新对齐工具
+├── MiniPet/                     # 主项目
+│   ├── Models/                  # 数据模型
+│   │   ├── AppConfig.cs         # 应用配置
+│   │   ├── BalloonData.cs       # 聊天气泡数据
+│   │   ├── CharacterAppearance.cs # 纸娃娃装备模型
+│   │   ├── MapData.cs           # 地图数据
+│   │   ├── SpriteSheet.cs       # 精灵图配置
+│   │   └── SpriteStrip.cs       # 精灵图条 + 帧数据
+│   ├── Services/                # 服务层
+│   │   ├── AnimService.cs       # 动画状态机、帧循环
+│   │   ├── BalloonService.cs    # 气泡 9-slice 渲染
+│   │   ├── CacheManager.cs      # 缓存管理
+│   │   ├── ConfigService.cs     # 设置持久化
+│   │   ├── EventBus.cs          # 事件总线
+│   │   ├── MapService.cs        # 地图加载、图层合成
+│   │   ├── PaperdollService.cs  # 角色合成、z-order
+│   │   ├── SpriteService.cs     # 精灵图管理、帧缓存
+│   │   ├── TrayService.cs       # 托盘图标（macOS 静默降级）
+│   │   ├── WzError.cs           # WZ 错误定义
+│   │   └── WzService.cs         # WZ 加载、节点查询、PNG 提取
+│   ├── Views/                   # 视图层
+│   │   ├── PetWindow.axaml.cs   # 主窗口
+│   │   ├── SettingsWindow.axaml.cs # 设置面板
+│   │   ├── MaterialBrowserWindow.cs # 素材浏览
+│   │   └── Controls/            # UI 控件
+│   │       ├── SpriteCanvas.cs  # 精灵渲染画布
+│   │       ├── BalloonControl.cs # 聊天气泡
+│   │       └── BackgroundControl.cs # 地图背景
+│   ├── App.axaml(.cs)           # 应用定义
+│   ├── Program.cs               # 启动入口
+│   └── MiniPet.csproj           # 项目文件
+├── MiniPet.Tests/               # 测试项目
+│   ├── ConfigServiceTests.cs
+│   ├── EventBusTests.cs
+│   ├── WzServiceTests.cs
+│   ├── SpriteServiceTests.cs
+│   ├── AnimServiceTests.cs
+│   ├── BalloonServiceTests.cs
+│   ├── MapServiceTests.cs
+│   └── PaperdollServiceTests.cs
+├── sprites/                     # 精灵图
+├── fetch_and_generate.py        # API 帧下载 + 精灵图生成
+├── regenerate_sprites.py        # WZ origin / 接地锚点精灵图生成
+├── refix_strip.py               # 精灵图重新对齐
 ├── README.md
-├── REQUIREMENTS.md           # 需求文档
-├── DEBUG.md                  # 调试指南
-└── CLAUDE.md                 # Claude Code 上下文
+└── CLAUDE.md                    # Claude Code 上下文
 ```
 
-## 精灵图
+## 技术栈
 
-精灵图使用**接地锚点**对齐，消除动画抖动。详见 `REQUIREMENTS.md` 和 `regenerate_sprites.py`。
+- .NET 9
+- Avalonia UI（跨平台 UI 框架）
+- SkiaSharp（2D 渲染）
+- WzComparerR2.WzLib（WZ 文件解析）
+- xUnit（单元测试）
 
-当前精灵图来自冒险岛怪物 8880150（蝴蝶精）。
+## 编码约定
 
-## 交互
-
-| 操作 | 效果 |
-|------|------|
-| 左键拖拽 | 移动位置 |
-| 右键 → 动画名 | 切换动画 |
-| 右键 → 💬 内嵌终端 | 打开/关闭 Hermes 终端 |
-| 右键 → ✕ 关闭 | 退出 |
-
-## 依赖
-
-- macOS 13+
-- Swift 5.9+
-- Python 3 + Pillow（精灵图生成工具）
+- Services 所有方法与事件处理使用 try-catch 包裹
+- 禁止使用 `System.Drawing`（macOS 不支持）
+- 禁止使用 `System.Windows.Forms`
+- 窗口透明属性：`Background = Brushes.Transparent` / `TransparencyLevelHint = Transparent` / `SystemDecorations = None`
+- 动画顺序：stand → say → mouse → move → hand → laugh → eye → fly → die，缺失 fallback 到 stand
