@@ -14,6 +14,12 @@ namespace MiniPet.Models
         public int FrameCount { get; set; }
         public int OriginX { get; set; }
         public int OriginY { get; set; }
+        /// <summary>默认帧延迟（毫秒），当 FrameDelays 和 FrameData 为空时使用</summary>
+        public int DefaultDelay { get; set; } = 240;
+        /// <summary>每帧延迟（毫秒），长度应与 FrameCount 一致；为 null 时使用 DefaultDelay</summary>
+        public List<int>? FrameDelays { get; set; }
+        /// <summary>逐帧完整数据（含延迟、Alpha），优先级高于 FrameDelays</summary>
+        public List<FrameData>? FrameData { get; set; }
     }
 
     /// <summary>

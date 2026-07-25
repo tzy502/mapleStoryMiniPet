@@ -12,99 +12,120 @@ using MiniPet.Models;
 namespace MiniPet.Views.Controls;
 
 /// <summary>
-/// 聊天气泡控件 - 9-slice合成气泡显示
+/// 聊天气泡控件 - 淡入 0.2s -> 显示 3~5s -> 淡出 0.3s，不阻挡拖拽
 /// </summary>
 public partial class BalloonControl : UserControl
 {
     private CancellationTokenSource? _fadeCts;
+    private CancellationTokenSource? _autoHideCts;
+    private readonly Random _rng = new();
 
     public BalloonControl()
     {
         InitializeComponent();
         Opacity = 0;
         IsVisible = false;
+        IsHitTestVisible = false;
     }
 
     /// <summary>
-    /// 显示气泡
+    /// 显示气泡（淡入 0.2s -> 自动 3~5s 后淡出 0.3s）
     /// </summary>
     public async Task ShowBalloon(string text, BalloonData balloonData, Bitmap? renderedBitmap = null)
     {
-        // 取消之前的淡入淡出
-        _fadeCts?.Cancel();
-        _fadeCts = new CancellationTokenSource();
-        var cts = _fadeCts;
-
-        IsVisible = true;
-
-        // 设置文字
-        BalloonText.Text = text;
-        BalloonText.FontSize = 12;
-        BalloonText.Foreground = Brushes.Black;
-        BalloonText.TextAlignment = TextAlignment.Center;
-
-        // 设置合成气泡图
-        if (renderedBitmap != null)
+        try
         {
-            BalloonImage.Source = renderedBitmap;
+            _fadeCts?.Cancel();
+            _autoHideCts?.Cancel();
+            _fadeCts = new CancellationTokenSource();
+            var cts = _fadeCts;
 
-            // 调整控件尺寸匹配气泡图
-            Width = renderedBitmap.PixelSize.Width;
-            Height = renderedBitmap.PixelSize.Height;
+            IsVisible = true;
+            IsHitTestVisible = false;
 
-            // 更新TextBlock位置到C区域（粗略居中）
-            Canvas.SetLeft(BalloonText, 20);
-            Canvas.SetTop(BalloonText, 20);
-            BalloonText.Width = Width - 40;
-            BalloonText.Height = Height - 40 - (renderedBitmap.PixelSize.Height > 60 ? 30 : 0);
+            BalloonText.Text = text;
+            BalloonText.FontSize = 12;
+            BalloonText.Foreground = Brushes.Black;
+            BalloonText.TextAlignment = TextAlignment.Center;
+
+            if (renderedBitmap != null)
+            {
+                BalloonImage.Source = renderedBitmap;
+                Width = renderedBitmap.PixelSize.Width;
+                Height = renderedBitmap.PixelSize.Height;
+                Canvas.SetLeft(BalloonText, 20);
+                Canvas.SetTop(BalloonText, 20);
+                BalloonText.Width = Width - 40;
+                BalloonText.Height = Height - 40 - (renderedBitmap.PixelSize.Height > 60 ? 30 : 0);
+            }
+
+            // 淡入 0.2s
+            await FadeTo(1, TimeSpan.FromSeconds(0.2), cts.Token);
+
+            if (cts.Token.IsCancellationRequested) return;
+
+            // 自动隐藏：3~5s 随机
+            _autoHideCts = new CancellationTokenSource();
+            var autoCts = _autoHideCts;
+            var displayMs = _rng.Next(3000, 5001);
+            try
+            {
+                await Task.Delay(displayMs, autoCts.Token);
+                if (!autoCts.Token.IsCancellationRequested)
+                    await HideBalloon();
+            }
+            catch (TaskCanceledException) { }
         }
-
-        // 淡入：0 → 1
-        await FadeTo(1, TimeSpan.FromSeconds(0.2), cts.Token);
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BalloonControl] ShowBalloon: {ex.Message}");
+        }
     }
 
     /// <summary>
-    /// 隐藏气泡
+    /// 隐藏气泡（淡出 0.3s）
     /// </summary>
     public async Task HideBalloon()
     {
-        // 取消之前的淡入淡出
-        _fadeCts?.Cancel();
-        _fadeCts = new CancellationTokenSource();
-        var cts = _fadeCts;
-
-        // 淡出：1 → 0
-        await FadeTo(0, TimeSpan.FromSeconds(0.3), cts.Token);
-
-        if (!cts.Token.IsCancellationRequested)
+        try
         {
-            IsVisible = false;
-            BalloonImage.Source = null;
-            BalloonText.Text = null;
+            _autoHideCts?.Cancel();
+            _fadeCts?.Cancel();
+            _fadeCts = new CancellationTokenSource();
+            var cts = _fadeCts;
+
+            await FadeTo(0, TimeSpan.FromSeconds(0.3), cts.Token);
+
+            if (!cts.Token.IsCancellationRequested)
+            {
+                IsVisible = false;
+                BalloonImage.Source = null;
+                BalloonText.Text = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BalloonControl] HideBalloon: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// 透明度动画
-    /// </summary>
     private async Task FadeTo(double targetOpacity, TimeSpan duration, CancellationToken ct)
     {
         double startOpacity = Opacity;
         double diff = targetOpacity - startOpacity;
         int steps = Math.Max(1, (int)(duration.TotalMilliseconds / 16));
         double step = diff / steps;
+        int delayMs = (int)(duration.TotalMilliseconds / steps);
 
         for (int i = 0; i < steps; i++)
         {
             if (ct.IsCancellationRequested) return;
-
             Opacity = startOpacity + step * i;
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            try { await Task.Delay(delayMs, ct); }
+            catch (TaskCanceledException) { return; }
         }
 
         if (!ct.IsCancellationRequested)
-        {
             Opacity = targetOpacity;
-        }
     }
 }

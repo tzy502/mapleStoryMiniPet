@@ -49,6 +49,7 @@ namespace MiniPet.Services
         private int _idleTimeoutMaxMs = 30000;
         private bool _randomIdleEnabled = true;
         private double _idleAccumulated;
+        private double _currentIdleThreshold;
 
         // 回调
         private Action? _onComplete;
@@ -75,6 +76,7 @@ namespace MiniPet.Services
             };
             _fallbacks = new Dictionary<string, string>();
             _eventHandlers = new Dictionary<AnimEventType, List<Action<object?>>>();
+            ResetIdleThreshold();
         }
 
         /// <summary>
@@ -97,6 +99,7 @@ namespace MiniPet.Services
             _isPlaying = true;
             _isPaused = false;
             _idleAccumulated = 0;
+            ResetIdleThreshold();
             _currentStrip = _spriteService.GetCachedStrip(_currentMobId, action);
 
             if (_currentStrip is (null, _))
@@ -145,15 +148,18 @@ namespace MiniPet.Services
             if (_randomIdleEnabled && _currentMode == PlayMode.Loop)
             {
                 _idleAccumulated += deltaMs;
-                if (_idleAccumulated >= _idleTimeoutMinMs)
+                if (_idleAccumulated >= _currentIdleThreshold)
                 {
                     var randomAction = GetRandomAction();
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         _pendingAction = "stand";
+                        ResetIdleThreshold();
                         SwitchTo(randomAction);
                         return Tick(0);
                     }
+                    // 没有可用动作，重置计时器
+                    ResetIdleThreshold();
                 }
             }
 
@@ -196,14 +202,8 @@ namespace MiniPet.Services
                 EmitEvent(AnimEventType.FrameChanged, _currentAction);
             }
 
-            // 裁剪当前帧
-            var frameData = new FrameData
-            {
-                Index = _currentFrameIndex,
-                Delay = frameDelay,
-                A0 = 255,
-                A1 = 255
-            };
+            // 裁剪当前帧（从 SpriteStrip.FrameData 读取延迟和 Alpha）
+            var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
             var (cs, cd) = _currentStrip;
             var bitmap = _spriteService.GetFrame(cs, cd, _currentFrameIndex);
@@ -218,13 +218,7 @@ namespace MiniPet.Services
             var (strip, pngData) = _currentStrip;
             if (strip == null || pngData == null) return (null, null);
 
-            var frameData = new FrameData
-            {
-                Index = _currentFrameIndex,
-                Delay = GetFrameDelay(strip, _currentFrameIndex),
-                A0 = 255,
-                A1 = 255
-            };
+            var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
             var bitmap = _spriteService.GetFrame(strip, pngData, _currentFrameIndex);
             return (frameData, bitmap);
@@ -279,6 +273,16 @@ namespace MiniPet.Services
         {
             _randomIdleEnabled = enable;
             _idleAccumulated = 0;
+            ResetIdleThreshold();
+        }
+
+        /// <summary>
+        /// 重置空闲阈值（在 min~max 之间随机）
+        /// </summary>
+        private void ResetIdleThreshold()
+        {
+            _idleAccumulated = 0;
+            _currentIdleThreshold = _idleTimeoutMinMs + Random.Shared.NextDouble() * (_idleTimeoutMaxMs - _idleTimeoutMinMs);
         }
 
         /// <summary>
@@ -383,8 +387,40 @@ namespace MiniPet.Services
 
         private static int GetFrameDelay(SpriteStrip strip, int frameIndex)
         {
-            // 默认帧延迟 240ms，实际应从 FrameData 中读取
-            return 240;
+            try
+            {
+                // FrameData 优先级最高
+                if (strip.FrameData != null && frameIndex >= 0 && frameIndex < strip.FrameData.Count)
+                    return strip.FrameData[frameIndex].Delay;
+                if (strip.FrameDelays != null && frameIndex >= 0 && frameIndex < strip.FrameDelays.Count)
+                    return strip.FrameDelays[frameIndex];
+                return strip.DefaultDelay > 0 ? strip.DefaultDelay : 240;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[AnimService] GetFrameDelay: {ex.Message}");
+                return 240;
+            }
+        }
+
+        private static FrameData GetFrameMeta(SpriteStrip strip, int frameIndex)
+        {
+            try
+            {
+                if (strip.FrameData != null && frameIndex >= 0 && frameIndex < strip.FrameData.Count)
+                    return strip.FrameData[frameIndex];
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[AnimService] GetFrameMeta: {ex.Message}");
+            }
+            return new FrameData
+            {
+                Index = frameIndex,
+                Delay = GetFrameDelay(strip, frameIndex),
+                A0 = 255,
+                A1 = 255
+            };
         }
 
         private void EmitEvent(AnimEventType eventType, object? data)

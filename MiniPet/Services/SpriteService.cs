@@ -167,6 +167,52 @@ namespace MiniPet.Services
         }
 
         /// <summary>
+        /// 从 WZ 预加载怪物精灵图到缓存（提取实际 PNG 帧并拼接精灵图条）
+        /// </summary>
+        public bool PreloadMob(WzService wz, int mobId)
+        {
+            try
+            {
+                var actions = wz.GetActionList(mobId);
+                if (actions.Count == 0) return false;
+
+                // 优先 stand/move/fly，其次第一个可用动作
+                var priorityActions = actions.Where(a =>
+                    a is "stand" or "move" or "fly" or "walk" or "jump").ToList();
+                if (priorityActions.Count == 0 && actions.Count > 0)
+                    priorityActions.Add(actions[0]);
+
+                var loaded = false;
+                foreach (var action in priorityActions)
+                {
+                    try
+                    {
+                        var pngData = wz.BuildSpriteStripPng(mobId, action);
+                        if (pngData == null) continue;
+
+                        var (strip, config) = wz.ExportSpriteStrip(mobId, action);
+                        if (strip == null || config == null) continue;
+
+                        var configJson = System.Text.Json.JsonSerializer.Serialize(config);
+                        var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
+
+                        _cacheManager.SaveSpriteStrip(mobId, action, pngData, configBytes);
+                        CacheStrip(mobId, action, strip, pngData);
+                        loaded = true;
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[SpriteService] PreloadMob action: {ex.Message}"); }
+                }
+
+                return loaded;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[SpriteService] PreloadMob({mobId}): {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 清理内存缓存
         /// </summary>
         public void ClearCache()
