@@ -3,3 +3,14 @@ DerivedData/
 *.xcodeproj/
 xcuserdata/
 .DS_Store
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.csproj.user
+*.DotSettings.user
+.vs/
+*.log
