@@ -701,27 +701,38 @@ public class SettingsWindow : Window
             if (_wzService.IsLoaded)
             {
                 if (!int.TryParse(id, out var mobId)) mobId = _previewMobId;
+                Console.WriteLine($"[Preview] Loading mobId={mobId} from id='{id}'");
 
-                // 加载真实精灵图 PNG
                 _previewPngData = null;
                 _previewStrip = null;
                 var actions = _wzService.GetActionList(mobId);
+                Console.WriteLine($"[Preview] Actions({actions.Count}): {string.Join(",", actions.Take(5))}");
                 var action = actions.FirstOrDefault(a => a == "stand")
                           ?? actions.FirstOrDefault(a => a == "move")
                           ?? actions.FirstOrDefault(a => a == "fly")
                           ?? actions.FirstOrDefault();
+                Console.WriteLine($"[Preview] Selected action: {action ?? "NULL"}");
                 if (action != null)
                 {
                     _previewPngData = _wzService.BuildSpriteStripPng(mobId, action);
+                    Console.WriteLine($"[Preview] BuildSpriteStripPng: {(_previewPngData != null ? _previewPngData.Length + " bytes" : "NULL")}");
                     var (strip, _) = _wzService.ExportSpriteStrip(mobId, action);
                     _previewStrip = strip;
+                    Console.WriteLine($"[Preview] ExportSpriteStrip: strip={strip != null}, frames={strip?.FrameCount}, size={strip?.FrameWidth}x{strip?.FrameHeight}");
                 }
 
                 var spriteImage = new Image { Stretch = Stretch.Uniform, Width = 150, Height = 150, Margin = new Thickness(5) };
                 if (_previewPngData != null)
                 {
-                    using var ms = new MemoryStream(_previewPngData);
-                    spriteImage.Source = new Avalonia.Media.Imaging.Bitmap(ms);
+                    var tmpPath = System.IO.Path.GetTempFileName() + ".png";
+                    System.IO.File.WriteAllBytes(tmpPath, _previewPngData);
+                    try
+                    {
+                        spriteImage.Source = new Avalonia.Media.Imaging.Bitmap(tmpPath);
+                        Console.WriteLine($"[Preview] Bitmap created from {tmpPath}, size={spriteImage.Source.Size}");
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[Preview] Bitmap error: {ex}"); }
+                    finally { try { System.IO.File.Delete(tmpPath); } catch { } }
                 }
                 spriteImage.Tag = "previewSprite";
                 spriteImage.Name = "previewSprite";
@@ -729,6 +740,7 @@ public class SettingsWindow : Window
             }
             else
             {
+                Console.WriteLine("[Preview] WZ not loaded, showing placeholder");
                 previewFigure.Child = new TextBlock { Text = "请先配置 WZ 路径", Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 };
             }
 
@@ -1190,6 +1202,7 @@ public class SettingsWindow : Window
         try
         {
             _previewAnimTimer.Stop();
+            Console.WriteLine($"[PreviewAnim] Start: pngData={_previewPngData != null}, strip={_previewStrip != null}");
 
             if (_previewPngData == null || _previewStrip == null)
                 return;
@@ -1202,6 +1215,7 @@ public class SettingsWindow : Window
             _previewAnimTimer.Interval = TimeSpan.FromMilliseconds(delay);
 
             _previewAnimTimer.Start();
+            Console.WriteLine($"[PreviewAnim] Timer started, interval={delay}ms, frames={_previewStrip.FrameCount}");
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] StartPreviewAnimation: {ex}"); }
     }
@@ -1211,23 +1225,40 @@ public class SettingsWindow : Window
         try
         {
             if (_previewCanvas == null || _previewPngData == null || _previewStrip == null) return;
+            Console.WriteLine($"[PreviewAnim] Tick: frame={_previewFrameIndex}/{_previewStrip.FrameCount}, canvasChild={_previewCanvas.Child?.GetType().Name}");
             if (_previewCanvas.Child is StackPanel stack)
             {
+                Console.WriteLine($"[PreviewAnim] StackPanel children: {stack.Children.Count}");
                 foreach (var child in stack.Children)
                 {
-                    if (child is Border figure && figure.Child is Image img && img.Tag?.ToString() == "previewSprite")
+                    Console.WriteLine($"[PreviewAnim] Child: {child.GetType().Name}, isBorder={child is Border}");
+                    if (child is Border figure)
+                    {
+                        Console.WriteLine($"[PreviewAnim] Figure child: {figure.Child?.GetType().Name}, isImage={figure.Child is Image}");
+                        if (figure.Child is Image img)
+                        {
+                            Console.WriteLine($"[PreviewAnim] Image Tag: {img.Tag}, Name: {img.Name}");
+                        }
+                    }
+                    if (child is Border figure2 && figure2.Child is Image img2 && img2.Tag?.ToString() == "previewSprite")
                     {
                         var frameWidth = _previewStrip.FrameWidth;
                         var frameHeight = _previewStrip.FrameHeight;
 
-                        var fullBitmap = new Avalonia.Media.Imaging.Bitmap(new MemoryStream(_previewPngData));
-                        var frameRect = new PixelRect(frameWidth * _previewFrameIndex, 0, frameWidth, frameHeight);
-                        var croppedBitmap = new CroppedBitmap(fullBitmap, frameRect);
-                        img.Source = croppedBitmap;
+                        var tmpPath = System.IO.Path.GetTempFileName() + ".png";
+                        System.IO.File.WriteAllBytes(tmpPath, _previewPngData);
+                        try
+                        {
+                            var fullBitmap = new Avalonia.Media.Imaging.Bitmap(tmpPath);
+                            var frameRect = new PixelRect(frameWidth * _previewFrameIndex, 0, frameWidth, frameHeight);
+                            var croppedBitmap = new CroppedBitmap(fullBitmap, frameRect);
+                            img2.Source = croppedBitmap;
 
-                        _previewFrameIndex++;
-                        if (_previewFrameIndex >= _previewStrip.FrameCount)
-                            _previewFrameIndex = 0;
+                            _previewFrameIndex++;
+                            if (_previewFrameIndex >= _previewStrip.FrameCount)
+                                _previewFrameIndex = 0;
+                        }
+                        finally { try { System.IO.File.Delete(tmpPath); } catch { } }
                         break;
                     }
                 }
