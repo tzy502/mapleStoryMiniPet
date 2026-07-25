@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using MiniPet.Models;
-using MiniPet.Utils;
 using WzComparerR2.WzLib;
 
 namespace MiniPet.Services
@@ -97,22 +98,18 @@ namespace MiniPet.Services
                 var node = _wzs.WzNode.FindNodeByPath(true, wzPath.Split('/'));
                 if (node == null) return null;
                 node = ResolveNode(node);
-                return ExtractPngFromNode(node);
+                var png = node.GetValue<Wz_Png>();
+                if (png == null) return null;
+                using var bmp = png.ExtractPng();
+                using var ms = new MemoryStream();
+                bmp.Save(ms, ImageFormat.Png);
+                return ms.ToArray();
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[WzService] ExtractPng({wzPath}): {ex.Message}");
                 return null;
             }
-        }
-
-        private static byte[]? ExtractPngFromNode(Wz_Node node)
-        {
-            var png = node.GetValue<Wz_Png>();
-            if (png == null) return null;
-            var rawData = png.GetRawData();
-            if (rawData == null || rawData.Length == 0) return null;
-            return PngEncoder.Encode(rawData, png.Width, png.Height, PngPixelFormat.Bgra);
         }
 
         /// <summary>
@@ -314,44 +311,31 @@ namespace MiniPet.Services
                 var actionNode = img.Node.Nodes.FirstOrDefault(n => n.Text == action);
                 if (actionNode == null) return null;
 
-                var frames = new List<(byte[] rawBgra, int w, int h)>();
+                var frameBitmaps = new List<Bitmap>();
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
                     var resolved = ResolveNode(child);
                     var png = resolved.GetValue<Wz_Png>();
                     if (png == null) continue;
-                    var raw = png.GetRawData();
-                    if (raw == null || raw.Length == 0) continue;
-                    frames.Add((raw, png.Width, png.Height));
+                    try { frameBitmaps.Add(png.ExtractPng()); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[WzService] ExtractPng frame: {ex.Message}"); }
                 }
-                if (frames.Count == 0) return null;
+                if (frameBitmaps.Count == 0) return null;
 
-                var maxW = frames.Max(f => f.w);
-                var maxH = frames.Max(f => f.h);
-                var totalW = maxW * frames.Count;
-                // Build strip from raw BGRA pixels (B,G,R,A per pixel)
-                var stripRaw = new byte[totalW * maxH * 4];
-                for (int i = 0; i < stripRaw.Length; i += 4) { stripRaw[i + 3] = 0; } // transparent
-                for (int i = 0; i < frames.Count; i++)
+                var maxW = frameBitmaps.Max(b => b.Width);
+                var maxH = frameBitmaps.Max(b => b.Height);
+                var totalW = maxW * frameBitmaps.Count;
+                using var strip = new Bitmap(totalW, maxH, PixelFormat.Format32bppArgb);
+                using var g = Graphics.FromImage(strip);
+                g.Clear(Color.Transparent);
+                for (int i = 0; i < frameBitmaps.Count; i++)
                 {
-                    var (bgra, fw, fh) = frames[i];
-                    for (int y = 0; y < fh && y < maxH; y++)
-                    {
-                        for (int x = 0; x < fw && x < maxW; x++)
-                        {
-                            int src = (y * fw + x) * 4;
-                            int dst = (y * totalW + i * maxW + x) * 4;
-                            if (src + 3 < bgra.Length && dst + 3 < stripRaw.Length)
-                            {
-                                stripRaw[dst] = bgra[src];       // B
-                                stripRaw[dst + 1] = bgra[src + 1]; // G
-                                stripRaw[dst + 2] = bgra[src + 2]; // R
-                                stripRaw[dst + 3] = bgra[src + 3]; // A
-                            }
-                        }
-                    }
+                    using var fb = frameBitmaps[i];
+                    g.DrawImage(fb, i * maxW, 0, fb.Width, fb.Height);
                 }
-                return PngEncoder.Encode(stripRaw, totalW, maxH, PngPixelFormat.Bgra);
+                using var outMs = new MemoryStream();
+                strip.Save(outMs, ImageFormat.Png);
+                return outMs.ToArray();
             }
             catch (Exception ex)
             {
