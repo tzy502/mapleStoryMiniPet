@@ -240,7 +240,7 @@ namespace MiniPet.Services
                 int f = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
-                    var resolved = child.ResolveUol() ?? child;
+                    var resolved = ResolveNode(child);
                     var delay = resolved.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
                     var a0 = resolved.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
                     var a1 = resolved.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
@@ -317,7 +317,7 @@ namespace MiniPet.Services
                 var frames = new List<(byte[] rawBgra, int w, int h)>();
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
-                    var resolved = child.ResolveUol() ?? child;
+                    var resolved = ResolveNode(child);
                     var png = resolved.GetValue<Wz_Png>();
                     if (png == null) continue;
                     var raw = png.GetRawData();
