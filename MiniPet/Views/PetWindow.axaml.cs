@@ -6,6 +6,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using System;
 using System.Diagnostics;
+using System.IO;
 using Avalonia.Media.Imaging;
 using MiniPet.Services;
 using MiniPet.Views.Controls;
@@ -32,6 +33,8 @@ public class PetWindow : Window
     private double _lastElapsed;
     private SettingsWindow? _settingsWindow;
     private bool _isExiting;
+    private int _lastOriginX;
+    private int _lastOriginY;
 
     public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus)
     {
@@ -91,6 +94,9 @@ public class PetWindow : Window
         _animService.EnableRandomIdle(true);
         _stopwatch.Start();
         _timer.Start();
+
+        _lastOriginX = 0;
+        _lastOriginY = 0;
 
         _animService.Play("stand", PlayMode.Loop);
 
@@ -225,7 +231,8 @@ public class PetWindow : Window
 
     private void SetupDragEvents()
     {
-        this.AddHandler(PointerPressedEvent, (_, e) =>
+        // 左键拖拽 + 右键菜单，直接绑定在 Window 上（冒泡模式）
+        PointerPressed += (_, e) =>
         {
             try
             {
@@ -239,11 +246,11 @@ public class PetWindow : Window
                 _dragStart = e.GetPosition(this);
                 _windowStartPos = Position;
                 _eventBus.Publish(EventType.UserDragStart);
-                // 用 OS 原生拖拽，不需要手动跟踪 PointerMoved
+                // 用 OS 原生拖拽
                 BeginMoveDrag(e);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerPressed: {ex.Message}"); }
-        }, RoutingStrategies.Tunnel);
+        };
         PointerReleased += (_, _) =>
         {
             try
@@ -275,6 +282,23 @@ public class PetWindow : Window
                 int ox = strip?.OriginX ?? 0;
                 int oy = strip?.OriginY ?? 0;
                 _spriteCanvas.SetFrame(pngData, ox, oy);
+
+                // 窗口大小 = 精灵图像素尺寸（容器不再膨胀）
+                using var ms = new MemoryStream(pngData);
+                using var bmp = new Bitmap(ms);
+                Width = bmp.PixelSize.Width;
+                Height = bmp.PixelSize.Height;
+
+                // 窗口位置补偿锚点偏移：窗口向上/左移 (ox, oy)
+                // 使精灵图的锚点对齐到屏幕正确位置
+                int dx = ox - _lastOriginX;
+                int dy = oy - _lastOriginY;
+                if (dx != 0 || dy != 0)
+                {
+                    Position = new PixelPoint(Position.X - dx, Position.Y - dy);
+                }
+                _lastOriginX = ox;
+                _lastOriginY = oy;
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";

@@ -7,7 +7,7 @@ using Avalonia.Media.Imaging;
 namespace MiniPet.Views.Controls;
 
 /// <summary>
-/// 精灵图渲染控件 - 支持 origin 偏移定位，保持锚点固定
+/// 精灵图渲染控件 - 容器大小 = 精灵图实际像素，锚点补偿由 PetWindow 通过窗口位置偏移实现
 /// </summary>
 public partial class SpriteCanvas : UserControl
 {
@@ -21,7 +21,7 @@ public partial class SpriteCanvas : UserControl
     }
 
     /// <summary>
-    /// 设置当前帧，根据 origin 偏移图片使锚点固定在画布左上
+    /// 设置当前帧，图片放在 (0,0) 不偏移，容器大小 = 精灵图实际像素
     /// </summary>
     public void SetFrame(byte[] pngData, int originX = 0, int originY = 0)
     {
@@ -39,19 +39,17 @@ public partial class SpriteCanvas : UserControl
         _originX = originX;
         _originY = originY;
 
-        // 根据精灵图尺寸调整画布
-        int canvasW = size.Width + Math.Max(0, originX);
-        int canvasH = size.Height + Math.Max(0, originY);
-        RootCanvas.Width = canvasW;
-        RootCanvas.Height = canvasH;
+        // 容器大小 = 精灵图实际像素，不过度撑大
+        this.Width = size.Width;
+        this.Height = size.Height;
+        RootCanvas.Width = size.Width;
+        RootCanvas.Height = size.Height;
         SpriteImage.Width = size.Width;
         SpriteImage.Height = size.Height;
         SpriteImage.Source = _currentBitmap;
-        Canvas.SetLeft(SpriteImage, -originX);
-        Canvas.SetTop(SpriteImage, -originY);
-
-        // 通知父容器调整大小
-        InvalidateMeasure();
+        // 图片放在 (0,0)，不偏移
+        Canvas.SetLeft(SpriteImage, 0);
+        Canvas.SetTop(SpriteImage, 0);
     }
 
     /// <summary>
