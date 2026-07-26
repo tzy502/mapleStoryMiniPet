@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using MiniPet.Models;
+using MiniPet.Utils;
 
 namespace MiniPet.Services
 {
@@ -59,30 +59,45 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 裁剪第 i 帧
+        /// 裁剪第 i 帧，返回该帧的 PNG 字节
         /// </summary>
-        public Bitmap? GetFrame(SpriteStrip strip, byte[]? pngData, int frameIndex)
+        public byte[]? GetFrame(SpriteStrip strip, byte[]? pngData, int frameIndex)
+        {
+            return GetFramePng(strip, frameIndex, pngData);
+        }
+
+        /// <summary>
+        /// 从缓存的 strip PNG 数据中裁剪第 frameIndex 帧，返回该帧的 PNG 字节
+        /// </summary>
+        public byte[]? GetFramePng(SpriteStrip strip, int frameIndex, byte[]? pngData)
         {
             if (pngData == null || pngData.Length == 0) return null;
             if (frameIndex < 0 || frameIndex >= strip.FrameCount) return null;
 
             try
             {
-                using var ms = new MemoryStream(pngData);
-                using var fullImage = Image.FromStream(ms) as Bitmap;
-                if (fullImage == null) return null;
+                var (bgra, width, height) = PngEncoder.DecodePng(pngData);
+                if (bgra.Length == 0 || width <= 0 || height <= 0) return null;
 
-                var x = frameIndex * strip.FrameWidth;
-                var rect = new Rectangle(x, 0, strip.FrameWidth, strip.FrameHeight);
+                int fw = strip.FrameWidth;
+                int fh = strip.FrameHeight;
+                int srcX = frameIndex * fw;
 
-                // 限制裁剪区域不超出图片边界
-                if (rect.Right > fullImage.Width || rect.Bottom > fullImage.Height)
-                    return null;
+                if (srcX + fw > width || fh > height) return null;
 
-                return fullImage.Clone(rect, fullImage.PixelFormat);
+                var frameBgra = new byte[fw * fh * 4];
+                for (int y = 0; y < fh; y++)
+                {
+                    int srcOffset = (y * width + srcX) * 4;
+                    int dstOffset = y * fw * 4;
+                    Buffer.BlockCopy(bgra, srcOffset, frameBgra, dstOffset, fw * 4);
+                }
+
+                return PngEncoder.Encode(frameBgra, fw, fh);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.Error.WriteLine($"[SpriteService] GetFramePng: {ex.Message}");
                 return null;
             }
         }

@@ -60,6 +60,8 @@ public class SettingsWindow : Window
     private int _previewFrameIndex;
     private byte[]? _previewPngData;
     private SpriteStrip? _previewStrip;
+    private string _previewAction = "";
+    private List<string> _previewActions = new();
 
     // ── 事件 ──
     public event Action<int, string>? OnPetApplied;
@@ -339,16 +341,85 @@ public class SettingsWindow : Window
         browseBtn.Click += (_, _) => OpenMaterialBrowser();
         sidebarContent.Children.Add(browseBtn);
 
+        var refreshBtn = new Button { Content = "🔄 重新获取素材", FontSize = 10, Padding = new Thickness(0, 5), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        refreshBtn.Click += (_, _) =>
+        {
+            try
+            {
+                if (_wzService.IsLoaded)
+                {
+                    var mobCount = _wzService.ListMobIds().Count;
+                    if (_statusBarText != null) _statusBarText.Text = $"素材已就绪: {mobCount} 个怪物可用";
+                }
+                else
+                {
+                    if (_statusBarText != null) _statusBarText.Text = "WZ 未加载，请先配置 WZ 路径";
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Refresh: {ex.Message}"); }
+        };
+        sidebarContent.Children.Add(refreshBtn);
+
         sidebarContent.Children.Add(new TextBlock { Text = "★ 收藏", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
         _favoriteList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshFavoriteList();
         _favoriteList.SelectionChanged += (_, _) => { if (_favoriteList.SelectedItem is FavoriteItem fi) SelectPet(fi.Name, fi.Id.ToString()); };
+        _favoriteList.ContextMenu = new ContextMenu
+        {
+            Items =
+            {
+                new MenuItem
+                {
+                    Header = "🗑️ 取消收藏",
+                    [!MenuItem.CommandParameterProperty] = new Avalonia.Data.Binding("Id"),
+                }
+            }
+        };
+        (_favoriteList.ContextMenu.Items[0] as MenuItem)!.Click += (s, _) =>
+        {
+            try
+            {
+                if (_favoriteList.SelectedItem is FavoriteItem fi)
+                {
+                    _settings.Favorites.RemoveAll(f => f.Id == fi.Id && f.Type == fi.Type);
+                    _config.SaveSettings(_settings);
+                    RefreshFavoriteList();
+                    if (_statusBarText != null) _statusBarText.Text = $"已取消收藏: {fi.Name}";
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Unfavorite: {ex.Message}"); }
+        };
         sidebarContent.Children.Add(_favoriteList);
 
         sidebarContent.Children.Add(new TextBlock { Text = "🕐 最近使用", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
         _recentList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshRecentList();
         _recentList.SelectionChanged += (_, _) => { if (_recentList.SelectedItem is RecentItem ri) SelectPet(ri.Name, ri.Id.ToString()); };
+        _recentList.ContextMenu = new ContextMenu
+        {
+            Items =
+            {
+                new MenuItem
+                {
+                    Header = "🗑️ 删除",
+                    [!MenuItem.CommandParameterProperty] = new Avalonia.Data.Binding("Id"),
+                }
+            }
+        };
+        (_recentList.ContextMenu.Items[0] as MenuItem)!.Click += (s, _) =>
+        {
+            try
+            {
+                if (_recentList.SelectedItem is RecentItem ri)
+                {
+                    _settings.RecentItems.RemoveAll(r => r.Id == ri.Id && r.Type == ri.Type);
+                    _config.SaveSettings(_settings);
+                    RefreshRecentList();
+                    if (_statusBarText != null) _statusBarText.Text = $"已删除: {ri.Name}";
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] DeleteRecent: {ex.Message}"); }
+        };
         sidebarContent.Children.Add(_recentList);
 
         sidebar.Children.Add(new ScrollViewer { Content = sidebarContent, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
@@ -360,7 +431,7 @@ public class SettingsWindow : Window
         grid.Children.Add(divider);
 
         var preview = new StackPanel { Margin = new Thickness(14), Spacing = 8 };
-        _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinHeight = 300, VerticalAlignment = VerticalAlignment.Stretch };
+        _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinHeight = 400, MinWidth = 320, VerticalAlignment = VerticalAlignment.Stretch };
         UpdatePreviewContent("路西德", "8880150");
         preview.Children.Add(_previewCanvas);
 
@@ -384,7 +455,7 @@ public class SettingsWindow : Window
 
         var zoomRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         zoomRow.Children.Add(new TextBlock { Text = "缩放", FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center });
-        _zoomSlider = new Slider { Minimum = 0.3, Maximum = 2.0, Value = 1.0, Width = 80, Height = 20 };
+        _zoomSlider = new Slider { Minimum = 0.3, Maximum = 2.0, Value = 1.0, Width = 120, Height = 36 };
         _zoomSlider.PropertyChanged += (_, e) => { if (e.Property == Slider.ValueProperty) _zoomLabel!.Text = $"{(int)(_zoomSlider.Value * 100)}%"; };
         zoomRow.Children.Add(_zoomSlider);
         _zoomLabel = new TextBlock { Text = "100%", FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center, Width = 30 };
@@ -696,27 +767,83 @@ public class SettingsWindow : Window
             var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 10 };
 
             // 动画预览区域
-            var previewFigure = new Border { Width = 160, Height = 160, CornerRadius = new CornerRadius(10), Background = new LinearGradientBrush { StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative), EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative), GradientStops = new GradientStops { new(Color.FromArgb(255, 42, 63, 110), 0), new(Color.FromArgb(255, 22, 37, 74), 1) } }, HorizontalAlignment = HorizontalAlignment.Center, ClipToBounds = true };
+            var previewFigure = new Border { Width = 280, Height = 280, CornerRadius = new CornerRadius(10), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Center, ClipToBounds = true };
 
             if (_wzService.IsLoaded)
             {
                 if (!int.TryParse(id, out var mobId)) mobId = _previewMobId;
 
-                _previewPngData = null;
-                _previewStrip = null;
-                var actions = _wzService.GetActionList(mobId);
-                var action = actions.FirstOrDefault(a => a == "stand")
-                          ?? actions.FirstOrDefault(a => a == "move")
-                          ?? actions.FirstOrDefault(a => a == "fly")
-                          ?? actions.FirstOrDefault();
-                if (action != null)
+                _previewActions = _wzService.GetActionList(mobId);
+                if (_previewActions.Count > 0)
                 {
-                    _previewPngData = _wzService.BuildSpriteStripPng(mobId, action);
-                    var (strip, _) = _wzService.ExportSpriteStrip(mobId, action);
-                    _previewStrip = strip;
+                    if (!_previewActions.Contains(_previewAction))
+                        _previewAction = _previewActions[0];
+                    LoadPreviewAction(mobId, _previewAction);
                 }
 
-                var spriteImage = new Image { Stretch = Stretch.Uniform, Width = 150, Height = 150, Margin = new Thickness(5) };
+                // ── 动作切换按钮行 ──
+                var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3, HorizontalAlignment = HorizontalAlignment.Center };
+                foreach (var act in _previewActions.Take(10))
+                {
+                    var capturedAct = act;
+                    var btn = new Button
+                    {
+                        Content = capturedAct,
+                        FontSize = 9,
+                        Padding = new Thickness(6, 2),
+                        Background = capturedAct == _previewAction ? BrushAccent : new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)),
+                        Foreground = capturedAct == _previewAction ? Brushes.White : BrushTxtSecondary,
+                        BorderThickness = new Thickness(0),
+                        CornerRadius = new CornerRadius(3),
+                        Cursor = new Cursor(StandardCursorType.Hand),
+                        HorizontalContentAlignment = HorizontalAlignment.Center,
+                        VerticalContentAlignment = VerticalAlignment.Center
+                    };
+                    btn.Click += (_, _) =>
+                    {
+                        _previewAction = capturedAct;
+                        LoadPreviewAction(mobId, capturedAct);
+                        StartPreviewAnimation();
+                        // 增量更新预览图，不重建面板
+                        if (_previewCanvas?.Child is StackPanel sp)
+                        {
+                            foreach (var c in sp.Children)
+                            {
+                                if (c is Border b && b.Child is Image img && img.Tag?.ToString() == "previewSprite")
+                                {
+                                    if (_previewPngData != null)
+                                    {
+                                        var tp = System.IO.Path.GetTempFileName() + ".png";
+                                        System.IO.File.WriteAllBytes(tp, _previewPngData);
+                                        try { img.Source = new Avalonia.Media.Imaging.Bitmap(tp); }
+                                        catch { }
+                                        finally { try { System.IO.File.Delete(tp); } catch { } }
+                                    }
+                                    break;
+                                }
+                            }
+                            // 更新动作按钮样式
+                            foreach (var c in sp.Children)
+                            {
+                                if (c is StackPanel ar)
+                                {
+                                    foreach (var ac in ar.Children)
+                                    {
+                                        if (ac is Button ab && ab.Content?.ToString() == capturedAct)
+                                        { ab.Background = BrushAccent; ab.Foreground = Brushes.White; }
+                                        else if (ac is Button ob)
+                                        { ob.Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)); ob.Foreground = BrushTxtSecondary; }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    };
+                    actionRow.Children.Add(btn);
+                }
+                stack.Children.Add(actionRow);
+
+                var spriteImage = new Image { Stretch = Stretch.Uniform, Width = 260, Height = 260, Margin = new Thickness(10) };
                 if (_previewPngData != null)
                 {
                     var tmpPath = System.IO.Path.GetTempFileName() + ".png";
@@ -744,6 +871,18 @@ public class SettingsWindow : Window
             StartPreviewAnimation();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] UpdatePreview: {ex}"); }
+    }
+
+    private void LoadPreviewAction(int mobId, string action)
+    {
+        try
+        {
+            _previewPngData = _wzService.BuildSpriteStripPng(mobId, action);
+            var (strip, _) = _wzService.ExportSpriteStrip(mobId, action);
+            _previewStrip = strip;
+            _previewAction = action;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPreviewAction: {ex.Message}"); }
     }
 
     private void ToggleFavorite()
@@ -1250,36 +1389,7 @@ public class SettingsWindow : Window
     {
         try
         {
-            var mobIds = _wzService.ListMobIds();
-            var npcIds = _wzService.ListNpcIds();
-
-            // 将前20个怪物加入最近使用列表（如果列表为空）
-            if (_settings.RecentItems.Count == 0)
-            {
-                foreach (var id in mobIds.Take(20))
-                {
-                    _settings.RecentItems.Add(new RecentItem
-                    {
-                        Type = "mob",
-                        Id = id,
-                        Name = $"怪物 {id}",
-                        LastUsedAt = DateTime.Now
-                    });
-                }
-                // 添加前5个NPC到收藏
-                foreach (var id in npcIds.Take(5))
-                {
-                    _settings.Favorites.Insert(0, new FavoriteItem
-                    {
-                        Type = "npc",
-                        Id = id,
-                        Name = $"NPC {id}",
-                        AddedAt = DateTime.Now
-                    });
-                }
-                _config.SaveSettings(_settings);
-            }
-
+            // 只刷新 UI 列表显示，不修改用户数据
             Dispatcher.UIThread.Post(() =>
             {
                 RefreshFavoriteList();

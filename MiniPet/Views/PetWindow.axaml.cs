@@ -83,10 +83,29 @@ public class PetWindow : Window
         _stopwatch = new Stopwatch();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _timer.Tick += OnTimerTick;
-        _animService.Play("stand", PlayMode.Loop);
         _animService.EnableRandomIdle(true);
         _stopwatch.Start();
         _timer.Start();
+
+        // 启动时加载配置中保存的默认宠物
+        bool loadedPet = false;
+        try
+        {
+            var settings = _configService.LoadSettings();
+            if (settings != null && settings.CurrentMobId > 0)
+            {
+                var mobId = settings.CurrentMobId;
+                _animService.SetCurrentMobId(mobId);
+                _spriteService.PreloadMob(_wzService, mobId);
+                _animService.Play("stand", PlayMode.Loop);
+                loadedPet = true;
+                Console.WriteLine($"[PetWindow] 加载默认宠物: {mobId}");
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LoadDefaultPet: {ex.Message}"); }
+
+        if (!loadedPet)
+            _animService.Play("stand", PlayMode.Loop);
 
         // 托盘集成
         try
@@ -239,14 +258,10 @@ public class PetWindow : Window
             if (delta <= 0) delta = 33;
             if (delta > 500) delta = 33; // 防止大跳跃（窗口失焦后恢复）
 
-            var (fd, bmp) = _animService.Tick(delta);
-            if (bmp != null)
+            var (fd, pngData) = _animService.Tick(delta);
+            if (pngData != null)
             {
-                // 获取当前动作的 origin 偏移
-                var (strip, _) = _spriteService.GetCachedStrip(0, _animService.GetCurrentAction());
-                int ox = strip?.OriginX ?? 0;
-                int oy = strip?.OriginY ?? 0;
-                _spriteCanvas.SetFrame(bmp, ox, oy);
+                _spriteCanvas.SetFrame(pngData);
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 using MiniPet.Models;
 
@@ -133,7 +132,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 每帧调用，返回当前帧数据
         /// </summary>
-        public (FrameData? data, Bitmap? image) Tick(double deltaMs)
+        public (FrameData? data, byte[]? pngData) Tick(double deltaMs)
         {
             if (!_isPlaying || _isPaused)
                 return (null, null);
@@ -206,22 +205,22 @@ namespace MiniPet.Services
             var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
             var (cs, cd) = _currentStrip;
-            var bitmap = _spriteService.GetFrame(cs, cd, _currentFrameIndex);
-            return (frameData, bitmap);
+            var framePng = _spriteService.GetFramePng(cs!, _currentFrameIndex, cd);
+            return (frameData, framePng);
         }
 
         /// <summary>
         /// 获取当前帧
         /// </summary>
-        public (FrameData? data, Bitmap? image) GetCurrentFrame()
+        public (FrameData? data, byte[]? image) GetCurrentFrame()
         {
             var (strip, pngData) = _currentStrip;
             if (strip == null || pngData == null) return (null, null);
 
             var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
-            var bitmap = _spriteService.GetFrame(strip, pngData, _currentFrameIndex);
-            return (frameData, bitmap);
+            var framePng = _spriteService.GetFramePng(strip!, _currentFrameIndex, pngData);
+            return (frameData, framePng);
         }
 
         /// <summary>
@@ -321,6 +320,8 @@ namespace MiniPet.Services
         /// <summary>
         /// 设置当前 mob ID（内部使用）
         /// </summary>
+        public int GetCurrentMobId() => _currentMobId;
+
         public void SetCurrentMobId(int mobId)
         {
             _currentMobId = mobId;

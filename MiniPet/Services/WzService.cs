@@ -42,10 +42,45 @@ namespace MiniPet.Services
                     wzFolder = baseSubDir;
 
                 Console.WriteLine($"[WzService] 加载 WZ 目录: {wzFolder}");
+                Wz_Structure.DefaultAutoDetectExtFiles = true;
+                Wz_Structure.DefaultImgCheckDisabled = true;
                 _wzs = new Wz_Structure();
                 _wzs.LoadWzFolder(wzFolder, ref _wzs.WzNode, true);
                 _wzLoaded = true;
-                Console.WriteLine($"[WzService] WZ 加载成功, 目录: {wzFolder}, 版本: {_wzs.wz_files[0].Header.WzVersion}");
+                Console.WriteLine($"[WzService] Base 加载成功, imgs: {_wzs.img_number}");
+
+                // 加载 Packs/*.ms — meta 数据（origin/delay/a0/a1）
+                var packsDir = Path.Combine(baseWzPath, "Packs");
+                if (!Directory.Exists(packsDir))
+                    packsDir = Path.Combine(Path.GetDirectoryName(wzFolder)!, "Packs");
+                if (Directory.Exists(packsDir))
+                {
+                    foreach (var msFile in Directory.GetFiles(packsDir, "*.ms"))
+                    {
+                        try
+                        {
+                            _wzs.LoadMsFile(msFile);
+                            Console.WriteLine($"[WzService] Packs 加载: {Path.GetFileName(msFile)}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"[WzService] Packs 加载失败 {msFile}: {ex.Message}");
+                        }
+                    }
+                    foreach (var mnFile in Directory.GetFiles(packsDir, "*.mn"))
+                    {
+                        try
+                        {
+                            _wzs.LoadMsFile(mnFile);
+                            Console.WriteLine($"[WzService] Packs 加载: {Path.GetFileName(mnFile)}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"[WzService] Packs 加载失败 {mnFile}: {ex.Message}");
+                        }
+                    }
+                }
+                Console.WriteLine($"[WzService] 加载完成, imgs: {_wzs.img_number}");
                 return (true, null);
             }
             catch (Exception ex)
@@ -61,7 +96,7 @@ namespace MiniPet.Services
             if (!_wzLoaded || _wzs?.WzNode == null) return null;
             try
             {
-                return _wzs.WzNode.FindNodeByPath(true, path.Split('/'));
+                return _wzs.WzNode.FindNodeByPath(path.Replace('/', '\\'), true);
             }
             catch (Exception ex)
             {
@@ -96,12 +131,11 @@ namespace MiniPet.Services
             {
                 var node = _wzs.WzNode.FindNodeByPath(true, wzPath.Split('/'));
                 if (node == null) return null;
-                node = ResolveNode(node);
-                var png = node.GetValue<Wz_Png>();
+                // R2 GetLinkedSourceNode: _inlink/_outlink/source
+                var linkNode = GetLinkedSourceNode(node) ?? node;
+                var png = linkNode.GetValue<Wz_Png>() ?? node.GetValue<Wz_Png>();
                 if (png == null) return null;
-                var raw = png.GetRawData();
-                if (raw == null || raw.Length == 0) return null;
-                return PngEncoder.Encode(raw, png.Width, png.Height);
+                return PngEncoder.Encode(PngEncoder.DecodePixels(png), png.Width, png.Height);
             }
             catch (Exception ex)
             {
@@ -119,7 +153,7 @@ namespace MiniPet.Services
             {
                 var node = FindNodeByPath(wzPath);
                 if (node == null) return (0, 0);
-                node = ResolveNode(node);
+                // origin 在原始帧节点上，不要 ResolveNode（会跳到 canvas 丢失 origin）
                 var origin = node.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
                 return origin != null ? (origin.X, origin.Y) : (0, 0);
             }
@@ -220,67 +254,59 @@ namespace MiniPet.Services
             if (!_wzLoaded || _wzs?.WzNode == null) return (null, null);
             try
             {
-                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/_Canvas/{mobId:D7}.img".Split('/'));
-                if (imgNode == null) return (null, null);
-                var img = imgNode.GetValue<Wz_Image>();
-                if (img == null || !img.TryExtract()) return (null, null);
-
-                var actionNode = img.Node.Nodes.FirstOrDefault(n => n.Text == action);
+                // Meta: Mob/{id}.img — 含 origin/delay/a0/a1，帧 child 有 outlink 指向 _Canvas PNG
+                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
+                if (metaImgNode == null) return (null, null);
+                var metaImg = metaImgNode.GetValue<Wz_Image>();
+                if (metaImg == null || !metaImg.TryExtract()) return (null, null);
+                var actionNode = metaImg.Node.Nodes.FirstOrDefault(n => n.Text == action);
                 if (actionNode == null) return (null, null);
 
+                int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
                 var frameDataList = new List<FrameData>();
-                int originX = 0, originY = 0;
-                int frameWidth = 0, frameHeight = 0;
-
                 int f = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
-                    var resolved = ResolveNode(child);
-                    var delay = resolved.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
-                    var a0 = resolved.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
-                    var a1 = resolved.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
-                    var png = resolved.GetValue<Wz_Png>();
-                    if (png != null)
-                    {
-                        frameWidth = Math.Max(frameWidth, png.Width);
-                        frameHeight = Math.Max(frameHeight, png.Height);
-                    }
-                    var origin = resolved.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
-                    if (origin != null)
-                    {
-                        originX = Math.Max(originX, origin.X);
-                        originY = Math.Max(originY, origin.Y);
-                    }
+                    // origin/delay/a0/a1 直接在 child 上
+                    var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
+                    int ox = origin?.X ?? 0, oy = origin?.Y ?? 0;
+                    int delay = child.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
+                    int a0 = child.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
+                    int a1 = child.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
 
-                    frameDataList.Add(new FrameData
-                    {
-                        Index = f++,
-                        Delay = delay,
-                        A0 = a0,
-                        A1 = a1
-                    });
+                    // PNG 通过 child 的 outlink 解析
+                    var pngNode = child.ResolveUol() ?? child;
+                    var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
+                    var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
+                    int fw = png?.Width ?? 0, fh = png?.Height ?? 0;
+
+                    maxL = Math.Max(maxL, ox);
+                    maxT = Math.Max(maxT, oy);
+                    maxR = Math.Max(maxR, fw - ox);
+                    maxB = Math.Max(maxB, fh - oy);
+
+                    frameDataList.Add(new FrameData { Index = f++, Delay = delay, A0 = a0, A1 = a1 });
                 }
-
                 if (frameDataList.Count == 0) return (null, null);
 
                 var strip = new SpriteStrip
                 {
                     Action = action,
                     FrameCount = frameDataList.Count,
-                    FrameWidth = frameWidth,
-                    FrameHeight = frameHeight,
-                    OriginX = originX,
-                    OriginY = originY,
+                    FrameWidth = maxL + maxR,
+                    FrameHeight = maxT + maxB,
+                    OriginX = maxL,
+                    OriginY = maxT,
                     FrameData = frameDataList,
-                    DefaultDelay = 120
+                    DefaultDelay = 100
                 };
 
                 var config = new PetConfig
                 {
                     Name = $"mob_{mobId}",
                     Type = "mob",
-                    OriginX = originX,
-                    OriginY = originY,
+                    OriginX = 0,
+                    OriginY = 0,
                     Sprites = new Dictionary<string, SpriteStrip> { [action] = strip }
                 };
 
@@ -301,45 +327,50 @@ namespace MiniPet.Services
             if (!_wzLoaded || _wzs?.WzNode == null) return null;
             try
             {
-                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/_Canvas/{mobId:D7}.img".Split('/'));
-                if (imgNode == null) return null;
-                var img = imgNode.GetValue<Wz_Image>();
-                if (img == null || !img.TryExtract()) return null;
-
-                var actionNode = img.Node.Nodes.FirstOrDefault(n => n.Text == action);
+                // Meta: Mob/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
+                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
+                if (metaImgNode == null) return null;
+                var metaImg = metaImgNode.GetValue<Wz_Image>();
+                if (metaImg == null || !metaImg.TryExtract()) return null;
+                var actionNode = metaImg.Node.Nodes.FirstOrDefault(n => n.Text == action);
                 if (actionNode == null) return null;
 
-                var frames = new List<(byte[] raw, int w, int h)>();
+                var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
-                    var resolved = ResolveNode(child);
-                    var png = resolved.GetValue<Wz_Png>();
+                    var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
+
+                    var pngNode = child.ResolveUol() ?? child;
+                    var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
+                    var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
                     if (png == null) continue;
-                    var raw = png.GetRawData();
-                    if (raw == null || raw.Length == 0) continue;
-                    frames.Add((raw, png.Width, png.Height));
+
+                    frames.Add((PngEncoder.DecodePixels(png), png.Width, png.Height, origin?.X ?? 0, origin?.Y ?? 0));
                 }
                 if (frames.Count == 0) return null;
 
-                var maxW = frames.Max(f => f.w);
-                var maxH = frames.Max(f => f.h);
-                var totalW = maxW * frames.Count;
-                var stripRaw = new byte[totalW * maxH * 4]; // BGRA
+                int mL = frames.Max(f => f.ox), mT = frames.Max(f => f.oy);
+                int mR = frames.Max(f => f.w - f.ox), mB = frames.Max(f => f.h - f.oy);
+                int cw = mL + mR, ch = mT + mB;
+                int finalOx = mL, finalOy = mT;
+
+                var stripBgra = new byte[cw * frames.Count * ch * 4];
                 for (int i = 0; i < frames.Count; i++)
                 {
-                    var (bgra, fw, fh) = frames[i];
-                    for (int y = 0; y < fh && y < maxH; y++)
+                    var (bgra, fw, fh, ox, oy) = frames[i];
+                    int dx = finalOx - ox, dy = finalOy - oy;
+                    for (int y = 0; y < fh; y++)
                     {
-                        for (int x = 0; x < fw && x < maxW; x++)
-                        {
-                            int src = (y * fw + x) * 4;
-                            int dst = (y * totalW + i * maxW + x) * 4;
-                            if (src + 3 < bgra.Length && dst + 3 < stripRaw.Length)
-                                Buffer.BlockCopy(bgra, src, stripRaw, dst, 4);
-                        }
+                        int dstY = y + dy;
+                        if (dstY < 0 || dstY >= ch) continue;
+                        int src = y * fw * 4;
+                        int dst = (dstY * cw * frames.Count + i * cw + dx) * 4;
+                        int len = Math.Min(fw * 4, (cw - dx) * 4);
+                        if (len > 0 && src + len <= bgra.Length && dst + len <= stripBgra.Length)
+                            Buffer.BlockCopy(bgra, src, stripBgra, dst, len);
                     }
                 }
-                return PngEncoder.Encode(stripRaw, totalW, maxH);
+                return PngEncoder.Encode(stripBgra, cw * frames.Count, ch);
             }
             catch (Exception ex)
             {
@@ -433,13 +464,13 @@ namespace MiniPet.Services
             var result = new List<(int Id, string Name)>();
             try
             {
-                // WZ 数据在 _Canvas 子目录下
                 var node = FindNodeByPath($"{wzDirectory}/_Canvas");
                 if (node == null) return result;
                 foreach (Wz_Node child in node.Nodes)
                 {
                     var key = child.Text;
-                    var cleanKey = key.EndsWith(".img") ? key[..^4] : key;
+                    if (!key.EndsWith(".img")) continue;
+                    var cleanKey = key[..^4];
                     if (int.TryParse(cleanKey, out var id))
                         result.Add((id, key));
                 }

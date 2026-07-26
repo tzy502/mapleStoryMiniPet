@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Avalonia.Controls;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 
 namespace MiniPet.Views.Controls;
@@ -15,28 +16,27 @@ public partial class SpriteCanvas : UserControl
     public SpriteCanvas()
     {
         InitializeComponent();
+        SpriteImage.Stretch = Stretch.UniformToFill;
     }
 
     /// <summary>
-    /// 设置当前帧并定位（origin偏移）
+    /// 设置当前帧（origin 已在 strip 构建时按 GifUtil 逻辑内嵌，无需二次偏移）
     /// </summary>
-    public void SetFrame(System.Drawing.Bitmap frame, int originX, int originY)
+    public void SetFrame(byte[] pngData)
     {
-        if (frame == null)
+        if (pngData == null || pngData.Length == 0)
         {
             Clear();
             return;
         }
 
-        // System.Drawing.Bitmap -> Avalonia.Bitmap
-        _currentBitmap = ConvertToAvaloniaBitmap(frame);
+        _currentBitmap?.Dispose();
+        using var ms = new MemoryStream(pngData);
+        _currentBitmap = new Bitmap(ms);
 
         SpriteImage.Source = _currentBitmap;
-
-        // origin偏移：图片左上角相对于实体锚点的偏移
-        // Canvas.SetLeft/SetTop 实现负偏移定位
-        Canvas.SetLeft(SpriteImage, -originX);
-        Canvas.SetTop(SpriteImage, -originY);
+        Canvas.SetLeft(SpriteImage, 0);
+        Canvas.SetTop(SpriteImage, 0);
     }
 
     /// <summary>
@@ -47,21 +47,5 @@ public partial class SpriteCanvas : UserControl
         SpriteImage.Source = null;
         _currentBitmap?.Dispose();
         _currentBitmap = null;
-    }
-
-    private static Bitmap? ConvertToAvaloniaBitmap(System.Drawing.Bitmap bitmap)
-    {
-        try
-        {
-            using var ms = new MemoryStream();
-            bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            ms.Position = 0;
-
-            return new Bitmap(ms);
-        }
-        catch
-        {
-            return null;
-        }
     }
 }
