@@ -11,6 +11,7 @@ public enum EventType
     SettingsChanged,
     ConfigChanged,
     PetChanged,
+    OpenSettings,
     AppExit
 }
 

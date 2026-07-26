@@ -3,9 +3,11 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="300" d:DesignHeight="300"
-             x:Class="MiniPet.Views.Controls.SpriteCanvas">
+             x:Class="MiniPet.Views.Controls.SpriteCanvas"
+             Background="Transparent"
+             IsHitTestVisible="False">
 
-    <Canvas x:Name="RootCanvas">
-        <Image x:Name="SpriteImage" />
+    <Canvas x:Name="RootCanvas" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Image x:Name="SpriteImage" Stretch="UniformToFill" />
     </Canvas>
 </UserControl>

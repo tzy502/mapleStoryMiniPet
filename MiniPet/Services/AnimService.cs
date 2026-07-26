@@ -44,8 +44,8 @@ namespace MiniPet.Services
         private bool _isPaused;
 
         // 空闲超时
-        private int _idleTimeoutMinMs = 15000;
-        private int _idleTimeoutMaxMs = 30000;
+        private int _idleTimeoutMinMs = 8000;
+        private int _idleTimeoutMaxMs = 15000;
         private bool _randomIdleEnabled = true;
         private double _idleAccumulated;
         private double _currentIdleThreshold;
@@ -143,17 +143,17 @@ namespace MiniPet.Services
 
             _accumulatedDelay += deltaMs;
 
-            // 空闲超时累积
-            if (_randomIdleEnabled && _currentMode == PlayMode.Loop)
+            // 无论当前是循环还是 OneShot，都按真实经过时间累积空闲计时。
+            if (_randomIdleEnabled)
             {
                 _idleAccumulated += deltaMs;
-                if (_idleAccumulated >= _currentIdleThreshold)
+                if (_currentMode == PlayMode.Loop && _idleAccumulated >= _currentIdleThreshold)
                 {
                     var randomAction = GetRandomAction();
                     if (randomAction != null && randomAction != _currentAction)
                     {
+                        Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
                         _pendingAction = "stand";
-                        ResetIdleThreshold();
                         SwitchTo(randomAction);
                         return Tick(0);
                     }

@@ -169,6 +169,51 @@ public class TrayService
 
             menu.Items.Add(new NativeMenuItemSeparator());
 
+            // 设置中心
+            var settingsItem = CreateMenuItem("设置中心", () =>
+            {
+                try
+                {
+                    if (_mainWindow == null) return;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        _eventBus.Publish(EventType.OpenSettings);
+                    });
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[TrayService] Settings: {ex.Message}"); }
+            });
+            menu.Items.Add(settingsItem);
+
+            menu.Items.Add(new NativeMenuItemSeparator());
+
+            // 重置到桌面中央
+            var centerItem = CreateMenuItem("重置到桌面中央", () =>
+            {
+                try
+                {
+                    if (_mainWindow == null) return;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_mainWindow is Window win)
+                        {
+                            var screens = win.Screens;
+                            if (screens != null && screens.ScreenCount > 0)
+                            {
+                                var screen = screens.Primary ?? screens.All[0];
+                                var bounds = screen.Bounds;
+                                win.Position = new PixelPoint(
+                                    (int)(bounds.X + (bounds.Width - win.Width) / 2),
+                                    (int)(bounds.Y + (bounds.Height - win.Height) / 2));
+                            }
+                        }
+                    });
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[TrayService] Center: {ex.Message}"); }
+            });
+            menu.Items.Add(centerItem);
+
+            menu.Items.Add(new NativeMenuItemSeparator());
+
             var exitItem = CreateMenuItem("退出", () =>
             {
                 try

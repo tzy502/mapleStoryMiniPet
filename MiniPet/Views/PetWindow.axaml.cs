@@ -1,10 +1,12 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using System;
 using System.Diagnostics;
+using Avalonia.Media.Imaging;
 using MiniPet.Services;
 using MiniPet.Views.Controls;
 
@@ -41,16 +43,18 @@ public class PetWindow : Window
         _eventBus = eventBus;
 
         Title = "MiniPet";
-        Width = 320;
-        Height = 300;
+        SizeToContent = SizeToContent.WidthAndHeight;
+        MinWidth = 64;
+        MinHeight = 64;
         Topmost = true;
+        WindowDecorations = global::Avalonia.Controls.WindowDecorations.None;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Brushes.Transparent;
         TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
 
-        var grid = new Grid();
+        var grid = new Grid { Background = Brushes.Transparent };
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-        grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         Content = grid;
@@ -61,22 +65,23 @@ public class PetWindow : Window
             FontSize = 12,
             Foreground = new SolidColorBrush(Color.FromRgb(200, 200, 200)),
             TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(0, 4)
+            Margin = new Thickness(0, 4),
         };
         Grid.SetRow(_infoText, 0);
         grid.Children.Add(_infoText);
 
         // 精灵画布（含 origin 对齐）
-        _spriteCanvas = new SpriteCanvas { Width = 300, Height = 200 };
+        _spriteCanvas = new SpriteCanvas();
         Grid.SetRow(_spriteCanvas, 1);
         grid.Children.Add(_spriteCanvas);
 
-        // 聊天气泡控件（不阻挡拖拽）
-        _balloonControl = new BalloonControl { IsHitTestVisible = false };
+        // 聊天气泡控件
+        _balloonControl = new BalloonControl();
         Grid.SetRow(_balloonControl, 2);
         grid.Children.Add(_balloonControl);
 
         ContextMenu = BuildContextMenu();
+        ContextMenu.Opening += (_, _) => RefreshAnimationMenu();
         SetupDragEvents();
 
         // 帧循环：30fps ≈ 33ms
@@ -87,25 +92,7 @@ public class PetWindow : Window
         _stopwatch.Start();
         _timer.Start();
 
-        // 启动时加载配置中保存的默认宠物
-        bool loadedPet = false;
-        try
-        {
-            var settings = _configService.LoadSettings();
-            if (settings != null && settings.CurrentMobId > 0)
-            {
-                var mobId = settings.CurrentMobId;
-                _animService.SetCurrentMobId(mobId);
-                _spriteService.PreloadMob(_wzService, mobId);
-                _animService.Play("stand", PlayMode.Loop);
-                loadedPet = true;
-                Console.WriteLine($"[PetWindow] 加载默认宠物: {mobId}");
-            }
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LoadDefaultPet: {ex.Message}"); }
-
-        if (!loadedPet)
-            _animService.Play("stand", PlayMode.Loop);
+        _animService.Play("stand", PlayMode.Loop);
 
         // 托盘集成
         try
@@ -122,7 +109,14 @@ public class PetWindow : Window
         {
             Dispatcher.UIThread.Post(() =>
             {
-                try { _animService.SwitchTo("fly"); }
+                try
+                {
+                    var mobId = _animService.GetCurrentMobId();
+                    var actions = _wzService.GetActionList(mobId);
+                    var dragAction = actions.Contains("fly") ? "fly" :
+                        actions.Contains("move") ? "move" : "stand";
+                    _animService.SwitchTo(dragAction);
+                }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DragStart anim: {ex.Message}"); }
             });
         });
@@ -179,6 +173,32 @@ public class PetWindow : Window
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetChanged: {ex.Message}"); }
             });
         });
+
+        _eventBus.Subscribe(EventType.OpenSettings, _ =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { ShowSettingsWindow(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OpenSettings: {ex.Message}"); }
+            });
+        });
+    }
+
+    public void LoadDefaultPet(WzService wzService)
+    {
+        try
+        {
+            var settings = _configService.LoadSettings();
+            if (settings != null && settings.CurrentMobId > 0)
+            {
+                var mobId = settings.CurrentMobId;
+                _spriteService.PreloadMob(wzService, mobId);
+                _animService.SetCurrentMobId(mobId);
+                _animService.Play("stand", PlayMode.Loop);
+                Console.WriteLine($"[PetWindow] 延迟加载默认宠物: {mobId}");
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LoadDefaultPet: {ex.Message}"); }
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
@@ -205,7 +225,7 @@ public class PetWindow : Window
 
     private void SetupDragEvents()
     {
-        PointerPressed += (_, e) =>
+        this.AddHandler(PointerPressedEvent, (_, e) =>
         {
             try
             {
@@ -219,21 +239,11 @@ public class PetWindow : Window
                 _dragStart = e.GetPosition(this);
                 _windowStartPos = Position;
                 _eventBus.Publish(EventType.UserDragStart);
+                // 用 OS 原生拖拽，不需要手动跟踪 PointerMoved
+                BeginMoveDrag(e);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerPressed: {ex.Message}"); }
-        };
-        PointerMoved += (_, e) =>
-        {
-            try
-            {
-                if (!_isDragging) return;
-                var pos = e.GetPosition(this);
-                Position = new PixelPoint(
-                    (int)(_windowStartPos.X + pos.X - _dragStart.X),
-                    (int)(_windowStartPos.Y + pos.Y - _dragStart.Y));
-            }
-            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerMoved: {ex.Message}"); }
-        };
+        }, RoutingStrategies.Tunnel);
         PointerReleased += (_, _) =>
         {
             try
@@ -261,7 +271,10 @@ public class PetWindow : Window
             var (fd, pngData) = _animService.Tick(delta);
             if (pngData != null)
             {
-                _spriteCanvas.SetFrame(pngData);
+                var strip = _spriteService.GetCachedStrip(_animService.GetCurrentMobId(), _animService.GetCurrentAction()).Item1;
+                int ox = strip?.OriginX ?? 0;
+                int oy = strip?.OriginY ?? 0;
+                _spriteCanvas.SetFrame(pngData, ox, oy);
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";
@@ -282,7 +295,7 @@ public class PetWindow : Window
             {
                 try
                 {
-                    var browser = new MaterialBrowserWindow(_wzService);
+                    var browser = new MaterialBrowserWindow(_wzService, _configService);
                     browser.OnMaterialSelected += (id, name) =>
                     {
                         Dispatcher.UIThread.Post(() =>
@@ -309,7 +322,7 @@ public class PetWindow : Window
             {
                 try
                 {
-                    var browser = new MaterialBrowserWindow(_wzService);
+                    var browser = new MaterialBrowserWindow(_wzService, _configService);
                     browser.OnMaterialSelected += (id, name) =>
                     {
                         Dispatcher.UIThread.Post(() =>
@@ -341,19 +354,7 @@ public class PetWindow : Window
             cm.Items.Add(charItem);
 
             // ── 切换动画 ──
-            var animItem = new MenuItem { Header = "切换动画" };
-            var animNames = new[] { "stand", "move", "fly", "say", "mouse", "laugh", "eye", "hit", "skill", "die" };
-            foreach (var name in animNames)
-            {
-                var capturedName = name;
-                var item = new MenuItem { Header = name };
-                item.Click += (_, _) =>
-                {
-                    try { _animService.SwitchTo(capturedName); }
-                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AnimSwitch {capturedName}: {ex.Message}"); }
-                };
-                animItem.Items.Add(item);
-            }
+            var animItem = new MenuItem { Header = "切换动画", Name = "AnimationMenu" };
             cm.Items.Add(animItem);
 
             cm.Items.Add(new Separator());
@@ -396,6 +397,30 @@ public class PetWindow : Window
 
             cm.Items.Add(new Separator());
 
+            // ── 重置到桌面中央 ──
+            var centerItem = new MenuItem { Header = "重置到桌面中央" };
+            centerItem.Click += (_, _) =>
+            {
+                try
+                {
+                    var screens = Screens;
+                    if (screens != null && screens.ScreenCount > 0)
+                    {
+                        var screen = screens.Primary ?? screens.All[0];
+                        var bounds = screen.Bounds;
+                        var w = Width;
+                        var h = Height;
+                        Position = new PixelPoint(
+                            (int)(bounds.X + (bounds.Width - w) / 2),
+                            (int)(bounds.Y + (bounds.Height - h) / 2));
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CenterWindow: {ex.Message}"); }
+            };
+            cm.Items.Add(centerItem);
+
+            cm.Items.Add(new Separator());
+
             // ── 退出 ──
             var exitItem = new MenuItem { Header = "退出" };
             exitItem.Click += (_, _) =>
@@ -422,6 +447,53 @@ public class PetWindow : Window
         return cm;
     }
 
+    private void RefreshAnimationMenu()
+    {
+        try
+        {
+            if (ContextMenu == null) return;
+
+            MenuItem? animationMenu = null;
+            foreach (var entry in ContextMenu.Items)
+            {
+                if (entry is MenuItem { Name: "AnimationMenu" } menu)
+                {
+                    animationMenu = menu;
+                    break;
+                }
+            }
+            if (animationMenu == null) return;
+
+            animationMenu.Items.Clear();
+            var mobId = _animService.GetCurrentMobId();
+            var actions = _wzService.GetActionList(mobId);
+            foreach (var action in actions)
+            {
+                var capturedAction = action;
+                var item = new MenuItem { Header = capturedAction };
+                item.Click += (_, _) =>
+                {
+                    try
+                    {
+                        if (_spriteService.LoadSpriteStrip(mobId, capturedAction) == null)
+                        {
+                            _spriteService.PreloadAction(_wzService, mobId, capturedAction);
+                        }
+                        _animService.SwitchTo(capturedAction);
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AnimSwitch {capturedAction}: {ex.Message}"); }
+                };
+                animationMenu.Items.Add(item);
+            }
+
+            if (actions.Count == 0)
+            {
+                animationMenu.Items.Add(new MenuItem { Header = "无可用动画", IsEnabled = false });
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshAnimationMenu: {ex.Message}"); }
+    }
+
     private void ShowSettingsWindow()
     {
         try
@@ -438,6 +510,7 @@ public class PetWindow : Window
                 try
                 {
                     _animService.SetCurrentMobId(id);
+                    _spriteService.PreloadMob(_wzService, id);
                     _animService.SwitchTo("stand");
                     _eventBus.Publish(EventType.PetChanged, (id, name));
                 }

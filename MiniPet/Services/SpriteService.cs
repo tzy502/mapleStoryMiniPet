@@ -191,31 +191,16 @@ namespace MiniPet.Services
                 var actions = wz.GetActionList(mobId);
                 if (actions.Count == 0) return false;
 
-                // 优先 stand/move/fly，其次第一个可用动作
-                var priorityActions = actions.Where(a =>
-                    a is "stand" or "move" or "fly" or "walk" or "jump").ToList();
+                // 固定优先顺序加载拖动和基础动作，其次第一个可用动作
+                var preloadOrder = new[] { "stand", "move", "fly", "walk", "jump" };
+                var priorityActions = preloadOrder.Where(actions.Contains).ToList();
                 if (priorityActions.Count == 0 && actions.Count > 0)
                     priorityActions.Add(actions[0]);
 
                 var loaded = false;
                 foreach (var action in priorityActions)
                 {
-                    try
-                    {
-                        var pngData = wz.BuildSpriteStripPng(mobId, action);
-                        if (pngData == null) continue;
-
-                        var (strip, config) = wz.ExportSpriteStrip(mobId, action);
-                        if (strip == null || config == null) continue;
-
-                        var configJson = System.Text.Json.JsonSerializer.Serialize(config);
-                        var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
-
-                        _cacheManager.SaveSpriteStrip(mobId, action, pngData, configBytes);
-                        CacheStrip(mobId, action, strip, pngData);
-                        loaded = true;
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"[SpriteService] PreloadMob action: {ex.Message}"); }
+                    loaded |= PreloadAction(wz, mobId, action);
                 }
 
                 return loaded;
@@ -223,6 +208,33 @@ namespace MiniPet.Services
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[SpriteService] PreloadMob({mobId}): {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 从 WZ 预加载怪物的指定动作。
+        /// </summary>
+        public bool PreloadAction(WzService wz, int mobId, string action)
+        {
+            try
+            {
+                var pngData = wz.BuildSpriteStripPng(mobId, action);
+                if (pngData == null) return false;
+
+                var (strip, config) = wz.ExportSpriteStrip(mobId, action);
+                if (strip == null || config == null) return false;
+
+                var configJson = JsonSerializer.Serialize(config);
+                var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
+
+                _cacheManager.SaveSpriteStrip(mobId, action, pngData, configBytes);
+                CacheStrip(mobId, action, strip, pngData);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[SpriteService] PreloadAction({mobId}/{action}): {ex.Message}");
                 return false;
             }
         }

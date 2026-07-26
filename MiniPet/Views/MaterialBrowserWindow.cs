@@ -68,14 +68,36 @@ public class MaterialBrowserWindow : Window
         public string Display => $"{Emoji} {Name}  [{Id}]";
     }
 
-    public MaterialBrowserWindow(WzService? wzService = null)
+    public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null)
     {
+        var hasWzConfig = false;
+        if (wzService != null && !wzService.IsLoaded && configService != null)
+        {
+            try
+            {
+                var wzConfig = configService.LoadWzConfig();
+                hasWzConfig = !string.IsNullOrWhiteSpace(wzConfig.BaseWzPath);
+                if (hasWzConfig)
+                {
+                    var (success, error) = wzService.LoadWz(wzConfig.WzLibPath, wzConfig.BaseWzPath);
+                    if (!success)
+                        Console.Error.WriteLine($"[MaterialBrowser] WZ 加载失败: {error}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MaterialBrowser] WZ 自动加载失败: {ex.Message}");
+            }
+        }
+
         if (wzService != null && wzService.IsLoaded)
             _allEntries = LoadFromWz(wzService);
         else
             _allEntries = new List<MaterialEntry>
             {
-                new("提示", 0, "WZ 未加载，请先在设置中心配置 WZ 路径并保存", "⚠️")
+                hasWzConfig
+                    ? new("提示", 0, "WZ 加载失败，请检查已保存的 WZ 路径", "⚠️")
+                    : new("提示", 0, "WZ 未配置，请先在设置中心配置 WZ 路径并保存", "⚠️")
             };
         _filteredEntries = new List<MaterialEntry>(_allEntries);
 

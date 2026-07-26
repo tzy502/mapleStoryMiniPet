@@ -432,13 +432,16 @@ public class SettingsWindow : Window
 
         var preview = new StackPanel { Margin = new Thickness(14), Spacing = 8 };
         _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinHeight = 400, MinWidth = 320, VerticalAlignment = VerticalAlignment.Stretch };
-        UpdatePreviewContent("路西德", "8880150");
+        var defaultMobId = _config.LoadSettings().CurrentMobId;
+        var defaultName = defaultMobId > 0 ? _wzService.GetMobName(defaultMobId) : "";
+        if (string.IsNullOrEmpty(defaultName)) defaultName = defaultMobId > 0 ? $"怪物_{defaultMobId}" : "";
+        UpdatePreviewContent(defaultName, defaultMobId > 0 ? defaultMobId.ToString() : "");
         preview.Children.Add(_previewCanvas);
 
         var paramBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        _petNameLabel = new TextBlock { Text = "路西德", FontSize = 12, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center };
+        _petNameLabel = new TextBlock { Text = defaultMobId > 0 ? defaultName : "未选择宠物", FontSize = 12, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center };
         paramBar.Children.Add(_petNameLabel);
-        _petIdInput = new TextBox { Text = "8880150", Width = 80, FontSize = 11, FontFamily = new FontFamily("SF Mono, monospace"), Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), BorderBrush = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 3), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        _petIdInput = new TextBox { Text = defaultMobId > 0 ? defaultMobId.ToString() : "", Width = 80, FontSize = 11, FontFamily = new FontFamily("SF Mono, monospace"), Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), BorderBrush = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 3), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         paramBar.Children.Add(_petIdInput);
 
         var playBtn = new Button { Content = "▶ 播放", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(10, 3), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
@@ -1312,7 +1315,7 @@ public class SettingsWindow : Window
     {
         try
         {
-            var browser = new MaterialBrowserWindow(_wzService);
+            var browser = new MaterialBrowserWindow(_wzService, _config);
             browser.OnMaterialSelected += (id, name) =>
             {
                 Console.WriteLine($"[SettingsWindow] OnMaterialSelected received: Id={id}, Name={name}");

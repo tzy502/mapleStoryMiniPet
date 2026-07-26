@@ -380,29 +380,33 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 获取怪物的动作列表 — 遍历 img 子节点，排除纯数字（帧号）子节点
+        /// 获取怪物的动作列表 — 从含动作元数据的 Mob/{id}.img 枚举动作节点
         /// </summary>
         public List<string> GetActionList(int mobId)
         {
             var result = new List<string>();
             try
             {
-                var imgNode = _wzs?.WzNode?.FindNodeByPath(true, $"Mob/_Canvas/{mobId:D7}.img".Split('/'));
+                if (!_wzLoaded || _wzs?.WzNode == null) return result;
+
+                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
                 if (imgNode == null) return result;
                 var img = imgNode.GetValue<Wz_Image>();
                 if (img == null || !img.TryExtract()) return result;
+
                 foreach (Wz_Node child in img.Node.Nodes)
                 {
-                    if (!int.TryParse(child.Text, out _))
+                    if (int.TryParse(child.Text, out _)) continue;
+                    if (child.Nodes.Any(frame => int.TryParse(frame.Text, out _)))
                         result.Add(child.Text);
                 }
-                // 按顺序返回常见动作
+
                 var priority = new[] { "stand", "move", "fly", "walk", "jump", "attack1", "skill1", "hit", "die" };
-                result = result.OrderBy(a =>
+                result = result.Distinct(StringComparer.Ordinal).OrderBy(a =>
                 {
                     var idx = Array.IndexOf(priority, a);
-                    return idx >= 0 ? idx : 99;
-                }).ThenBy(a => a).ToList();
+                    return idx >= 0 ? idx : priority.Length;
+                }).ThenBy(a => a, StringComparer.Ordinal).ToList();
             }
             catch (Exception ex)
             {

@@ -40,7 +40,12 @@ public partial class App : Application
                 {
                     var (ok, err) = wzService.LoadWz(wzConfig.WzLibPath, wzConfig.BaseWzPath);
                     if (ok)
+                    {
                         Console.WriteLine($"[App] WZ 自动加载成功, Mob: {wzService.ListMobIds().Count} 个");
+                        var petWindow = desktop.MainWindow as PetWindow;
+                        if (petWindow != null)
+                            petWindow.LoadDefaultPet(wzService);
+                    }
                     else if (err != null)
                         Console.Error.WriteLine($"[App] WZ 自动加载失败: {err}");
                 }
@@ -49,17 +54,6 @@ public partial class App : Application
                     Console.Error.WriteLine($"[App] WZ 加载异常: {ex.Message}");
                 }
             }
-
-            // [临时] 自动打开设置窗口用于 UI 验证
-            try
-            {
-                var settingsWindow = new SettingsWindow(
-                    _serviceProvider.GetRequiredService<ConfigService>(),
-                    _serviceProvider.GetRequiredService<WzService>()
-                );
-                settingsWindow.Show();
-            }
-            catch (Exception ex) { Console.Error.WriteLine($"[App] AutoSettings: {ex.Message}"); }
 
             // 订阅 AppExit 事件来真正退出应用
             var eventBus = _serviceProvider.GetRequiredService<EventBus>();
