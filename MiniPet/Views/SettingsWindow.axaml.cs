@@ -906,15 +906,74 @@ public class SettingsWindow : Window
         try
         {
             var idText = _petIdInput!.Text; if (!int.TryParse(idText, out var id)) return;
-            _settings.CurrentMobId = id; _settings.CurrentEntityType = "mob";
             var name = _petNameLabel!.Text ?? "";
-            var existing = _settings.RecentItems.FirstOrDefault(r => r.Id == id);
-            if (existing != null) existing.LastUsedAt = DateTime.Now;
-            else { _settings.RecentItems.Insert(0, new RecentItem { Type = "mob", Id = id, Name = name, LastUsedAt = DateTime.Now }); if (_settings.RecentItems.Count > 20) _settings.RecentItems = _settings.RecentItems.Take(20).ToList(); }
-            _config.SaveSettings(_settings);
-            _previewAnimTimer.Stop();
-            OnPetApplied?.Invoke(id, name);
-            Hide();
+
+            // ── 显示 loading ──
+            if (_statusBarText != null) _statusBarText.Text = "⏳ 正在预加载素材到本地缓存...";
+
+            // ── 后台线程预加载所有动作到磁盘缓存 ──
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    if (_wzService.IsLoaded)
+                    {
+                        var actions = _wzService.GetActionList(id);
+                        var preloadOrder = new[] { "stand", "move", "fly", "walk", "jump" };
+                        var ordered = preloadOrder.Where(actions.Contains).Concat(actions.Except(preloadOrder)).ToList();
+
+                        foreach (var action in ordered)
+                        {
+                            // 检查磁盘缓存是否存在
+                            var cacheKey = $"{id}_{action}";
+                            // 用 CacheManager 检查
+                            // 直接调用 SpriteService 的缓存逻辑
+                            // 先构建并保存到磁盘
+                            var pngData = _wzService.BuildSpriteStripPng(id, action);
+                            if (pngData == null) continue;
+                            var (strip, config) = _wzService.ExportSpriteStrip(id, action);
+                            if (strip == null || config == null) continue;
+
+                            var configJson = System.Text.Json.JsonSerializer.Serialize(config);
+                            var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
+
+                            // 写入磁盘缓存
+                            var cacheManager = new CacheManager();
+                            cacheManager.SaveSpriteStrip(id, action, pngData, configBytes);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SettingsWindow] PreloadCache: {ex.Message}");
+                }
+
+                // ── UI 线程：完成 ──
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        _settings.CurrentMobId = id;
+                        _settings.CurrentEntityType = "mob";
+                        var existing = _settings.RecentItems.FirstOrDefault(r => r.Id == id);
+                        if (existing != null) existing.LastUsedAt = DateTime.Now;
+                        else
+                        {
+                            _settings.RecentItems.Insert(0, new RecentItem { Type = "mob", Id = id, Name = name, LastUsedAt = DateTime.Now });
+                            if (_settings.RecentItems.Count > 20)
+                                _settings.RecentItems = _settings.RecentItems.Take(20).ToList();
+                        }
+                        _config.SaveSettings(_settings);
+                        _previewAnimTimer.Stop();
+
+                        if (_statusBarText != null) _statusBarText.Text = $"✅ 预加载完成，应用 {name}";
+
+                        OnPetApplied?.Invoke(id, name);
+                        Hide();
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPost: {ex.Message}"); }
+                });
+            });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyCurrentPet: {ex.Message}"); }
     }

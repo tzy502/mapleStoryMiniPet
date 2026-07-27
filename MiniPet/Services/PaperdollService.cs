@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using MiniPet.Models;
+using SkiaSharp;
 
 namespace MiniPet.Services;
 
@@ -33,35 +33,35 @@ public class PaperdollService
         return true;
     }
 
-    public Bitmap? CompositeFrame(string action, int frameIndex)
+    public byte[]? CompositeFrame(string action, int frameIndex)
     {
         if (_current == null) return null;
-        
-        var layers = new List<(Bitmap img, int ox, int oy, int z)>();
-        
+
+        var layers = new List<(SKBitmap img, int ox, int oy, int z)>();
+
         for (int zi = 0; zi < ZOrder.Length; zi++)
         {
             var slot = ZOrder[zi];
             var (category, itemId) = GetPartForSlot(slot, _current);
             if (category == null || itemId == null) continue;
-            
+
             var wzPath = $"Character/{category}/{itemId.PadLeft(8, '0')}.img/{action}/{frameIndex}/{slot}";
             var pngData = _wz.ExtractPng(wzPath);
             if (pngData == null) continue;
-            
+
             var (ox, oy) = _wz.GetOrigin(wzPath);
-            using var ms = new MemoryStream(pngData);
-            var bmp = new Bitmap(ms);
+            using var skImg = SKImage.FromEncodedData(pngData);
+            var bmp = SKBitmap.FromImage(skImg);
             layers.Add((bmp, ox, oy, zi));
         }
-        
+
         return CompositeLayers(layers);
     }
 
-    private Bitmap? CompositeLayers(List<(Bitmap img, int ox, int oy, int z)> layers)
+    private byte[]? CompositeLayers(List<(SKBitmap img, int ox, int oy, int z)> layers)
     {
         if (layers.Count == 0) return null;
-        
+
         int minX = 0, minY = 0, maxX = 0, maxY = 0;
         foreach (var (img, ox, oy, _) in layers)
         {
@@ -70,20 +70,22 @@ public class PaperdollService
             maxX = Math.Max(maxX, -ox + img.Width);
             maxY = Math.Max(maxY, -oy + img.Height);
         }
-        
+
         int w = maxX - minX, h = maxY - minY;
         if (w <= 0 || h <= 0) return null;
-        
-        var result = new Bitmap(w, h);
-        using var g = Graphics.FromImage(result);
-        g.Clear(Color.Transparent);
-        
+
+        using var result = new SKBitmap(w, h);
+        using var canvas = new SKCanvas(result);
+        canvas.Clear(SKColors.Transparent);
+
         foreach (var (img, ox, oy, _) in layers.OrderBy(l => l.z))
         {
-            g.DrawImage(img, -minX - ox, -minY - oy);
+            canvas.DrawBitmap(img, -minX - ox, -minY - oy);
         }
-        
-        return result;
+
+        using var image = SKImage.FromBitmap(result);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
 
     private (string? category, string? itemId) GetPartForSlot(string slot, CharacterAppearance a)
@@ -151,8 +153,8 @@ public class PaperdollService
 
     public void SavePreset(string name, CharacterAppearance appearance) { _presets[name] = appearance; }
     public CharacterAppearance? LoadPreset(string name) => _presets.TryGetValue(name, out var p) ? p : null;
-    public Bitmap? CompositeWithMount(MountInfo mount, string action, int frame) => CompositeFrame(action, frame);
-    public Bitmap? CompositeWithChair(ChairInfo chair, string action, int frame) => CompositeFrame(action, frame);
+    public byte[]? CompositeWithMount(MountInfo mount, string action, int frame) => CompositeFrame(action, frame);
+    public byte[]? CompositeWithChair(ChairInfo chair, string action, int frame) => CompositeFrame(action, frame);
 }
 
 public class EquippedItem

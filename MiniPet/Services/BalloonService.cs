@@ -1,12 +1,9 @@
 using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-using System.Drawing.Text;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using MiniPet.Models;
+using SkiaSharp;
 
 namespace MiniPet.Services
 {
@@ -40,9 +37,9 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 9-slice合成气泡位图
+        /// 9-slice合成气泡位图，返回 PNG 编码字节数组
         /// </summary>
-        public Bitmap? RenderBalloon(string text, BalloonData balloonData)
+        public byte[]? RenderBalloon(string text, BalloonData balloonData)
         {
             var tiles = balloonData.Tiles;
             if (tiles == null) return null;
@@ -72,71 +69,86 @@ namespace MiniPet.Services
             int textMaxW = Math.Max(100, cornerW * 4);
             var textSize = MeasureText(text, c.Height, textMaxW);
 
-            int contentW = textSize.Width + cornerW;
-            int contentH = textSize.Height + cornerH;
+            int contentW = textSize.w + cornerW;
+            int contentH = textSize.h + cornerH;
 
             int totalW = cornerW + contentW + cornerW;
             int totalH = cornerH + contentH + cornerH + (arrow?.Height ?? 0);
 
-            var result = new Bitmap(totalW, totalH, PixelFormat.Format32bppArgb);
-            using var g = Graphics.FromImage(result);
-            g.InterpolationMode = InterpolationMode.NearestNeighbor;
-            g.SmoothingMode = SmoothingMode.None;
-            g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            // 创建目标位图
+            var result = new SKBitmap(totalW, totalH, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var canvas = new SKCanvas(result);
+            canvas.Clear(SKColors.Transparent);
 
             // 绘制9-slice
             // 左上角
-            g.DrawImage(nw, 0, 0, cornerW, cornerH);
+            canvas.DrawBitmap(nw, new SKRect(0, 0, cornerW, cornerH));
             // 上边（水平拉伸）
-            g.DrawImage(n, cornerW, 0, contentW, cornerH);
+            canvas.DrawBitmap(n, new SKRect(cornerW, 0, cornerW + contentW, cornerH));
             // 右上角
-            g.DrawImage(ne, cornerW + contentW, 0, cornerW, cornerH);
+            canvas.DrawBitmap(ne, new SKRect(cornerW + contentW, 0, totalW, cornerH));
 
             // 左边（垂直拉伸）
-            g.DrawImage(w, 0, cornerH, cornerW, contentH);
+            canvas.DrawBitmap(w, new SKRect(0, cornerH, cornerW, cornerH + contentH));
             // 中心（双向拉伸）
-            g.DrawImage(c, cornerW, cornerH, contentW, contentH);
+            canvas.DrawBitmap(c, new SKRect(cornerW, cornerH, cornerW + contentW, cornerH + contentH));
             // 右边（垂直拉伸）
-            g.DrawImage(e, cornerW + contentW, cornerH, cornerW, contentH);
+            canvas.DrawBitmap(e, new SKRect(cornerW + contentW, cornerH, totalW, cornerH + contentH));
 
             // 左下角
-            g.DrawImage(sw, 0, cornerH + contentH, cornerW, cornerH);
+            canvas.DrawBitmap(sw, new SKRect(0, cornerH + contentH, cornerW, totalH - (arrow?.Height ?? 0)));
             // 下边（水平拉伸）
-            g.DrawImage(s, cornerW, cornerH + contentH, contentW, cornerH);
+            canvas.DrawBitmap(s, new SKRect(cornerW, cornerH + contentH, cornerW + contentW, totalH - (arrow?.Height ?? 0)));
             // 右下角
-            g.DrawImage(se, cornerW + contentW, cornerH + contentH, cornerW, cornerH);
+            canvas.DrawBitmap(se, new SKRect(cornerW + contentW, cornerH + contentH, totalW, totalH - (arrow?.Height ?? 0)));
 
             // 绘制文字在C区域
-            var textRect = new Rectangle(cornerW, cornerH, contentW, contentH);
-            using var brush = new SolidBrush(Color.FromArgb(balloonData.Clr > 0 ? balloonData.Clr : 0xFFFFFF));
-            using var font = new Font("Arial", 12, FontStyle.Regular, GraphicsUnit.Pixel);
-            var sf = new StringFormat
+            var textRect = new SKRect(cornerW, cornerH, cornerW + contentW, cornerH + contentH);
+            uint color = balloonData.Clr > 0 ? (uint)balloonData.Clr : 0xFFFFFFu;
+            byte a = (byte)((color >> 24) & 0xFF);
+            byte r = (byte)((color >> 16) & 0xFF);
+            byte g = (byte)((color >> 8) & 0xFF);
+            byte b = (byte)(color & 0xFF);
+            if (a == 0) a = 0xFF; // 默认不透明
+            var textColor = new SKColor(r, g, b, a);
+
+            using var paint = new SKPaint
             {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center
+                Color = textColor,
+                TextSize = 12,
+                IsAntialias = true,
+                TextAlign = SKTextAlign.Center,
+                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
             };
-            g.DrawString(text, font, brush, textRect, sf);
+
+            // 计算文字居中位置
+            float textX = textRect.MidX;
+            float textY = textRect.MidY + paint.TextSize / 3f; // 基线偏移居中
+            canvas.DrawText(text, textX, textY, paint);
 
             // 绘制箭头（S区域下方正中）
             if (arrow != null)
             {
                 int arrowX = (totalW - arrow.Width) / 2;
-                int arrowY = cornerH + contentH + cornerH;
-                g.DrawImage(arrow, arrowX, arrowY, arrow.Width, arrow.Height);
+                int arrowY = totalH - arrow.Height;
+                canvas.DrawBitmap(arrow, new SKRect(arrowX, arrowY, arrowX + arrow.Width, arrowY + arrow.Height));
             }
 
-            return result;
+            // 编码为 PNG 字节数组
+            using var image = SKImage.FromBitmap(result);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
         }
 
         /// <summary>
         /// 计算箭头指向精灵的锚点位置
         /// </summary>
-        public Point CalculateArrowPosition(Size balloonSize, Point originPoint)
+        public (int x, int y) CalculateArrowPosition(int balloonW, int balloonH, int originX, int originY)
         {
-            // 箭头底部指向精灵的 origin 点，箭头在气泡底部居中
-            return new Point(
-                originPoint.X - balloonSize.Width / 2,
-                originPoint.Y - balloonSize.Height
+            // 箭头底部指向精灵的 origin 点，气泡在精灵上方居中
+            return (
+                originX - balloonW / 2,
+                originY - balloonH
             );
         }
 
@@ -181,35 +193,37 @@ namespace MiniPet.Services
         /// <summary>
         /// 测量文字所需尺寸（限制最大宽度，自动换行）
         /// </summary>
-        private static Size MeasureText(string text, int lineHeight, int maxWidth)
+        private static (int w, int h) MeasureText(string text, int lineHeight, int maxWidth)
         {
-            using var bmp = new Bitmap(1, 1);
-            using var g = Graphics.FromImage(bmp);
-            using var font = new Font("Arial", 12, FontStyle.Regular, GraphicsUnit.Pixel);
-            var sf = new StringFormat { FormatFlags = StringFormatFlags.LineLimit };
+            using var paint = new SKPaint
+            {
+                TextSize = 12,
+                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+            };
 
-            // 二分查找合适的宽度
-            var measured = g.MeasureString(text, font, maxWidth, sf);
-            int w = (int)Math.Ceiling(measured.Width);
-            int h = (int)Math.Ceiling(measured.Height);
+            // 近似换行：按 maxWidth 截断，计算行数
+            float lineW = paint.MeasureText(text);
+            int lines = Math.Max(1, (int)Math.Ceiling(lineW / maxWidth));
+
+            int w = (int)Math.Ceiling(Math.Min(lineW, maxWidth));
+            int h = (int)Math.Ceiling(paint.TextSize * 1.35f * lines);
 
             // 确保最小尺寸
             w = Math.Max(w, 50);
             h = Math.Max(h, lineHeight);
 
-            return new Size(w, h);
+            return (w, h);
         }
 
         /// <summary>
-        /// 字节数组转Bitmap
+        /// 字节数组转 SKBitmap
         /// </summary>
-        private static Bitmap? TileToBitmap(byte[] data)
+        private static SKBitmap? TileToBitmap(byte[] data)
         {
             if (data == null || data.Length == 0) return null;
             try
             {
-                using var ms = new MemoryStream(data);
-                return new Bitmap(ms);
+                return SKBitmap.Decode(data);
             }
             catch
             {

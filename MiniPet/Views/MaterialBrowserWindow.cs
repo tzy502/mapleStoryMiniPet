@@ -4,8 +4,11 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Layout;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using MiniPet.Services;
 
@@ -39,6 +42,8 @@ public class MaterialBrowserWindow : Window
     private readonly List<MaterialEntry> _allEntries;
     private List<MaterialEntry> _filteredEntries;
     private string _activeCategory = "全部";
+    private readonly WzService? _wzService;
+    private readonly List<string> _previewActions = new() { "stand", "say", "mouse", "move", "hand", "laugh", "eye", "fly", "die" };
 
     // ── 分页 ──
     private int _currentPage = 1;
@@ -70,6 +75,7 @@ public class MaterialBrowserWindow : Window
 
     public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null)
     {
+        _wzService = wzService;
         var hasWzConfig = false;
         if (wzService != null && !wzService.IsLoaded && configService != null)
         {
@@ -669,6 +675,78 @@ public class MaterialBrowserWindow : Window
         if (_detailTitle != null) _detailTitle.Text = entry.Name;
         if (_detailInfo != null) _detailInfo.Text = $"ID: {entry.Id}";
         if (_detailType != null) _detailType.Text = $"类型: {entry.Category}";
+
+        // 加载预览图
+        LoadPreview(entry);
+    }
+
+    private void LoadPreview(MaterialEntry entry)
+    {
+        if (_wzService == null || !_wzService.IsLoaded || _previewPanel == null) return;
+
+        try
+        {
+            // 按动作顺序找第一个有帧的动作
+            string category = entry.Category switch
+            {
+                "怪物" => "Mob",
+                "NPC" => "Npc",
+                _ => "Mob"
+            };
+
+            foreach (var action in _previewActions)
+            {
+                var pngData = _wzService.BuildSpriteStripPng(entry.Id, action, category);
+                if (pngData != null && pngData.Length > 0)
+                {
+                    using var ms = new MemoryStream(pngData);
+                    var bmp = new Bitmap(ms);
+
+                    var strip = _wzService.ExportSpriteStrip(entry.Id, action, category).Item1;
+                    int frameW = strip?.FrameWidth ?? bmp.PixelSize.Width;
+                    int frameH = strip?.FrameHeight ?? bmp.PixelSize.Height;
+
+                    var image = new Image
+                    {
+                        Source = bmp,
+                        Width = frameW,
+                        Height = frameH,
+                        Stretch = Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                    _previewPanel.Child = image;
+                    return;
+                }
+            }
+
+            // 没找到任何动作，显示占位
+            _previewPanel.Child = new TextBlock
+            {
+                Text = "🎨\n无预览",
+                FontSize = 13,
+                Foreground = BrushTxtDim,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
+                LineHeight = 1.5
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[MaterialBrowser] LoadPreview({entry.Id}): {ex.Message}");
+            _previewPanel.Child = new TextBlock
+            {
+                Text = "🎨\n预览加载失败",
+                FontSize = 13,
+                Foreground = BrushTxtDim,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
+                LineHeight = 1.5
+            };
+        }
     }
 
     // ═══════════════════════════════════════════

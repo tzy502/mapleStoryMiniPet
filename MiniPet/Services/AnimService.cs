@@ -122,9 +122,25 @@ namespace MiniPet.Services
 
         /// <summary>
         /// 切换动作（自动判断 Loop/OneShot）
+        /// 如果当前正在播放 OneShot 动画（非 fly/move/stand），
+        /// 且新动作是 fly/move，不覆盖当前动作（等播完回 stand 再处理）
         /// </summary>
         public void SwitchTo(string action)
         {
+            // 如果当前是 OneShot（非 fly/move/stand），
+            // 新动作是 fly/move → 不覆盖，等播完再切
+            if (_currentMode == PlayMode.OneShot
+                && !_currentAction.StartsWith("stand")
+                && !_currentAction.StartsWith("fly")
+                && !_currentAction.StartsWith("move")
+                && (action.StartsWith("fly") || action.StartsWith("move")))
+            {
+                // 标记 pending，等 OneShot 播完自动切
+                if (!string.IsNullOrEmpty(_pendingAction))
+                    _pendingAction = action;
+                return;
+            }
+
             var mode = IsLooping(action) ? PlayMode.Loop : PlayMode.OneShot;
             Play(action, mode);
         }
@@ -289,12 +305,14 @@ namespace MiniPet.Services
         /// </summary>
         public string? GetRandomAction()
         {
-            var idleActions = new[] { "say", "mouse", "laugh", "eye" };
-            var available = idleActions.Where(a => HasSpriteForAction(a)).ToArray();
+            var available = _animDefs.Keys
+                .Where(a => a != _currentAction
+                    && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
+                    && !a.StartsWith("hit", StringComparison.OrdinalIgnoreCase)
+                    && HasSpriteForAction(a))
+                .ToArray();
             if (available.Length == 0) return null;
-
-            var rng = Random.Shared;
-            return available[rng.Next(available.Length)];
+            return available[Random.Shared.Next(available.Length)];
         }
 
         /// <summary>

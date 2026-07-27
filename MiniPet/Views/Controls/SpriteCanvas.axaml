@@ -8,6 +8,6 @@
              IsHitTestVisible="False">
 
     <Canvas x:Name="RootCanvas" Background="Transparent" HorizontalAlignment="Left" VerticalAlignment="Top">
-        <Image x:Name="SpriteImage" Stretch="UniformToFill" />
+        <Image x:Name="SpriteImage" Stretch="None" />
     </Canvas>
 </UserControl>

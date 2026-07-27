@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Avalonia.Media.Imaging;
 using MiniPet.Services;
 using MiniPet.Views.Controls;
@@ -87,9 +88,9 @@ public class PetWindow : Window
         ContextMenu.Opening += (_, _) => RefreshAnimationMenu();
         SetupDragEvents();
 
-        // 帧循环：30fps ≈ 33ms
+        // 帧循环：根据动画帧延迟动态间隔，基础轮询 66ms（≈15fps）
         _stopwatch = new Stopwatch();
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(66) };
         _timer.Tick += OnTimerTick;
         _animService.EnableRandomIdle(true);
         _stopwatch.Start();
@@ -174,6 +175,8 @@ public class PetWindow : Window
                     if (data is ValueTuple<int, string> pet)
                     {
                         _trayService.SetTooltip($"MiniPet - {pet.Item2} (ID:{pet.Item1})");
+                        // 记录最近使用
+                        RecordRecentItem(pet.Item1, pet.Item2);
                     }
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetChanged: {ex.Message}"); }
@@ -205,6 +208,36 @@ public class PetWindow : Window
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LoadDefaultPet: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 记录最近使用的宠物到配置文件
+    /// </summary>
+    private void RecordRecentItem(int id, string name)
+    {
+        try
+        {
+            var settings = _configService.LoadSettings();
+            if (settings.RecentItems == null)
+                settings.RecentItems = new System.Collections.Generic.List<Models.RecentItem>();
+
+            // 移除旧的同名记录
+            settings.RecentItems.RemoveAll(r => r.Id == id);
+            // 插入到最前
+            settings.RecentItems.Insert(0, new Models.RecentItem
+            {
+                Type = "mob",
+                Id = id,
+                Name = name,
+                LastUsedAt = DateTime.Now
+            });
+            // 最多保留20条
+            while (settings.RecentItems.Count > 20)
+                settings.RecentItems.RemoveAt(settings.RecentItems.Count - 1);
+
+            _configService.SaveSettings(settings);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RecordRecentItem: {ex.Message}"); }
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
@@ -313,6 +346,36 @@ public class PetWindow : Window
         {
             // ── 切换人物 ──
             var charItem = new MenuItem { Header = "切换人物" };
+
+            // 最近使用（最多5个）
+            var settings = _configService.LoadSettings();
+            if (settings.RecentItems != null && settings.RecentItems.Count > 0)
+            {
+                var recentItems = settings.RecentItems
+                    .OrderByDescending(r => r.LastUsedAt)
+                    .Take(5)
+                    .ToList();
+                foreach (var recent in recentItems)
+                {
+                    var capturedId = recent.Id;
+                    var capturedName = recent.Name;
+                    var recentItem = new MenuItem { Header = $"🕐 {capturedName} [{capturedId}]" };
+                    recentItem.Click += (_, _) =>
+                    {
+                        try
+                        {
+                            _animService.SetCurrentMobId(capturedId);
+                            _spriteService.PreloadMob(_wzService, capturedId);
+                            _animService.SwitchTo("stand");
+                            _eventBus.Publish(EventType.PetChanged, (capturedId, capturedName));
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RecentSelect: {ex.Message}"); }
+                    };
+                    charItem.Items.Add(recentItem);
+                }
+                charItem.Items.Add(new Separator());
+            }
+
             var mobSub = new MenuItem { Header = "怪物 (MOB)" };
             mobSub.Items.Add(new MenuItem { Header = "素材浏览器..." });
             (mobSub.Items[^1] as MenuItem)!.Click += (_, _) =>

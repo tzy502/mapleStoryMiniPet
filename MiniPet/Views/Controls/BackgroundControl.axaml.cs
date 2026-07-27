@@ -26,12 +26,10 @@ public partial class BackgroundControl : UserControl
         Canvas.SetTop(BgImage, -offsetY);
     }
 
-    public void SetBitmap(System.Drawing.Bitmap? bmp)
+    public void SetMapImage(byte[]? pngData)
     {
-        if (bmp == null) { BgImage.Source = null; return; }
-        using var ms = new MemoryStream();
-        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-        ms.Position = 0;
+        if (pngData == null) { BgImage.Source = null; return; }
+        using var ms = new MemoryStream(pngData);
         BgImage.Source = new Bitmap(ms);
     }
 }

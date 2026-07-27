@@ -247,15 +247,15 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 导出精灵图条和配置
+        /// 导出精灵图条和配置，支持 Mob/NPC 类型
         /// </summary>
-        public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(int mobId, string action)
+        public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(int id, string action, string type = "Mob")
         {
             if (!_wzLoaded || _wzs?.WzNode == null) return (null, null);
             try
             {
-                // Meta: Mob/{id}.img — 含 origin/delay/a0/a1，帧 child 有 outlink 指向 _Canvas PNG
-                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
+                // Meta: {type}/{id}.img — 含 origin/delay/a0/a1
+                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{id:D7}.img".Split('/'));
                 if (metaImgNode == null) return (null, null);
                 var metaImg = metaImgNode.GetValue<Wz_Image>();
                 if (metaImg == null || !metaImg.TryExtract()) return (null, null);
@@ -267,14 +267,12 @@ namespace MiniPet.Services
                 int f = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
-                    // origin/delay/a0/a1 直接在 child 上
                     var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
                     int ox = origin?.X ?? 0, oy = origin?.Y ?? 0;
                     int delay = child.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
                     int a0 = child.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
                     int a1 = child.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
 
-                    // PNG 通过 child 的 outlink 解析
                     var pngNode = child.ResolveUol() ?? child;
                     var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
                     var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
@@ -303,8 +301,8 @@ namespace MiniPet.Services
 
                 var config = new PetConfig
                 {
-                    Name = $"mob_{mobId}",
-                    Type = "mob",
+                    Name = $"{type.ToLower()}_{id}",
+                    Type = type.ToLower(),
                     OriginX = 0,
                     OriginY = 0,
                     Sprites = new Dictionary<string, SpriteStrip> { [action] = strip }
@@ -314,21 +312,24 @@ namespace MiniPet.Services
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] ExportSpriteStrip({mobId}/{action}): {ex.Message}");
+                Console.Error.WriteLine($"[WzService] ExportSpriteStrip({id}/{action}/{type}): {ex.Message}");
                 return (null, null);
             }
         }
 
+        // 保留旧签名兼容
+        public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(int mobId, string action) => ExportSpriteStrip(mobId, action, "Mob");
+
         /// <summary>
-        /// 从 WZ 提取精灵图条 PNG（拼接所有帧为水平条带）
+        /// 从 WZ 提取精灵图条 PNG（拼接所有帧为水平条带），支持 Mob/NPC
         /// </summary>
-        public byte[]? BuildSpriteStripPng(int mobId, string action)
+        public byte[]? BuildSpriteStripPng(int id, string action, string type = "Mob")
         {
             if (!_wzLoaded || _wzs?.WzNode == null) return null;
             try
             {
-                // Meta: Mob/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
-                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
+                // Meta: {type}/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
+                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{id:D7}.img".Split('/'));
                 if (metaImgNode == null) return null;
                 var metaImg = metaImgNode.GetValue<Wz_Image>();
                 if (metaImg == null || !metaImg.TryExtract()) return null;
@@ -374,22 +375,25 @@ namespace MiniPet.Services
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] BuildSpriteStripPng({mobId}/{action}): {ex.Message}");
+                Console.Error.WriteLine($"[WzService] BuildSpriteStripPng({id}/{action}/{type}): {ex.Message}");
                 return null;
             }
         }
 
+        // 保留旧签名兼容
+        public byte[]? BuildSpriteStripPng(int mobId, string action) => BuildSpriteStripPng(mobId, action, "Mob");
+
         /// <summary>
-        /// 获取怪物的动作列表 — 从含动作元数据的 Mob/{id}.img 枚举动作节点
+        /// 获取动作列表 — 支持 Mob/NPC 类型，从含动作元数据的 {type}/{id}.img 枚举动作节点
         /// </summary>
-        public List<string> GetActionList(int mobId)
+        public List<string> GetActionList(int id, string type = "Mob")
         {
             var result = new List<string>();
             try
             {
                 if (!_wzLoaded || _wzs?.WzNode == null) return result;
 
-                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"Mob/{mobId:D7}.img".Split('/'));
+                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{id:D7}.img".Split('/'));
                 if (imgNode == null) return result;
                 var img = imgNode.GetValue<Wz_Image>();
                 if (img == null || !img.TryExtract()) return result;
@@ -410,10 +414,13 @@ namespace MiniPet.Services
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] GetActionList({mobId}): {ex.Message}");
+                Console.Error.WriteLine($"[WzService] GetActionList({id}/{type}): {ex.Message}");
             }
             return result;
         }
+
+        // 保留旧签名兼容
+        public List<string> GetActionList(int mobId) => GetActionList(mobId, "Mob");
 
         public Dictionary<string, List<string>> AutoDiscoverMappings(int mobId)
         {

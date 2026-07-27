@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 using MiniPet.Models;
+using SkiaSharp;
 
 namespace MiniPet.Services;
 
@@ -179,63 +179,63 @@ public class MapService
         return $"Map/Map/Map{firstDigit}/{mapId}.img";
     }
 
-    public Bitmap? CompositeMapFrame(MapInfo mapInfo, Rectangle viewportRect)
+    public byte[]? CompositeMapFrame(MapInfo mapInfo, int viewX, int viewY, int w, int h)
     {
         if (mapInfo == null) return null;
-        
-        var w = viewportRect.Width;
-        var h = viewportRect.Height;
+
         if (w <= 0 || h <= 0) return null;
-        
-        var result = new Bitmap(w, h);
-        using var g = Graphics.FromImage(result);
-        g.Clear(Color.Transparent);
-        
+
+        using var result = new SKBitmap(w, h);
+        using var canvas = new SKCanvas(result);
+        canvas.Clear(SKColors.Transparent);
+
         // Draw backs (background layers with parallax)
         foreach (var back in mapInfo.Backs.OrderBy(b => b.Front ? 1 : 0))
         {
             // Simple rendering - draw at position with offset
-            var offset = CalculateParallaxOffset(back, new Point(viewportRect.X, viewportRect.Y));
+            var offset = CalculateParallaxOffset(back, viewX, viewY);
             // Back layers are drawn relative to viewport
         }
-        
+
         // Draw layers (0-7)
         for (int i = 0; i < 8; i++)
         {
             var layer = mapInfo.Layers[i];
-            
+
             // Draw tiles first (bottom)
             foreach (var tile in layer.Tiles)
             {
-                var screenX = tile.X - viewportRect.X;
-                var screenY = tile.Y - viewportRect.Y;
+                var screenX = tile.X - viewX;
+                var screenY = tile.Y - viewY;
                 if (screenX >= -100 && screenX < w && screenY >= -100 && screenY < h)
                 {
                     // Draw tile placeholder
-                    g.FillRectangle(Brushes.Green, screenX, screenY, 32, 32);
+                    using var paint = new SKPaint { Color = SKColors.Green };
+                    canvas.DrawRect(screenX, screenY, 32, 32, paint);
                 }
             }
-            
+
             // Draw objs on top
             foreach (var obj in layer.Objs.OrderBy(o => o.Z))
             {
-                var screenX = obj.X - viewportRect.X;
-                var screenY = obj.Y - viewportRect.Y;
+                var screenX = obj.X - viewX;
+                var screenY = obj.Y - viewY;
                 if (screenX >= -100 && screenX < w && screenY >= -100 && screenY < h)
                 {
-                    g.FillRectangle(Brushes.Brown, screenX, screenY, 16, 16);
+                    using var paint = new SKPaint { Color = SKColors.Brown };
+                    canvas.DrawRect(screenX, screenY, 16, 16, paint);
                 }
             }
         }
-        
-        return result;
+
+        return SKImage.FromBitmap(result).Encode(SKEncodedImageFormat.Png, 100).ToArray();
     }
 
-    public Point CalculateParallaxOffset(MapBack back, Point cameraPos)
+    public (int x, int y) CalculateParallaxOffset(MapBack back, int cameraX, int cameraY)
     {
-        return new Point(
-            cameraPos.X * back.Cx * (100 + back.Rx) / 10000,
-            cameraPos.Y * back.Cy * (100 + back.Ry) / 10000
+        return (
+            cameraX * back.Cx * (100 + back.Rx) / 10000,
+            cameraY * back.Cy * (100 + back.Ry) / 10000
         );
     }
 
