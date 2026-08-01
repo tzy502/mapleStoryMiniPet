@@ -195,6 +195,7 @@ public class MapService
                 tiles.Add(new MapTile
                 {
                     Id = i, X = x, Y = y,
+                    Z = _wz.GetIntProperty($"{tilePath}/z"),
                     Resource = new Sprite { ResourceUrl = $"Map/Tile/{tS}.img/{u}/{no}" }
                 });
             }
@@ -693,22 +694,28 @@ public class MapService
                         }
                     }
 
-                    // 2. 8 层 obj + tile：obj 按 Z 升序 thenBy Id，tile 覆盖 obj（对齐 renderMapLayers）
+                    // 2. 8 层 obj + tile：同层混合按 (Z0,Z1) 升序排序（对齐 R2 容器内排序）。
+                    //    obj.Z0 = obj.Z(WZ z 字段)，tile.Z0 = tile.Z(WZ tile z 字段，缺失=0)；同 z 按 Id。
+                    //    修正层级 bug：原"obj 全画完再 tile"导致地面(tile)盖建筑(obj)；混合排序后 z 小先画被盖，建筑在上。
                     for (int i = 0; i < 8; i++)
                     {
                         var layer = map.Layers[i];
+                        var items = new List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile)>();
                         if (MapShowObj)
-                        {
-                            foreach (var obj in layer.Objs.OrderBy(o => o.Z).ThenBy(o => o.Id))
-                            {
-                                if (obj.Resource.Frames.Count == 0) continue;
-                                DrawWorldSprite(canvas, obj.Resource.Frames[0].ResourceUrl, obj.X, obj.Y, obj.FlipX, camCenterX, camCenterY, zoom, halfW, halfH, 255);
-                            }
-                        }
+                            foreach (var o in layer.Objs) items.Add((o.Z, o.Id, true, o, null));
                         if (MapShowTile)
+                            foreach (var t in layer.Tiles) items.Add((t.Z, t.Id, false, null, t));
+                        foreach (var it in items.OrderBy(d => d.Z0).ThenBy(d => d.Z1))
                         {
-                            foreach (var tile in layer.Tiles)
-                                DrawWorldSprite(canvas, tile.Resource.ResourceUrl, tile.X, tile.Y, false, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                            if (it.IsObj)
+                            {
+                                if (it.Obj!.Resource.Frames.Count == 0) continue;
+                                DrawWorldSprite(canvas, it.Obj.Resource.Frames[0].ResourceUrl, it.Obj.X, it.Obj.Y, it.Obj.FlipX, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                            }
+                            else
+                            {
+                                DrawWorldSprite(canvas, it.Tile!.Resource.ResourceUrl, it.Tile.X, it.Tile.Y, false, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                            }
                         }
                     }
 

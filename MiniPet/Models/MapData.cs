@@ -49,6 +49,7 @@ namespace MiniPet.Models
         public int Id { get; set; }
         public int X { get; set; }
         public int Y { get; set; }
+        public int Z { get; set; }
         public Sprite Resource { get; set; } = new Sprite();
     }
 
