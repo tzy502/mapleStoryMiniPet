@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
@@ -105,11 +106,21 @@ public class MapViewportWindow : Window
 
     private void OnTimerTick(object? sender, EventArgs e)
     {
+        // timer 仅推进 viewTimeMs（back 自动滚动动画）；拖动跟手由 PointerMoved → KickRender 即时触发。
+        _viewTimeMs += 33;
+        KickRender();
+    }
+
+    /// <summary>
+    /// 即时触发一帧渲染（_rendering CAS 防堆积：上一帧在途则本次跳过，等下一事件再试）。
+    /// 拖动 PointerMoved 每次调用 → 拖完一帧立刻渲下一帧（不等 33ms tick）；timer tick 也调（推 viewTime）。
+    /// 跳过 PNG 编码/解码：RenderViewport 输出 BGRA8888/Premul SKBitmap → WriteableBitmap 直拷像素（省 ~20-40ms/帧）。
+    /// </summary>
+    private void KickRender()
+    {
         if (!IsVisible || _map == null || _mapService == null) return;
-        // 上一帧还在渲染则跳过本帧（防 CPU 堆积；下一 tick 再试）
         if (Interlocked.CompareExchange(ref _rendering, 1, 0) != 0) return;
 
-        _viewTimeMs += 33;
         // clamp camX/camY 到地图边界（AdjustToWorldRect）
         var (cx, cy) = MapService.ClampCamera(_map, _camX, _camY, _zoom, (int)Width, (int)Height);
         _camX = cx; _camY = cy;
@@ -127,13 +138,33 @@ public class MapViewportWindow : Window
             {
                 bmp = svc.RenderViewport(map, cx, cy, zoom, vt, sw, sh);
                 if (bmp == null) return;
-                using var img = SKImage.FromBitmap(bmp);
-                var png = img.Encode(SKEncodedImageFormat.Png, 100).ToArray();
+                // SKBitmap(BGRA8888 Premul) → WriteableBitmap 直拷，跳过 PNG 编码 + Bitmap 解码往返。
+                var wb = new WriteableBitmap(new PixelSize(bmp.Width, bmp.Height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+                using (var fb = wb.Lock())
+                {
+                    int srcRow = bmp.RowBytes, dstRow = fb.RowBytes;
+                    int copyRow = Math.Min(srcRow, dstRow);
+                    unsafe
+                    {
+                        byte* src = (byte*)bmp.GetPixels();
+                        byte* dst = (byte*)fb.Address;
+                        if (srcRow == dstRow)
+                        {
+                            // stride 相等（BGRA8888 两端均 w*4）：整块拷贝
+                            long total = (long)srcRow * bmp.Height;
+                            Buffer.MemoryCopy(src, dst, total, total);
+                        }
+                        else
+                        {
+                            for (int y = 0; y < bmp.Height; y++)
+                                Buffer.MemoryCopy(src + y * srcRow, dst + y * dstRow, copyRow, copyRow);
+                        }
+                    }
+                }
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (gen != _renderGen) return; // 切换/Stop 后丢弃
-                    using var ms = new MemoryStream(png);
-                    _image.Source = new Bitmap(ms);
+                    _image.Source = wb;
                 });
             }
             catch (Exception ex) { Console.Error.WriteLine($"[MapViewportWindow] Render: {ex.Message}"); }
@@ -171,6 +202,8 @@ public class MapViewportWindow : Window
         // 屏幕像素差 → 世界坐标差：camX -= dx/zoom（拖动方向与相机移动方向相反：右拖→相机左移）
         _camX = _dragStartCamX - dx / _zoom;
         _camY = _dragStartCamY - dy / _zoom;
+        // 即时触发渲染（不等 33ms tick）：拖动跟手，_rendering CAS 防堆积（在途则跳过，下一事件再试）。
+        KickRender();
     }
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)

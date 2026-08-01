@@ -430,8 +430,11 @@ public class MapService
         { "sp", "pi", "pv", "pc", "pg", "tp", "ps", "pgi", "psi", "pcs", "ph", "psh", "pcj", "pci", "pci2", "pcig", "pshg", "pcc", "pcir" };
 
     /// <summary>
-    /// 取 portal game 动画帧 0。type 7 复用 pv（对齐 WzComparerR2）；image=0 → "default"。
-    /// game 动画优先 0 帧，状态机（portalStart/portalContinue）次之，最后 editor 占位回退。
+    /// 取 portal game 动画可见帧 — 逐行对齐 R2 MapData.PreloadResource(MapData.cs:787-847) + GetMeshPortal(FrmMapRender2.SceneRendering.cs:964-977)。
+    /// R2 game 模式(IsEditorMode=false 默认)：精确单路径 game/{PortalTypes[pt]}/{imgName}，animator==null 则 GetMeshPortal 返回 null，portal 不画。
+    /// **无 editor 占位回退** — editor/ 资源仅 R2 编辑模式(Ctrl+8)使用；game 模式下回退会画出 R2 不渲染的「多余传送门」(粉色图钉)。
+    /// type 7(pgi) 复用 PortalTypes[2]=pv（R2 switch 一致）；image=0 → "default"，否则 image.ToString()。
+    /// 帧选择：帧动画→0 帧；状态机(portalStart/portalContinue/portalExit)→portalContinue/0(正常可见光圈)，次选 portalStart/0。
     /// Map/MapHelper.img 是独立 img，必须先 TryExtract 才能遍历子树。
     /// </summary>
     private string? PickPortalFrameUrl(int pt, int image)
@@ -439,27 +442,15 @@ public class MapService
         try
         {
             string typeName = (pt >= 0 && pt < PortalTypes.Length) ? PortalTypes[pt] : PortalTypes[0];
-            if (pt == 7) typeName = PortalTypes[2]; // pv
+            if (pt == 7) typeName = PortalTypes[2]; // pgi(7) → pv（R2 MapData.cs:808-812）
+            string imgName = image == 0 ? "default" : image.ToString(); // R2 MapData.cs:814-820
             var helper = GetExtractedImgNode("Map/MapHelper.img");
             if (helper == null) return null;
-            // type 候选：映射值 → 回退 pv（本 WZ game/ 仅 pv/ph/psh/ps，pi/psi 等缺资源）
-            // imgName 候选：image==0→default/0/1；否则 image/default
-            var typeNames = new[] { typeName, "pv" };
-            var imgNames = image == 0 ? new[] { "default", "0", "1" } : new[] { image.ToString(), "default" };
-            foreach (var tn in typeNames)
-            {
-                foreach (var im in imgNames)
-                {
-                    var dir = helper.FindNodeByPath(true, "portal", "game", tn, im);
-                    if (dir == null) continue;
-                    if (dir.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{tn}/{im}/0";
-                    if (dir.FindNodeByPath("portalContinue")?.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{tn}/{im}/portalContinue/0";
-                    if (dir.FindNodeByPath("portalStart")?.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{tn}/{im}/portalStart/0";
-                }
-            }
-            // editor 回退（始终可见，仅静态渲染占位）
-            var ed = helper.FindNodeByPath(true, "portal", "editor", typeName);
-            if (ed?.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/editor/{typeName}/0";
+            var dir = helper.FindNodeByPath(true, "portal", "game", typeName, imgName);
+            if (dir == null) return null; // R2 game 模式：资源不存在 → animator=null → portal 不画（不回退 editor）
+            if (dir.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{typeName}/{imgName}/0";
+            if (dir.FindNodeByPath("portalContinue")?.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{typeName}/{imgName}/portalContinue/0";
+            if (dir.FindNodeByPath("portalStart")?.FindNodeByPath("0") != null) return $"Map/MapHelper.img/portal/game/{typeName}/{imgName}/portalStart/0";
             return null;
         }
         catch (Exception ex) { Console.Error.WriteLine($"[MapService] PickPortalFrameUrl({pt}/{image}): {ex.Message}"); return null; }
@@ -491,8 +482,12 @@ public class MapService
     }
 
     /// <summary>
-    /// 渲染整张地图（相机=地图中心）并按 mapId 缓存（ADR-0004）。桌面 crop 与设置预览共用此整图。
-    /// 全程在 WzService 锁内（ExtractPng/GetOrigin 不自锁；锁串行化 → 缓存单写者，无 disposal 竞态）。
+    /// 渲染整张地图（模式1 静态 = 摄像机第0帧）并按 mapId 缓存（ADR-0004）。桌面 crop 与设置预览共用此整图。
+    /// 全程在 WzService 锁内（WithWzLock 用 lock() 可重入 → 嵌套 RenderViewport 安全）。
+    /// 模式1 不再用旧 RenderCore/DrawBack（back 视差 centerX 写死地图中心 + portal 顺序错），改为
+    /// RenderViewport(map, camCenter=GetMapCenter, zoom=1, viewTimeMs=0) 的快照，与模式2 同一套 R2 渲染算法。
+    /// 坐标空间：screenPx = world − MinX（camCenter=mapCenter, screenW=worldW 时 screen=(world-camCenter)+worldW/2=world-MinX），
+    /// 与旧 RenderCore 一致 → CropFull 裁紧/EffectiveCrop 落地对齐逻辑不变。
     /// 返回缓存的 SKBitmap（调用方只读；需独立副本请用 CropFull 深拷贝）。
     /// </summary>
     private SKBitmap? RenderMapFull(MapInfo mapInfo)
@@ -504,102 +499,14 @@ public class MapService
             int worldH = mapInfo.MaxY - mapInfo.MinY;
             if (worldW <= 0 || worldH <= 0) return null;
             if (_fullRender != null && _fullRenderMapId == mapInfo.Id) return _fullRender;
-            var bmp = RenderCore(mapInfo, worldW, worldH);
+            var (ccx, ccy) = GetMapCenter(mapInfo);
+            var bmp = RenderViewport(mapInfo, ccx, ccy, 1f, 0, worldW, worldH);
             if (bmp == null) return null;
             _fullRender?.Dispose();
             _fullRender = bmp;
             _fullRenderMapId = mapInfo.Id;
-            try { using var _i = SKImage.FromBitmap(_fullRender); System.IO.File.WriteAllBytes("/tmp/map_full.png", _i.Encode(SKEncodedImageFormat.Png, 100).ToArray()); } catch { }
             return _fullRender;
         });
-    }
-
-    /// <summary>整图渲染核心：worldW×worldH，相机中心=地图中心（cx=MinX+worldW/2），画布左上=(MinX,MinY)。</summary>
-    private SKBitmap? RenderCore(MapInfo mapInfo, int w, int h)
-    {
-        try
-        {
-            int originWorldX = mapInfo.MinX;
-            int originWorldY = mapInfo.MinY;
-            int centerX = mapInfo.MinX + w / 2;
-            int centerY = mapInfo.MinY + h / 2;
-
-            var result = new SKBitmap(w, h);
-            using (var canvas = new SKCanvas(result))
-            {
-                canvas.Clear(SKColors.Transparent);
-
-                // 1. 后景 back（Front=false），跳过 spine
-                if (MapShowBack)
-                {
-                    foreach (var back in mapInfo.Backs.Where(b => !b.Front && b.Ani != 2))
-                        DrawBack(canvas, back, centerX, centerY, originWorldX, originWorldY, w, h);
-                }
-
-                // 2. 8 层 obj + tile（对齐 reader drLayers/renderMapLayers：先 obj 按 z 排序，后 tile，tile 覆盖 obj）
-                for (int i = 0; i < 8; i++)
-                {
-                    var layer = mapInfo.Layers[i];
-                    if (MapShowObj)
-                    {
-                        foreach (var obj in layer.Objs.OrderBy(o => o.Z).ThenBy(o => o.Id))
-                        {
-                            if (obj.Resource.Frames.Count == 0) continue;
-                            DrawSprite(canvas, obj.Resource.Frames[0].ResourceUrl, obj.X - originWorldX, obj.Y - originWorldY, obj.FlipX, 255);
-                        }
-                    }
-                    if (MapShowTile)
-                    {
-                        foreach (var tile in layer.Tiles)
-                            DrawSprite(canvas, tile.Resource.ResourceUrl, tile.X - originWorldX, tile.Y - originWorldY, false, 255);
-                    }
-                }
-
-                // 3. life（NPC/Mob）— 对齐 Java handler drLife：层后绘制；定位 (X, Cy)（Cy 缺失回退 Y）。
-                if (MapShowLife)
-                {
-                    foreach (var life in mapInfo.Lifes)
-                    {
-                        if (life.Hide || string.IsNullOrEmpty(life.Resource.ResourceUrl)) continue;
-                        int ly = life.Cy != 0 ? life.Cy : life.Y;
-                        if (life.Id < 3)
-                        {
-                            var _p = _wz.ExtractPng(life.Resource.ResourceUrl);
-                            using var _b = _p != null ? SKBitmap.Decode(_p) : null;
-                            Console.WriteLine($"[Life DRAW] id={life.Id} sx={life.X - originWorldX} sy={ly - originWorldY} bmp={_b?.Width}x{_b?.Height} flip={life.Flip}");
-                        }
-                        DrawSprite(canvas, life.Resource.ResourceUrl, life.X - originWorldX, ly - originWorldY, life.Flip, 255);
-                    }
-                }
-
-                // 4. 前景 back（Front=true）
-                if (MapShowBack)
-                {
-                    foreach (var back in mapInfo.Backs.Where(b => b.Front && b.Ani != 2))
-                        DrawBack(canvas, back, centerX, centerY, originWorldX, originWorldY, w, h);
-                }
-
-                // 5. portal — 对齐 Java handler drPortals：front back 之后绘制；定位 (X, Y)，无 flip。
-                if (MapShowPortal)
-                {
-                    foreach (var portal in mapInfo.Portals)
-                    {
-                        if (string.IsNullOrEmpty(portal.Resource.ResourceUrl)) continue;
-                        DrawSprite(canvas, portal.Resource.ResourceUrl, portal.X - originWorldX, portal.Y - originWorldY, false, 255);
-                    }
-                }
-
-                // 6. foothold 调试覆盖（默认关）：红色线段，对齐 Java handler drFootholds。
-                if (MapShowFoothold)
-                {
-                    using var fhPaint = new SKPaint { Color = new SKColor(255, 0, 0, 180), IsAntialias = false, StrokeWidth = 2 };
-                    foreach (var fh in mapInfo.Footholds)
-                        canvas.DrawLine(fh.X1 - originWorldX, fh.Y1 - originWorldY, fh.X2 - originWorldX, fh.Y2 - originWorldY, fhPaint);
-                }
-            }
-            return result;
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[MapService] RenderCore: {ex.Message}"); return null; }
     }
 
     /// <summary>
@@ -732,102 +639,6 @@ public class MapService
         });
     }
 
-    private void DrawSprite(SKCanvas canvas, string wzPath, int screenX, int screenY, bool flipX, int alpha)
-    {
-        try
-        {
-            var png = _wz.ExtractPng(wzPath);
-            if (png == null || png.Length == 0) return;
-            using var bmp = SKBitmap.Decode(png);
-            if (bmp == null) return;
-            var (ox, oy) = _wz.GetOrigin(wzPath);
-            float dx = screenX - ox, dy = screenY - oy;
-            using var paint = new SKPaint { IsAntialias = false, FilterQuality = SKFilterQuality.None };
-            if (alpha < 255) paint.Color = new SKColor(255, 255, 255, (byte)alpha);
-            if (flipX)
-            {
-                // 绕放置点 (screenX,screenY) 镜像（对齐 reader dr()：translate→scale(-1,1)→draw(-ox,-oy)）
-                canvas.Save();
-                canvas.Translate(screenX, screenY);
-                canvas.Scale(-1, 1);
-                canvas.DrawBitmap(bmp, -ox, -oy, paint);
-                canvas.Restore();
-            }
-            else canvas.DrawBitmap(bmp, dx, dy, paint);
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[MapService] DrawSprite({wzPath}): {ex.Message}"); }
-    }
-
-    /// <summary>
-    /// 绘制背景（逐行对齐 maplestory-wiki-backend MapRenderHandler.drawBacks）：
-    /// 视差 px = back.X + cx*(rx+100)/100（cx=地图中心；仅当非 ScrollHorizontal 即 (tm&amp;4)==0）；
-    /// 画布坐标 bx = floor(px) - originWorldX；绘制减 origin（F6）；flip 绕放置点 bx（N2）。
-    /// type 经 GetBackTileMode 重映射；tm bit0/1 水平/垂直平铺；screenMode!=0 跳过（F7）。
-    /// </summary>
-    private void DrawBack(SKCanvas canvas, MapBack back, int centerX, int centerY, int originWorldX, int originWorldY, int w, int h)
-    {
-        try
-        {
-            if (back.ScreenMode != 0) return;
-            var png = _wz.ExtractPng(back.Resource.ResourceUrl);
-            if (png == null || png.Length == 0) return;
-            using var bmp = SKBitmap.Decode(png);
-            if (bmp == null) return;
-            var (ox, oy) = _wz.GetOrigin(back.Resource.ResourceUrl);
-
-            int tm = GetBackTileMode(back.Type);
-            float px = back.X;
-            if ((tm & 4) == 0) px += centerX * (back.Rx + 100) / 100f;
-            float py = back.Y;
-            if ((tm & 8) == 0) py += centerY * (back.Ry + 100) / 100f;
-            int bx = (int)Math.Floor(px) - originWorldX;
-            int by = (int)Math.Floor(py) - originWorldY;
-
-            int alpha = back.Alpha > 0 ? back.Alpha : 255;
-            using var paint = new SKPaint { IsAntialias = false, FilterQuality = SKFilterQuality.None };
-            if (alpha < 255) paint.Color = new SKColor(255, 255, 255, (byte)alpha);
-
-            int tw = back.Cx > 0 ? back.Cx : bmp.Width;
-            int th = back.Cy > 0 ? back.Cy : bmp.Height;
-            int tileW = (tm & 1) != 0 ? tw : 0;
-            int tileH = (tm & 2) != 0 ? th : 0;
-
-            if (tileW == 0 && tileH == 0)
-            {
-                DrawBackOnce(canvas, bmp, bx, by, ox, oy, back.FlipX, paint);
-                return;
-            }
-            DrTiled(canvas, bmp, bx, by, tileW, tileH, w, h, ox, oy, back.FlipX, paint);
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[MapService] DrawBack: {ex.Message}"); }
-    }
-
-    /// <summary>平铺覆盖画布：对齐后端 drTiled，l/r/t/b 用 floor/ceil ±1 padding。</summary>
-    private void DrTiled(SKCanvas canvas, SKBitmap bmp, int bx, int by, int tw, int th, int w, int h, int ox, int oy, bool flipX, SKPaint paint)
-    {
-        int l = tw > 0 ? (int)Math.Floor((0d - bx) / tw) - 1 : 0;
-        int r = tw > 0 ? (int)Math.Ceiling((w - bx) / (double)tw) + 1 : 1;
-        int t = th > 0 ? (int)Math.Floor((0d - by) / th) - 1 : 0;
-        int b = th > 0 ? (int)Math.Ceiling((h - by) / (double)th) + 1 : 1;
-        for (int iy = t; iy < b; iy++)
-            for (int ix = l; ix < r; ix++)
-                DrawBackOnce(canvas, bmp, bx + ix * tw, by + iy * th, ox, oy, flipX, paint);
-    }
-
-    /// <summary>单次绘制 back：非 flip 画在 (x-ox, y-oy)；flip 绕放置点 (x,y) 镜像（N2，对齐 Java dr）。</summary>
-    private static void DrawBackOnce(SKCanvas canvas, SKBitmap bmp, int x, int y, int ox, int oy, bool flipX, SKPaint paint)
-    {
-        if (flipX)
-        {
-            canvas.Save();
-            canvas.Translate(x, y);
-            canvas.Scale(-1, 1);
-            canvas.DrawBitmap(bmp, -ox, -oy, paint);
-            canvas.Restore();
-        }
-        else canvas.DrawBitmap(bmp, x - ox, y - oy, paint);
-    }
-
     /// <summary>对齐 R2 FrmMapRender.GetBackTileMode：WZ type 0-7 → TileMode 位（bit0=H,bit1=V,bit2=ScrollH 无水平视差,bit3=ScrollV）。</summary>
     private static int GetBackTileMode(int type) => type switch
     {
@@ -843,11 +654,11 @@ public class MapService
     };
 
     // ════════════════════════════════════════════════════════════════════════
-    // 模式2 摄像机渲染（RenderViewport）
+    // 摄像机渲染（RenderViewport）— 模式1 与模式2 共用同一套 R2 算法
     // 算法 1:1 对齐 WzComparerR2.MapRender（MonoGame → SkiaSharp 移植）：
     //   相机：Origin = camCenter − screen/(2*zoom)；world→screen = (world−camCenter)*zoom + screen/2
-    //   back 视差基于 camCenter（非 Origin），带符号 rx；portal 在 front-back 之前；Z 排序 (Z0,Z1) 升序。
-    // 模式1 静态整图（RenderMapFull/RenderCore/CropFull/DrawBack/DrawSprite）保留不动。
+    //   back 视差基于 camCenter（非 Origin），带符号 rx，整体 position 取 floor；portal 在 front-back 之前。
+    // 模式1 静态 = RenderViewport(map, GetMapCenter, zoom=1, viewTimeMs=0) 的快照（RenderMapFull 调用）。
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -864,7 +675,9 @@ public class MapService
         {
             try
             {
-                var result = new SKBitmap(screenW, screenH);
+                // 固定 BGRA8888/Premul：与 Avalonia WriteableBitmap(PixelFormat.Bgra8888, AlphaFormat.Premul) 一致，
+                // 模式2 可 SKBitmap→WriteableBitmap 直拷像素（跳过 PNG 编码/解码，拖动跟手）。
+                var result = new SKBitmap(screenW, screenH, SKColorType.Bgra8888, SKAlphaType.Premul);
                 using (var canvas = new SKCanvas(result))
                 {
                     canvas.Clear(SKColors.Transparent);
@@ -981,13 +794,16 @@ public class MapService
         int cx = back.Cx > 0 ? back.Cx : bmp.Width;
         int cy = back.Cy > 0 ? back.Cy : bmp.Height;
 
-        // 视差偏移（world space）
+        // 视差偏移（world space）— 逐行对齐 R2 GetMeshBack(FrmMapRender2.SceneRendering.cs:830-859)
         float worldX = back.X;
         if ((tm & 4) != 0) { if (cx > 0) worldX += (back.Rx * 5f * viewTimeMs / 1000f) % cx; }
-        else worldX += (float)Math.Floor(camCenterX * (100 + back.Rx) / 100f);
+        else worldX += camCenterX * (100 + back.Rx) / 100f;
         float worldY = back.Y;
         if ((tm & 8) != 0) { if (cy > 0) worldY += (back.Ry * 5f * viewTimeMs / 1000f) % cy; }
-        else worldY += (float)Math.Floor(camCenterY * (100 + back.Ry) / 100f);
+        else worldY += camCenterY * (100 + back.Ry) / 100f;
+        // R2: 对整体 position 取整（position.X = floor(position.X)），非对视差偏移单独取整。
+        worldX = (float)Math.Floor(worldX);
+        worldY = (float)Math.Floor(worldY);
 
         // world → screen
         float baseX = (worldX - camCenterX) * zoom + screenW / 2f;
