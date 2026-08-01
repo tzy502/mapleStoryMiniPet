@@ -32,7 +32,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 检查精灵图是否已缓存
         /// </summary>
-        public bool IsSpriteCached(int mobId, string action)
+        public bool IsSpriteCached(string mobId, string action)
         {
             var pngPath = GetSpritePath(mobId, action, "png");
             var configPath = GetSpritePath(mobId, action, "json");
@@ -40,9 +40,26 @@ namespace MiniPet.Services
         }
 
         /// <summary>
+        /// 枚举某 mob 在磁盘缓存中的动作列表（*.json 文件名）
+        /// </summary>
+        public List<string> GetCachedActions(string mobId)
+        {
+            var result = new List<string>();
+            try
+            {
+                var dir = Path.Combine(_cacheDir, "sprites", mobId);
+                if (!Directory.Exists(dir)) return result;
+                foreach (var f in Directory.GetFiles(dir, "*.json"))
+                    result.Add(Path.GetFileNameWithoutExtension(f));
+            }
+            catch (IOException) { }
+            return result;
+        }
+
+        /// <summary>
         /// 保存精灵图条
         /// </summary>
-        public void SaveSpriteStrip(int mobId, string action, byte[] pngData, byte[] configData)
+        public void SaveSpriteStrip(string mobId, string action, byte[] pngData, byte[] configData)
         {
             lock (_lock)
             {
@@ -72,9 +89,33 @@ namespace MiniPet.Services
         }
 
         /// <summary>
+        /// 删除精灵图条缓存（png + json + 内存）
+        /// </summary>
+        public void DeleteSpriteStrip(string mobId, string action)
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    var pngPath = GetSpritePath(mobId, action, "png");
+                    var configPath = GetSpritePath(mobId, action, "json");
+                    if (File.Exists(pngPath)) File.Delete(pngPath);
+                    if (File.Exists(configPath)) File.Delete(configPath);
+                    var key = $"sprite_{mobId}_{action}";
+                    if (_memoryCache.TryGetValue(key, out var oldPng))
+                    {
+                        _memoryCache.Remove(key);
+                        _memoryCacheSize -= oldPng.Length;
+                    }
+                }
+                catch (IOException) { }
+            }
+        }
+
+        /// <summary>
         /// 加载精灵图条
         /// </summary>
-        public (byte[] pngData, byte[] configData)? LoadSpriteStrip(int mobId, string action)
+        public (byte[] pngData, byte[] configData)? LoadSpriteStrip(string mobId, string action)
         {
             lock (_lock)
             {
@@ -127,7 +168,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 检查气泡是否已缓存
         /// </summary>
-        public bool IsBalloonCached(int balloonId)
+        public bool IsBalloonCached(string balloonId)
         {
             var dir = GetBalloonPath(balloonId);
             if (!Directory.Exists(dir)) return false;
@@ -145,7 +186,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 保存气泡瓦片
         /// </summary>
-        public void SaveBalloonTiles(int balloonId, BalloonTiles tiles)
+        public void SaveBalloonTiles(string balloonId, BalloonTiles tiles)
         {
             lock (_lock)
             {
@@ -190,7 +231,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 加载气泡瓦片
         /// </summary>
-        public BalloonTiles? LoadBalloonTiles(int balloonId)
+        public BalloonTiles? LoadBalloonTiles(string balloonId)
         {
             lock (_lock)
             {
@@ -288,14 +329,14 @@ namespace MiniPet.Services
             }
         }
 
-        private string GetSpritePath(int mobId, string action, string extension)
+        private string GetSpritePath(string mobId, string action, string extension)
         {
-            return Path.Combine(_cacheDir, "sprites", mobId.ToString(), $"{action}.{extension}");
+            return Path.Combine(_cacheDir, "sprites", mobId, $"{action}.{extension}");
         }
 
-        private string GetBalloonPath(int balloonId)
+        private string GetBalloonPath(string balloonId)
         {
-            return Path.Combine(_cacheDir, "balloons", balloonId.ToString());
+            return Path.Combine(_cacheDir, "balloons", balloonId);
         }
 
         private void AddToMemoryCache(string key, byte[] data)

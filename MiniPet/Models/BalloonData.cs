@@ -23,7 +23,7 @@ namespace MiniPet.Models
     /// </summary>
     public class BalloonData
     {
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public BalloonTiles Tiles { get; set; } = new BalloonTiles();
         public int Clr { get; set; }

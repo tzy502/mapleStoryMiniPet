@@ -34,7 +34,7 @@ namespace MiniPet.Services
         private readonly Dictionary<string, AnimationDef> _animDefs;
         private readonly Dictionary<string, string> _fallbacks;
 
-        private int _currentMobId;
+        private string _currentMobId = string.Empty;
         private string _currentAction = "stand";
         private string _pendingAction = string.Empty;
         private int _currentFrameIndex;
@@ -178,12 +178,13 @@ namespace MiniPet.Services
                 }
             }
 
-            // 帧切换
-            var frameDelay = GetFrameDelay(strip, _currentFrameIndex);
-            if (_accumulatedDelay >= frameDelay)
+            // 帧切换 —— 一次性追帧（多帧/短延迟动画不再因每 tick 只进一帧而慢放/卡顿）
+            int advances = 0;
+            while (_accumulatedDelay >= GetFrameDelay(strip, _currentFrameIndex) && advances < 8)
             {
-                _accumulatedDelay -= frameDelay;
+                _accumulatedDelay -= GetFrameDelay(strip, _currentFrameIndex);
                 _currentFrameIndex++;
+                advances++;
 
                 // 是否播完
                 if (_currentFrameIndex >= strip.FrameCount)
@@ -195,7 +196,6 @@ namespace MiniPet.Services
                         _onComplete = null;
                         onComplete?.Invoke();
 
-                        // 切回 pending 动作或 stand
                         var nextAction = !string.IsNullOrEmpty(_pendingAction)
                             ? _pendingAction
                             : "stand";
@@ -207,13 +207,15 @@ namespace MiniPet.Services
                     // Loop 模式回到开头
                     _currentFrameIndex = 0;
                 }
+            }
 
+            if (advances > 0)
+            {
                 _currentStrip = _spriteService.GetCachedStrip(_currentMobId, _currentAction);
                 if (_currentStrip is (null, _))
                 {
                     _currentStrip = LoadStripWithFallback(_currentAction);
                 }
-
                 EmitEvent(AnimEventType.FrameChanged, _currentAction);
             }
 
@@ -301,18 +303,22 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 获取随机空闲动作
+        /// 获取随机空闲动作：从 mob 真实可用动作中选，排除 move/fly/die*/hit*，优先 skill*/attack*。
         /// </summary>
         public string? GetRandomAction()
         {
-            var available = _animDefs.Keys
+            var all = _spriteService.GetAvailableActions(_currentMobId)
                 .Where(a => a != _currentAction
                     && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
                     && !a.StartsWith("hit", StringComparison.OrdinalIgnoreCase)
-                    && HasSpriteForAction(a))
-                .ToArray();
-            if (available.Length == 0) return null;
-            return available[Random.Shared.Next(available.Length)];
+                    && !a.Equals("move", StringComparison.OrdinalIgnoreCase)
+                    && !a.Equals("fly", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (all.Count == 0) return null;
+            var preferred = all.Where(a => a.StartsWith("skill", StringComparison.OrdinalIgnoreCase)
+                                        || a.StartsWith("attack", StringComparison.OrdinalIgnoreCase)).ToList();
+            var pool = preferred.Count > 0 ? preferred : all;
+            return pool[Random.Shared.Next(pool.Count)];
         }
 
         /// <summary>
@@ -338,11 +344,11 @@ namespace MiniPet.Services
         /// <summary>
         /// 设置当前 mob ID（内部使用）
         /// </summary>
-        public int GetCurrentMobId() => _currentMobId;
+        public string GetCurrentMobId() => _currentMobId;
 
-        public void SetCurrentMobId(int mobId)
+        public void SetCurrentMobId(string mobId)
         {
-            _currentMobId = mobId;
+            _currentMobId = mobId ?? string.Empty;
         }
 
         /// <summary>

@@ -23,7 +23,7 @@ public partial class SpriteCanvas : UserControl
     /// <summary>
     /// 设置当前帧，图片放在 (0,0) 不偏移，容器大小 = 精灵图实际像素
     /// </summary>
-    public void SetFrame(byte[] pngData, int originX = 0, int originY = 0)
+    public void SetFrame(byte[] pngData, int originX = 0, int originY = 0, double scale = 1.0)
     {
         if (pngData == null || pngData.Length == 0)
         {
@@ -39,13 +39,16 @@ public partial class SpriteCanvas : UserControl
         _originX = originX;
         _originY = originY;
 
-        // 容器大小 = 精灵图实际像素，不过度撑大
-        this.Width = size.Width;
-        this.Height = size.Height;
-        RootCanvas.Width = size.Width;
-        RootCanvas.Height = size.Height;
-        SpriteImage.Width = size.Width;
-        SpriteImage.Height = size.Height;
+        // 缩放：容器与图片尺寸 = 实际像素 × scale（Image 默认 Stretch=Uniform，设宽高后等比填满，不变形）
+        double s = scale > 0 ? scale : 1.0;
+        double w = size.Width * s;
+        double h = size.Height * s;
+        this.Width = w;
+        this.Height = h;
+        RootCanvas.Width = w;
+        RootCanvas.Height = h;
+        SpriteImage.Width = w;
+        SpriteImage.Height = h;
         SpriteImage.Source = _currentBitmap;
         // 图片放在 (0,0)，不偏移
         Canvas.SetLeft(SpriteImage, 0);

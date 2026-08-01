@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,27 +14,69 @@ namespace MiniPet.Services
     public class BalloonService
     {
         private readonly CacheManager _cache;
+        private readonly WzService _wz;
         private int _displayDurationMs = 5000;
         private CancellationTokenSource? _hideCts;
+        private readonly HashSet<string> _seeding = new();
 
-        public BalloonService(CacheManager cache)
+        /// <summary>气泡渲染完成回调：(text, data, pngBytes) — 由上层在 UI 线程显示</summary>
+        public event Action<string, BalloonData, byte[]>? OnBalloonReady;
+
+        public BalloonService(CacheManager cache, WzService wz)
         {
             _cache = cache;
+            _wz = wz;
         }
 
         /// <summary>
-        /// 从缓存加载气泡数据
+        /// 从缓存加载气泡数据。缓存未命中时在后台线程种子（提取 9-slice 切片），
+        /// 本次返回 null（不阻塞 UI 线程做 WZ 读取），下一轮命中缓存。
         /// </summary>
-        public BalloonData? LoadBalloon(int balloonId)
+        public BalloonData? LoadBalloon(string balloonId)
         {
-            var tiles = _cache.LoadBalloonTiles(balloonId);
-            if (tiles == null) return null;
-
-            return new BalloonData
+            try
             {
-                Id = balloonId,
-                Tiles = tiles
-            };
+                if (string.IsNullOrEmpty(balloonId)) return null;
+                var tiles = _cache.LoadBalloonTiles(balloonId);
+                if (tiles == null)
+                {
+                    // 后台种子（重 WZ 提取不放在 UI 线程）
+                    SeedInBackground(balloonId);
+                    return null;
+                }
+                return new BalloonData
+                {
+                    Id = balloonId,
+                    Tiles = tiles,
+                    Clr = _wz.GetBalloonClr(balloonId)
+                };
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] LoadBalloon: {ex.Message}"); return null; }
+        }
+
+        private void SeedInBackground(string balloonId)
+        {
+            try
+            {
+                lock (_seeding)
+                {
+                    if (_seeding.Contains(balloonId)) return;
+                    _seeding.Add(balloonId);
+                }
+                if (!_wz.IsLoaded) { lock (_seeding) _seeding.Remove(balloonId); return; }
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        var tiles = _wz.ExtractBalloonTiles(balloonId);
+                        if (tiles != null)
+                            _cache.SaveBalloonTiles(balloonId, tiles);
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Seed: {ex.Message}"); }
+                    finally { lock (_seeding) _seeding.Remove(balloonId); }
+                });
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] SeedInBackground: {ex.Message}"); }
         }
 
         /// <summary>
@@ -104,7 +147,9 @@ namespace MiniPet.Services
 
             // 绘制文字在C区域
             var textRect = new SKRect(cornerW, cornerH, cornerW + contentW, cornerH + contentH);
-            uint color = balloonData.Clr > 0 ? (uint)balloonData.Clr : 0xFFFFFFu;
+            // clr 为有符号 ARGB（常为负数，-1 = 白）；0/未设置时默认白色不透明
+            int clr = balloonData.Clr;
+            uint color = clr != 0 ? (uint)clr : 0xFFFFFFFFu;
             byte a = (byte)((color >> 24) & 0xFF);
             byte r = (byte)((color >> 16) & 0xFF);
             byte g = (byte)((color >> 8) & 0xFF);
@@ -153,25 +198,28 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 显示气泡并自动淡出
+        /// 后台线程合成气泡 PNG，完成后通过 OnBalloonReady 回调（由上层在 UI 线程显示）。
+        /// 自动淡出计时由 BalloonControl 内部负责。
         /// </summary>
         public async Task Show(string text, BalloonData data, int? durationMs = null)
         {
-            // 取消之前的隐藏定时器
             _hideCts?.Cancel();
             _hideCts = new CancellationTokenSource();
-
-            var ms = durationMs ?? _displayDurationMs;
-
+            var token = _hideCts.Token;
             try
             {
-                await Task.Delay(ms, _hideCts.Token);
-                Hide();
+                byte[]? rendered = null;
+                await Task.Run(() =>
+                {
+                    try { rendered = RenderBalloon(text, data); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Render: {ex.Message}"); }
+                }, token);
+
+                if (rendered != null)
+                    OnBalloonReady?.Invoke(text, data, rendered);
             }
-            catch (TaskCanceledException)
-            {
-                // 被新的 Show 取消，忽略
-            }
+            catch (TaskCanceledException) { }
+            catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Show: {ex.Message}"); }
         }
 
         /// <summary>

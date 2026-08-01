@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text.Json;
 using MiniPet.Models;
@@ -19,6 +18,7 @@ namespace MiniPet.Services
         private readonly LinkedList<string> _accessOrder;
         private readonly object _lock = new();
         private const int MaxMobCache = 3;
+        private const char KeySep = '|';
 
         public SpriteService(CacheManager cacheManager)
         {
@@ -30,7 +30,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 从缓存加载精灵图条
         /// </summary>
-        public SpriteStrip? LoadSpriteStrip(int mobId, string action)
+        public SpriteStrip? LoadSpriteStrip(string mobId, string action)
         {
             lock (_lock)
             {
@@ -50,6 +50,14 @@ namespace MiniPet.Services
 
                 if (!config.Sprites.TryGetValue(action, out var strip))
                     return null;
+
+                // 校验：退化空动作（1×1 等无效画面）视为损坏，删除磁盘缓存并返回 null，由 AnimService fallback
+                if (strip.FrameWidth <= 1 || strip.FrameHeight <= 1)
+                {
+                    _cacheManager.DeleteSpriteStrip(mobId, action);
+                    Console.WriteLine($"[SpriteService] LoadSpriteStrip({mobId}/{action}): 空动作，已清理坏缓存");
+                    return null;
+                }
 
                 // 缓存到内存（含预裁剪帧）
                 CacheStrip(mobId, action, strip, pngData);
@@ -84,9 +92,14 @@ namespace MiniPet.Services
         /// <summary>
         /// 缓存精灵图条到内存（含 PNG 数据和预裁剪帧）
         /// </summary>
-        public void CacheStrip(int mobId, string action, SpriteStrip strip, byte[]? pngData)
+        public void CacheStrip(string mobId, string action, SpriteStrip strip, byte[]? pngData)
         {
             if (pngData == null || pngData.Length == 0) return;
+
+            // 重活（整条 PNG 解码 + 逐帧像素裁剪 + 逐帧 PNG 重编码）放在锁外执行，
+            // 否则会与 UI 帧循环的 GetCachedStrip/GetFramePng 争用 _lock，
+            // 后台构建多个动作时 UI 线程长时间等锁 → 掉帧卡顿。
+            var frames = BuildFramesCache(action, strip, pngData);
 
             lock (_lock)
             {
@@ -111,20 +124,25 @@ namespace MiniPet.Services
                 _accessOrder.AddFirst(key);
                 _memoryCache[key] = entry;
 
-                // 预裁剪所有帧并缓存
-                CacheFrames(mobId, action, strip, pngData);
+                // 锁内只做字典合并（极快），不再做像素解码/裁剪/重编码
+                foreach (var kv in frames)
+                {
+                    _framesCache[kv.Key] = kv.Value;
+                }
             }
         }
 
         /// <summary>
-        /// 预裁剪精灵图条的所有帧，存入帧缓存
+        /// 预裁剪精灵图条的所有帧（锁外执行）：解码整条 PNG → 逐帧 BGRA 裁剪 → 逐帧 PNG 重编码。
+        /// 返回 action_frameIndex → PNG 字节的帧表，供 CacheStrip 在锁内快速合并。
         /// </summary>
-        private void CacheFrames(int mobId, string action, SpriteStrip strip, byte[] pngData)
+        private static Dictionary<string, byte[]> BuildFramesCache(string action, SpriteStrip strip, byte[] pngData)
         {
+            var result = new Dictionary<string, byte[]>();
             try
             {
                 var (bgra, width, height) = PngEncoder.DecodePng(pngData);
-                if (bgra.Length == 0 || width <= 0 || height <= 0) return;
+                if (bgra.Length == 0 || width <= 0 || height <= 0) return result;
 
                 int fw = strip.FrameWidth;
                 int fh = strip.FrameHeight;
@@ -145,20 +163,39 @@ namespace MiniPet.Services
                     var framePng = PngEncoder.Encode(frameBgra, fw, fh);
                     if (framePng != null)
                     {
-                        _framesCache[MakeFrameKey(action, i)] = framePng;
+                        result[MakeFrameKey(action, i)] = framePng;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[SpriteService] CacheFrames({mobId}/{action}): {ex.Message}");
+                Console.Error.WriteLine($"[SpriteService] BuildFramesCache({action}): {ex.Message}");
             }
+            return result;
+        }
+
+        /// <summary>
+        /// 获取某 mob 当前可用的动作（内存缓存 ∪ 磁盘缓存）
+        /// </summary>
+        public List<string> GetAvailableActions(string mobId)
+        {
+            var actions = new HashSet<string>();
+            lock (_lock)
+            {
+                foreach (var key in _memoryCache.Keys)
+                {
+                    var parts = key.Split(KeySep);
+                    if (parts.Length == 2 && parts[0] == mobId) actions.Add(parts[1]);
+                }
+            }
+            foreach (var a in _cacheManager.GetCachedActions(mobId)) actions.Add(a);
+            return actions.ToList();
         }
 
         /// <summary>
         /// 从内存缓存读取
         /// </summary>
-        public (SpriteStrip?, byte[]?) GetCachedStrip(int mobId, string action)
+        public (SpriteStrip?, byte[]?) GetCachedStrip(string mobId, string action)
         {
             lock (_lock)
             {
@@ -175,16 +212,44 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 从 WZ 预加载怪物精灵图到缓存（提取实际 PNG 帧并拼接精灵图条）
+        /// 从 WZ 预加载怪物精灵图到缓存（优先读缓存，缓存无数据再走 WZ）
         /// </summary>
-        public bool PreloadMob(WzService wz, int mobId, string type = "Mob")
+        public bool PreloadMob(WzService? wz, string mobId, string type = "Mob")
         {
             try
             {
+                // 1. 尝试从磁盘缓存加载常用动作
+                var cachedActions = new[] { "stand", "move", "fly", "walk", "jump" };
+                bool loadedFromCache = false;
+                foreach (var action in cachedActions)
+                {
+                    if (_cacheManager.IsSpriteCached(mobId, action))
+                    {
+                        var cached = _cacheManager.LoadSpriteStrip(mobId, action);
+                        if (cached != null)
+                        {
+                            var (pngData, configData) = cached.Value;
+                            var config = JsonSerializer.Deserialize<PetConfig>(new ReadOnlySpan<byte>(configData));
+                            if (config != null && config.Sprites.TryGetValue(action, out var strip))
+                            {
+                                CacheStrip(mobId, action, strip, pngData);
+                                loadedFromCache = true;
+                            }
+                        }
+                    }
+                }
+                if (loadedFromCache)
+                {
+                    Console.WriteLine($"[SpriteService] PreloadMob({mobId}): 从缓存加载完成");
+                    return true;
+                }
+
+                // 2. 缓存没有，从 WZ 加载（需要 WZ 可用）
+                if (wz == null || !wz.IsLoaded) return false;
+
                 var actions = wz.GetActionList(mobId, type);
                 if (actions.Count == 0) return false;
 
-                // 预加载优先级动作（基础动作），确保快速显示
                 var preloadOrder = new[] { "stand", "move", "fly", "walk", "jump" };
                 var priorityActions = preloadOrder.Where(actions.Contains).ToList();
                 if (priorityActions.Count == 0 && actions.Count > 0)
@@ -219,12 +284,12 @@ namespace MiniPet.Services
         }
 
         private readonly object _bgQueueLock = new();
-        private readonly List<(WzService wz, int mobId, string action, string type)> _bgQueue = new();
+        private readonly List<(WzService? wz, string mobId, string action, string type)> _bgQueue = new();
         private bool _bgQueueRunning;
 
         private void ProcessBgQueue()
         {
-            (WzService wz, int mobId, string action, string type)? item;
+            (WzService? wz, string mobId, string action, string type)? item;
             lock (_bgQueueLock)
             {
                 if (_bgQueue.Count == 0)
@@ -239,7 +304,7 @@ namespace MiniPet.Services
             if (item.HasValue)
             {
                 var (wz, mobId, action, type) = item.Value;
-                if (GetCachedStrip(mobId, action).Item1 == null)
+                if (GetCachedStrip(mobId, action).Item1 == null && wz != null && wz.IsLoaded)
                 {
                     PreloadAction(wz, mobId, action, type);
                 }
@@ -256,7 +321,7 @@ namespace MiniPet.Services
         /// 从 WZ 预加载怪物的指定动作，支持 Mob/NPC 类型。
         /// 优先从磁盘缓存读取，缓存未命中再走 WZ。
         /// </summary>
-        public bool PreloadAction(WzService wz, int mobId, string action, string type = "Mob")
+        public bool PreloadAction(WzService? wz, string mobId, string action, string type = "Mob")
         {
             try
             {
@@ -268,12 +333,22 @@ namespace MiniPet.Services
                     var config = JsonSerializer.Deserialize<PetConfig>(new ReadOnlySpan<byte>(configData));
                     if (config != null && config.Sprites.TryGetValue(action, out var strip))
                     {
-                        CacheStrip(mobId, action, strip, pngData);
-                        return true;
+                        // 校验退化空动作（1×1 等无效画面）：清理坏缓存，落到下面走 WZ 重建
+                        if (strip.FrameWidth <= 1 || strip.FrameHeight <= 1)
+                        {
+                            _cacheManager.DeleteSpriteStrip(mobId, action);
+                            Console.WriteLine($"[SpriteService] PreloadAction({mobId}/{action}): 空动作，清理坏缓存");
+                        }
+                        else
+                        {
+                            CacheStrip(mobId, action, strip, pngData);
+                            return true;
+                        }
                     }
                 }
 
-                // 2. 缓存未命中，从 WZ 加载
+                // 2. 缓存未命中，从 WZ 加载（需要 WZ 可用）
+                if (wz == null || !wz.IsLoaded) return false;
                 var pngDataWz = wz.BuildSpriteStripPng(mobId, action, type);
                 if (pngDataWz == null) return false;
 
@@ -310,26 +385,24 @@ namespace MiniPet.Services
         /// <summary>
         /// 获取已加载的 mob ID 列表
         /// </summary>
-        public List<int> GetLoadedMobs()
+        public List<string> GetLoadedMobs()
         {
             lock (_lock)
             {
                 return _memoryCache.Keys
-                    .Select(k => k.Split('_'))
-                    .Where(parts => parts.Length == 2 && int.TryParse(parts[0], out _))
-                    .Select(parts => int.Parse(parts[0]))
+                    .Select(k => k.Split(KeySep)[0])
                     .Distinct()
                     .ToList();
             }
         }
 
-        private static string MakeKey(int mobId, string action) => $"{mobId}_{action}";
+        private static string MakeKey(string mobId, string action) => $"{mobId}{KeySep}{action}";
         private static string MakeFrameKey(string action, int frameIndex) => $"{action}_{frameIndex}";
 
-        private void EvictIfNeeded(int incomingMobId)
+        private void EvictIfNeeded(string incomingMobId)
         {
             var mobs = _memoryCache.Keys
-                .Select(k => k.Split('_')[0])
+                .Select(k => k.Split(KeySep)[0])
                 .Distinct()
                 .Count();
 
@@ -341,11 +414,12 @@ namespace MiniPet.Services
                 var evictKey = node.Value;
                 var next = node.Previous;
 
-                var evictMobId = evictKey.Split('_')[0];
-                if (evictMobId != incomingMobId.ToString())
+                var parts = evictKey.Split(KeySep, 2);
+                var evictMobId = parts[0];
+                var evictAction = parts.Length > 1 ? parts[1] : string.Empty;
+                if (evictMobId != incomingMobId)
                 {
-                    // 同时清理该 mob 的帧缓存
-                    var evictAction = evictKey.Split('_', 2)[1];
+                    // 同时清理该 action 的帧缓存
                     var keysToRemove = _framesCache.Keys
                         .Where(k => k.StartsWith(evictAction + "_"))
                         .ToList();
@@ -354,7 +428,7 @@ namespace MiniPet.Services
                     _memoryCache.Remove(evictKey);
                     _accessOrder.Remove(node);
                     mobs = _memoryCache.Keys
-                        .Select(k => k.Split('_')[0])
+                        .Select(k => k.Split(KeySep)[0])
                         .Distinct()
                         .Count();
                 }

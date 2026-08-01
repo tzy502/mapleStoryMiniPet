@@ -10,10 +10,15 @@ namespace MiniPet.Models
     {
         public string WzLibPath { get; set; } = string.Empty;
         public string BaseWzPath { get; set; } = string.Empty;
-        public int CurrentMobId { get; set; }
+        public string CurrentMobId { get; set; } = string.Empty;
         public string CurrentEntityType { get; set; } = string.Empty;
-        public int MapId { get; set; }
-        public int BalloonId { get; set; }
+        public string MapId { get; set; } = string.Empty;
+        public int CropX { get; set; }
+        public int CropY { get; set; }
+        public int CropW { get; set; }
+        public int CropH { get; set; }
+        public List<MapHistoryEntry> MapHistory { get; set; } = new List<MapHistoryEntry>();
+        public string BalloonId { get; set; } = string.Empty;
         public string DefaultAnim { get; set; } = string.Empty;
         public string Theme { get; set; } = string.Empty;
         public string Personality { get; set; } = string.Empty;
@@ -23,6 +28,13 @@ namespace MiniPet.Models
         public int WindowY { get; set; }
         public double WindowScale { get; set; }
         public HermesConfig? HermesConfig { get; set; }
+        // 地图分层显隐（默认全开，Foothold 默认关）。RenderCore 按位掩码跳过对应层。
+        public bool MapShowBack { get; set; } = true;
+        public bool MapShowTile { get; set; } = true;
+        public bool MapShowObj { get; set; } = true;
+        public bool MapShowLife { get; set; } = true;
+        public bool MapShowPortal { get; set; } = true;
+        public bool MapShowFoothold { get; set; }
     }
 
     /// <summary>
@@ -31,7 +43,7 @@ namespace MiniPet.Models
     public class FavoriteItem
     {
         public string Type { get; set; } = string.Empty;
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public DateTime AddedAt { get; set; }
     }
@@ -42,9 +54,23 @@ namespace MiniPet.Models
     public class RecentItem
     {
         public string Type { get; set; } = string.Empty;
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public DateTime LastUsedAt { get; set; }
+    }
+
+    /// <summary>
+    /// 地图历史项（带各自 crop，供菜单「最近使用」一键恢复显示区域）。
+    /// 旧配置的 List&lt;string&gt; 由 MapHistoryEntryConverter 兼容读入（crop 全零 → CropFull 归一化为整图）。
+    /// </summary>
+    public class MapHistoryEntry
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public int CropX { get; set; }
+        public int CropY { get; set; }
+        public int CropW { get; set; }
+        public int CropH { get; set; }
     }
 
     /// <summary>

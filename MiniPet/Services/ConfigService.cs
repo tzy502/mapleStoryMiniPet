@@ -194,10 +194,10 @@ namespace MiniPet.Services
             {
                 WzLibPath = string.Empty,
                 BaseWzPath = string.Empty,
-                CurrentMobId = 0,
+                CurrentMobId = string.Empty,
                 CurrentEntityType = "mob",
-                MapId = 0,
-                BalloonId = 0,
+                MapId = string.Empty,
+                BalloonId = string.Empty,
                 DefaultAnim = "stand",
                 Theme = "dark",
                 Personality = string.Empty,
@@ -216,8 +216,91 @@ namespace MiniPet.Services
             {
                 WriteIndented = true,
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                PropertyNameCaseInsensitive = true
+                PropertyNameCaseInsensitive = true,
+                Converters = { new LenientStringConverter(), new MapHistoryEntryConverter() }
             };
+        }
+    }
+
+    /// <summary>
+    /// 容错字符串转换器：允许从 JSON 数字/布尔读为字符串（迁移旧 settings.json 里数值型 id 到 string 字段）。
+    /// </summary>
+    public class LenientStringConverter : System.Text.Json.Serialization.JsonConverter<string>
+    {
+        public override string? Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return reader.TokenType switch
+            {
+                System.Text.Json.JsonTokenType.String => reader.GetString(),
+                System.Text.Json.JsonTokenType.Null => null,
+                _ => System.Text.Encoding.UTF8.GetString(reader.ValueSpan)
+            };
+        }
+
+        public override void Write(System.Text.Json.Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+            => writer.WriteStringValue(value);
+    }
+
+    /// <summary>
+    /// MapHistoryEntry 迁移兼容转换器（F2）：
+    /// 旧配置 PetSettings.MapHistory 为 List&lt;string&gt;（纯 id），新为 List&lt;MapHistoryEntry&gt;。
+    /// Read 同时接受 JSON string（→ new MapHistoryEntry{Id=...}，crop 全零经 CropFull 归一化为整图）
+    /// 与 StartObject（正常对象）。否则旧配置反序列化抛 JsonException，触发 LoadSettings 的
+    /// CreateDefaultSettings+SaveSettings 覆写，清空用户全部配置（ConfigService.cs:54-65）。
+    /// Write 手写以避免再次命中本 converter 递归。
+    /// </summary>
+    public class MapHistoryEntryConverter : System.Text.Json.Serialization.JsonConverter<MapHistoryEntry>
+    {
+        public override MapHistoryEntry? Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == System.Text.Json.JsonTokenType.String)
+            {
+                return new MapHistoryEntry { Id = reader.GetString() ?? string.Empty };
+            }
+            if (reader.TokenType == System.Text.Json.JsonTokenType.StartObject)
+            {
+                using var doc = System.Text.Json.JsonDocument.ParseValue(ref reader);
+                var root = doc.RootElement;
+                return new MapHistoryEntry
+                {
+                    Id = TryString(root, "id"),
+                    Name = TryString(root, "name"),
+                    CropX = TryInt(root, "cropX"),
+                    CropY = TryInt(root, "cropY"),
+                    CropW = TryInt(root, "cropW"),
+                    CropH = TryInt(root, "cropH")
+                };
+            }
+            return null;
+        }
+
+        public override void Write(System.Text.Json.Utf8JsonWriter writer, MapHistoryEntry value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("id", value.Id);
+            writer.WriteString("name", value.Name);
+            writer.WriteNumber("cropX", value.CropX);
+            writer.WriteNumber("cropY", value.CropY);
+            writer.WriteNumber("cropW", value.CropW);
+            writer.WriteNumber("cropH", value.CropH);
+            writer.WriteEndObject();
+        }
+
+        private static string TryString(System.Text.Json.JsonElement el, string name)
+        {
+            if (el.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String)
+                return p.GetString() ?? string.Empty;
+            return string.Empty;
+        }
+
+        private static int TryInt(System.Text.Json.JsonElement el, string name)
+        {
+            if (el.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.Number)
+            {
+                if (p.TryGetInt32(out var v)) return v;
+                return (int)p.GetDouble();
+            }
+            return 0;
         }
     }
 }

@@ -9,6 +9,7 @@ namespace MiniPet.Models
     {
         public int Gender { get; set; }
         public int Skin { get; set; }
+        public EarType Ear { get; set; } = EarType.Human;
         public ItemInfo Hair { get; set; } = new ItemInfo();
         public ItemInfo Face { get; set; } = new ItemInfo();
         public ItemInfo? Cap { get; set; }
@@ -26,12 +27,15 @@ namespace MiniPet.Models
         public bool DyeEnabled { get; set; }
     }
 
+    /// <summary>耳朵类型（人类/精灵/高等精灵等，互斥渲染；默认人类）</summary>
+    public enum EarType { Human, Elf, Lef, HighLef }
+
     /// <summary>
     /// 装备信息
     /// </summary>
     public class ItemInfo
     {
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public int EnableEffect { get; set; }
         public bool Visible { get; set; }
         public int Dye { get; set; }
@@ -45,7 +49,7 @@ namespace MiniPet.Models
     /// </summary>
     public class MountInfo
     {
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public Dictionary<string, FrameAnimate> Actions { get; set; } = new Dictionary<string, FrameAnimate>();
         public string SitAction { get; set; } = string.Empty;
         public bool HideBody { get; set; }
@@ -58,7 +62,7 @@ namespace MiniPet.Models
     /// </summary>
     public class ChairInfo
     {
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public bool IsCash { get; set; }
         public int BodyRelMove { get; set; }
         public string SitAction { get; set; } = string.Empty;

@@ -247,18 +247,6 @@ public class PetWindow : Window
                 _paperdoll.LoadAppearance(app);
                 var png = _paperdoll.CompositeFrame("stand1", 0);
                 Console.WriteLine($"[Paperdoll DIAG] stand1/0 默认外观合成结果: {(png != null ? png.Length + " 字节" : "null")}");
-                // [MAP-DIAG] 渲染射手村整图存盘，与参考 100000000.png 对比定位错位/缺失
-                try
-                {
-                    var map = _mapService.LoadMap("100000000");
-                    if (map != null)
-                    {
-                        var thumb = _mapService.CompositeMapThumbnail(map, 1600, 1000);
-                        if (thumb != null) File.WriteAllBytes("/tmp/map_current.png", thumb);
-                        Console.WriteLine($"[Map DIAG] 射手村 thumbnail {(thumb?.Length ?? 0)} 字节");
-                    }
-                }
-                catch (Exception ex2) { Console.Error.WriteLine($"[Map DIAG] {ex2.Message}"); }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[Paperdoll DIAG] {ex.Message}"); }
         });
