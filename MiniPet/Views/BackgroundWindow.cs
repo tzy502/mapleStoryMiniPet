@@ -54,7 +54,7 @@ public class BackgroundWindow : Window
         Width = 800;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Topmost = false;
+        Topmost = true;
         ShowActivated = false;
         ShowInTaskbar = false;
         WindowDecorations = WindowDecorations.None;
