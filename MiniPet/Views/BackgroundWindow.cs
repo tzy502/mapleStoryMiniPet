@@ -194,8 +194,9 @@ public class BackgroundWindow : Window
         }
         // #5：BeginMoveDrag 在射手村大窗口（crop 全图 2000+ × 1000+）/ CenterScreen 居中后左上角为负（屏外）场景下，
         // 原生 performDrag: 的鼠标位置映射异常，导致拖动跳跃/卡死。改手动 Position delta 拖动，对任意尺寸/位置一致可预测。
+        // 坐标源用 CGEvent 全局鼠标坐标（GetGlobalMousePosition），避免超大透明窗口下 e.GetPosition(null) 跳变导致抖动。
         _bgDragging = true;
-        _bgDragStartScreen = e.GetPosition(null);
+        _bgDragStartScreen = GetGlobalMousePosition();
         _bgDragStartWindow = Position;
         try { e.Pointer.Capture(this); }
         catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] PointerCapture: {ex.Message}"); }
@@ -204,7 +205,7 @@ public class BackgroundWindow : Window
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (!_bgDragging) return;
-        var current = e.GetPosition(null);
+        var current = GetGlobalMousePosition();
         var scale = RenderScaling;
         int dx = (int)((current.X - _bgDragStartScreen.X) * scale);
         int dy = (int)((current.Y - _bgDragStartScreen.Y) * scale);
@@ -226,6 +227,35 @@ public class BackgroundWindow : Window
     private static extern void objc_msgSend(IntPtr receiver, IntPtr selector, IntPtr arg);
     [DllImport("/usr/lib/libobjc.dylib", CharSet = CharSet.Ansi)]
     private static extern IntPtr sel_registerName(string name);
+
+    // ── macOS 全局鼠标坐标（不依赖窗口大小，避免超大透明窗口下 Avalonia GetPosition(null) 跳变）──
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern IntPtr CGEventCreate(IntPtr source);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern int CGEventGetLocation(IntPtr eventRef, out double x, out double y);
+
+    /// <summary>取全局鼠标坐标（DIP，左上原点）。CGEvent 的 y 是左下原点向上，需按屏幕高度翻转。</summary>
+    private Point GetGlobalMousePosition()
+    {
+        try
+        {
+            var ev = CGEventCreate(IntPtr.Zero);
+            if (ev == IntPtr.Zero) return new Point(0, 0);
+            CGEventGetLocation(ev, out double x, out double y);
+            var scale = RenderScaling > 0 ? RenderScaling : 1;
+            // 主屏高度（物理像素）：Bounds 是 DIP，乘 scale 得物理像素
+            double screenH = 1440 * scale;
+            var scr = Screens?.Primary;
+            if (scr != null && scr.Bounds.Height > 0) screenH = scr.Bounds.Height * scale;
+            // CG y 向上 → 翻转成左上原点
+            return new Point(x / scale, (screenH - y) / scale);
+        }
+        catch
+        {
+            return new Point(0, 0);
+        }
+    }
 
     private void SetNativeIgnoresMouseEvents(bool ignore)
     {

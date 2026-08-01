@@ -34,7 +34,9 @@ public class MapService
     /// <summary>清除整图渲染缓存（分层显隐 toggle 后调用，强制下次按新 flag 重新渲染）。</summary>
     public void InvalidateFullRenderCache()
     {
-        _fullRender?.Dispose();
+        // 注意：不主动 Dispose _fullRender。后台渲染 Task 可能仍持有引用，
+        // 主动 Dispose 会导致在途 Task 访问已释放的 Skia 句柄（EXC_BAD_ACCESS 崩溃）。
+        // 置 null 让 GC 自然回收，代价是内存释放稍延迟，但避免跨线程悬空指针。
         _fullRender = null;
         _fullRenderMapId = null;
     }
@@ -503,7 +505,9 @@ public class MapService
             var (ccx, ccy) = GetMapCenter(mapInfo);
             var bmp = RenderViewport(mapInfo, ccx, ccy, 1f, 0, worldW, worldH);
             if (bmp == null) return null;
-            _fullRender?.Dispose();
+            // 不主动 Dispose 旧 _fullRender：后台 Task 可能仍持有引用，主动释放会导致悬空指针崩溃。
+            // 置 null 让 GC 回收（与 InvalidateFullRenderCache 一致的策略）。
+            _fullRender = null;
             _fullRender = bmp;
             _fullRenderMapId = mapInfo.Id;
             return _fullRender;

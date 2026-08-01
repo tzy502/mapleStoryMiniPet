@@ -10,6 +10,7 @@ using MiniPet.Services;
 using SkiaSharp;
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -182,9 +183,10 @@ public class MapViewportWindow : Window
         var point = e.GetCurrentPoint(this);
         if (point.Properties.IsRightButtonPressed)
         {
-            // #4 右键：移动窗口位置（手动 Position delta，仿 BackgroundWindow 拖动实现）
+            // 右键：移动窗口位置（手动 Position delta）——用 CGEvent 全局鼠标坐标，
+            // 避免超大透明窗口下 Avalonia GetPosition(null) 屏幕坐标跳变导致拖动抖动。
             _winDragging = true;
-            _winDragStartScreen = e.GetPosition(null); // 屏幕坐标（DIP）
+            _winDragStartScreen = GetGlobalMousePosition();
             _winDragStartWindow = Position;
             try { e.Pointer.Capture(this); }
             catch (Exception ex) { Console.Error.WriteLine($"[MapViewportWindow] WinPointerCapture: {ex.Message}"); }
@@ -201,10 +203,10 @@ public class MapViewportWindow : Window
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
-        // #4 右键拖动窗口：屏幕 DIP 差 × RenderScaling → 物理像素差，叠加到 startWindow
+        // #4 右键拖动窗口：CGEvent 全局坐标差 × RenderScaling → 物理像素差，叠加到 startWindow
         if (_winDragging)
         {
-            var current = e.GetPosition(null);
+            var current = GetGlobalMousePosition();
             var scale = RenderScaling;
             int winDx = (int)((current.X - _winDragStartScreen.X) * scale);
             int winDy = (int)((current.Y - _winDragStartScreen.Y) * scale);
@@ -254,5 +256,34 @@ public class MapViewportWindow : Window
         _zoom = newZoom;
         _camX = worldX - ((float)mouse.X - halfW) / newZoom;
         _camY = worldY - ((float)mouse.Y - halfH) / newZoom;
+    }
+
+    // ── macOS 全局鼠标坐标（不依赖窗口大小，避免超大透明窗口下 Avalonia GetPosition(null) 跳变）──
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern IntPtr CGEventCreate(IntPtr source);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern int CGEventGetLocation(IntPtr eventRef, out double x, out double y);
+
+    /// <summary>取全局鼠标坐标（DIP，左上原点）。CGEvent 的 y 是左下原点向上，需按屏幕高度翻转。</summary>
+    private Point GetGlobalMousePosition()
+    {
+        try
+        {
+            var ev = CGEventCreate(IntPtr.Zero);
+            if (ev == IntPtr.Zero) return new Point(0, 0);
+            CGEventGetLocation(ev, out double x, out double y);
+            var scale = RenderScaling > 0 ? RenderScaling : 1;
+            // 主屏高度（物理像素）：Bounds 是 DIP，乘 scale 得物理像素
+            double screenH = 1440 * scale;
+            var scr = Screens?.Primary;
+            if (scr != null && scr.Bounds.Height > 0) screenH = scr.Bounds.Height * scale;
+            // CG y 向上 → 翻转成左上原点
+            return new Point(x / scale, (screenH - y) / scale);
+        }
+        catch
+        {
+            return new Point(0, 0);
+        }
     }
 }
