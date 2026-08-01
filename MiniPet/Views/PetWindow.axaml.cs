@@ -50,6 +50,7 @@ public class PetWindow : Window
     private SettingsWindow? _settingsWindow;
     private MenuItem? _bgInteractiveItem;
     private MenuItem? _bgMenu;
+    private MenuItem? _bgQuickHideItem;
     private bool _isExiting;
     private int _lastOriginX;
     private int _lastOriginY;
@@ -595,6 +596,11 @@ public class PetWindow : Window
             _bgInteractiveItem.Click += (_, _) => _backgroundWindow.SetInteractive(!_backgroundWindow.IsInteractive);
             cm.Items.Add(_bgInteractiveItem);
 
+            // ── 快速关闭背景（顶层直达，无背景时禁用；Opening 刷新可用态）──
+            _bgQuickHideItem = new MenuItem { Header = "🚫 关闭背景", IsEnabled = false };
+            _bgQuickHideItem.Click += (_, _) => QuickHideBackground();
+            cm.Items.Add(_bgQuickHideItem);
+
             // ── 切换气泡 ──
             var balloonItem = new MenuItem { Header = "切换气泡" };
             balloonItem.Items.Add(new MenuItem { Header = "设置中心 > 气泡设置" });
@@ -747,6 +753,11 @@ public class PetWindow : Window
             {
                 _bgInteractiveItem.IsChecked = _backgroundWindow.IsInteractive;
                 _bgInteractiveItem.IsEnabled = _backgroundWindow.IsVisible;
+            }
+            // 快速关闭背景：仅在背景可见时可用
+            if (_bgQuickHideItem != null)
+            {
+                _bgQuickHideItem.IsEnabled = _backgroundWindow.IsVisible;
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshAnimationMenu: {ex.Message}"); }
@@ -916,6 +927,18 @@ public class PetWindow : Window
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OpenBackgroundTab: {ex.Message}"); }
     }
 
+    /// <summary>快速关闭背景：清图 + 隐藏窗口 + 桌宠置顶（#4 顶层直达入口，区别于 ToggleBackground 的开关语义）。</summary>
+    private void QuickHideBackground()
+    {
+        try
+        {
+            _backgroundWindow.HideMap();
+            _backgroundWindow.Hide();
+            RaisePet();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] QuickHideBackground: {ex.Message}"); }
+    }
+
     /// <summary>开启/关闭背景 toggle：开着→关；关着→恢复上次 MapId+crop（后台 LoadMap；失败/无图→进设置中心背景 tab）。</summary>
     private void ToggleBackground()
     {
@@ -1016,21 +1039,24 @@ public class PetWindow : Window
     {
         try
         {
-            if (_settingsWindow != null && _settingsWindow.IsVisible)
+            // 复用单例：SettingsWindow.OnClosing 把关闭改成 Hide()，所以 IsVisible=false 时是"隐藏未销毁"。
+            // 此前每次重开都 new 一个新实例 → 旧窗口泄露（_config.OnSettingsChanged 订阅/事件处理器不释放，逐次堆积）。
+            // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
+            if (_settingsWindow == null)
             {
-                _settingsWindow.Activate();
-                return;
+                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService);
+                _settingsWindow.OnPetApplied += (id, name) =>
+                {
+                    try { SwitchToPet(id, name, "Mob"); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetApplied: {ex.Message}"); }
+                };
+                _settingsWindow.OnPaperdollApplied += appearance => ApplyPaperdoll(appearance);
+                _settingsWindow.OnBackgroundMapApplied += sel => Dispatcher.UIThread.Post(() => ApplyMapSelection(sel));
             }
-
-            _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService);
-            _settingsWindow.OnPetApplied += (id, name) =>
-            {
-                try { SwitchToPet(id, name, "Mob"); }
-                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetApplied: {ex.Message}"); }
-            };
-            _settingsWindow.OnPaperdollApplied += appearance => ApplyPaperdoll(appearance);
-            _settingsWindow.OnBackgroundMapApplied += sel => Dispatcher.UIThread.Post(() => ApplyMapSelection(sel));
-            _settingsWindow.Show();
+            if (_settingsWindow.IsVisible)
+                _settingsWindow.Activate();
+            else
+                _settingsWindow.Show();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowSettingsWindow: {ex.Message}"); }
     }
