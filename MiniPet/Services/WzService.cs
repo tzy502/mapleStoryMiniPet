@@ -20,19 +20,24 @@ namespace MiniPet.Services
         private WzError? _lastError;
         // Wz_Image.TryExtract 非线程安全：所有 img 提取串行化，避免并发损坏节点树
         private readonly object _wzLock = new();
-        // 地图目录缓存（id→显示名）：后台构建、单飞、版本化
-        private readonly object _mapCatalogLock = new();
-        private Dictionary<string, string>? _mapNameCache;
-        // 区域→街道→地图 三级层级（F6 级联筛选）：随目录后台构建，WZ 重载时置空重建
-        private List<MapRegionNode>? _mapHierarchy;
-        private int _mapCatalogGen;
-        private Task? _mapCatalogTask;
+        // 地图目录服务（God Class 拆分：地图 id 枚举/名称缓存/三级层级 独立成类）
+        private readonly MapCatalogService _mapCatalog;
         // LoadWz 并发守卫：多窗口同时触发加载时单飞
         private readonly object _loadLock = new();
         private bool _loading;
 
+        public WzService()
+        {
+            _mapCatalog = new MapCatalogService(this);
+        }
+
         public bool IsLoaded => _wzLoaded;
         public WzError? LastError => _lastError;
+
+        // MapCatalogService 内部访问器（组合服务需要访问 WZ 根节点与加载态）
+        internal bool IsWzLoaded => _wzLoaded;
+        internal Wz_Node? WzRoot => _wzs?.WzNode;
+        internal object WzLock => _wzLock;
 
         public (bool success, WzError? error) LoadWz(string wzLibPath, string baseWzPath)
         {
@@ -45,7 +50,7 @@ namespace MiniPet.Services
             {
                 _wzLoaded = false;
                 _lastError = null;
-                _mapHierarchy = null;
+                _mapCatalog.Reset();
 
             if (string.IsNullOrEmpty(baseWzPath) || !Directory.Exists(baseWzPath))
             {
@@ -457,25 +462,45 @@ namespace MiniPet.Services
         /// </summary>
         public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(string id, string action, string type = "Mob")
         {
-            if (!_wzLoaded || _wzs?.WzNode == null) return (null, null);
+            var (_, strip, config) = BuildSpriteStrip(id, action, type);
+            return (strip, config);
+        }
+
+        /// <summary>
+        /// 从 WZ 提取精灵图条 PNG（拼接所有帧为水平条带），支持 Mob/NPC
+        /// </summary>
+        public byte[]? BuildSpriteStripPng(string id, string action, string type = "Mob")
+        {
+            var (pngData, _, _) = BuildSpriteStrip(id, action, type);
+            return pngData;
+        }
+
+        /// <summary>
+        /// 单次遍历同时产出 PNG 条带 + strip 元数据 + config（合并原 ExportSpriteStrip / BuildSpriteStripPng 的重复遍历）。
+        /// 支持 Mob/NPC 类型。帧来源：{type}/{id}.img 的 action 节点（origin/delay/a0/a1 在 child，PNG 经 outlink 取）。
+        /// </summary>
+        public (byte[]? pngData, SpriteStrip? strip, PetConfig? config) BuildSpriteStrip(string id, string action, string type = "Mob")
+        {
+            if (!_wzLoaded || _wzs?.WzNode == null) return (null, null, null);
             lock (_wzLock)
             try
             {
-                // Meta: {type}/{id}.img — 含 origin/delay/a0/a1
+                // Meta: {type}/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
                 var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{PadId(id, 7)}.img".Split('/'));
-                if (metaImgNode == null) return (null, null);
+                if (metaImgNode == null) return (null, null, null);
                 var metaImg = metaImgNode.GetValue<Wz_Image>();
-                if (metaImg == null || !metaImg.TryExtract()) return (null, null);
+                if (metaImg == null || !metaImg.TryExtract()) return (null, null, null);
                 var actionNode = metaImg.Node.Nodes.FirstOrDefault(n => n.Text == action);
-                if (actionNode == null) return (null, null);
+                if (actionNode == null) return (null, null, null);
 
-                int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
+                // 单次遍历：收集帧像素 + 元数据
+                var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
                 var frameDataList = new List<FrameData>();
                 int f = 0;
+                int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
                     var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
-                    int ox = origin?.X ?? 0, oy = origin?.Y ?? 0;
                     int delay = child.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
                     int a0 = child.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
                     int a1 = child.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
@@ -483,88 +508,22 @@ namespace MiniPet.Services
                     var pngNode = child.ResolveUol() ?? child;
                     var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
                     var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
-                    // 跳过无效帧：null 或 1×1 退化占位（WZ 里部分空动作帧无有效画面），与 BuildSpriteStripPng 一致
+                    // 跳过无效帧：null 或 1×1 退化占位（WZ 里部分空动作帧无有效画面），避免合成出空白条带
                     if (png == null || png.Width <= 1 || png.Height <= 1) continue;
+                    int ox = origin?.X ?? 0, oy = origin?.Y ?? 0;
                     int fw = png.Width, fh = png.Height;
 
+                    frames.Add((PngEncoder.DecodePixels(png), fw, fh, ox, oy));
                     maxL = Math.Max(maxL, ox);
                     maxT = Math.Max(maxT, oy);
                     maxR = Math.Max(maxR, fw - ox);
                     maxB = Math.Max(maxB, fh - oy);
-
                     frameDataList.Add(new FrameData { Index = f++, Delay = delay, A0 = a0, A1 = a1 });
                 }
-                if (frameDataList.Count == 0) return (null, null);
+                if (frames.Count == 0 || frameDataList.Count == 0) return (null, null, null);
 
-                var strip = new SpriteStrip
-                {
-                    Action = action,
-                    FrameCount = frameDataList.Count,
-                    FrameWidth = maxL + maxR,
-                    FrameHeight = maxT + maxB,
-                    OriginX = maxL,
-                    OriginY = maxT,
-                    FrameData = frameDataList,
-                    DefaultDelay = 100
-                };
-
-                var config = new PetConfig
-                {
-                    Name = $"{type.ToLower()}_{id}",
-                    Type = type.ToLower(),
-                    OriginX = 0,
-                    OriginY = 0,
-                    Sprites = new Dictionary<string, SpriteStrip> { [action] = strip }
-                };
-
-                return (strip, config);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[WzService] ExportSpriteStrip({id}/{action}/{type}): {ex.Message}");
-                return (null, null);
-            }
-        }
-
-        // 保留旧签名兼容
-        public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(string mobId, string action) => ExportSpriteStrip(mobId, action, "Mob");
-
-        /// <summary>
-        /// 从 WZ 提取精灵图条 PNG（拼接所有帧为水平条带），支持 Mob/NPC
-        /// </summary>
-        public byte[]? BuildSpriteStripPng(string id, string action, string type = "Mob")
-        {
-            if (!_wzLoaded || _wzs?.WzNode == null) return null;
-            lock (_wzLock)
-            try
-            {
-                // Meta: {type}/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
-                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{PadId(id, 7)}.img".Split('/'));
-                if (metaImgNode == null) return null;
-                var metaImg = metaImgNode.GetValue<Wz_Image>();
-                if (metaImg == null || !metaImg.TryExtract()) return null;
-                var actionNode = metaImg.Node.Nodes.FirstOrDefault(n => n.Text == action);
-                if (actionNode == null) return null;
-
-                var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
-                foreach (Wz_Node child in actionNode.Nodes)
-                {
-                    var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
-
-                    var pngNode = child.ResolveUol() ?? child;
-                    var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
-                    var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
-                    // 跳过无效帧：null 或 1×1 退化占位（WZ 里部分空动作帧无有效画面），避免合成出空白条带
-                    if (png == null || png.Width <= 1 || png.Height <= 1) continue;
-
-                    frames.Add((PngEncoder.DecodePixels(png), png.Width, png.Height, origin?.X ?? 0, origin?.Y ?? 0));
-                }
-                if (frames.Count == 0) return null;
-
-                int mL = frames.Max(f => f.ox), mT = frames.Max(f => f.oy);
-                int mR = frames.Max(f => f.w - f.ox), mB = frames.Max(f => f.h - f.oy);
-                int cw = mL + mR, ch = mT + mB;
-                int finalOx = mL, finalOy = mT;
+                int cw = maxL + maxR, ch = maxT + maxB;
+                int finalOx = maxL, finalOy = maxT;
 
                 var stripBgra = new byte[cw * frames.Count * ch * 4];
                 for (int i = 0; i < frames.Count; i++)
@@ -582,14 +541,40 @@ namespace MiniPet.Services
                             Buffer.BlockCopy(bgra, src, stripBgra, dst, len);
                     }
                 }
-                return PngEncoder.Encode(stripBgra, cw * frames.Count, ch);
+                var pngData = PngEncoder.Encode(stripBgra, cw * frames.Count, ch);
+
+                var strip = new SpriteStrip
+                {
+                    Action = action,
+                    FrameCount = frameDataList.Count,
+                    FrameWidth = cw,
+                    FrameHeight = ch,
+                    OriginX = finalOx,
+                    OriginY = finalOy,
+                    FrameData = frameDataList,
+                    DefaultDelay = 100
+                };
+
+                var config = new PetConfig
+                {
+                    Name = $"{type.ToLower()}_{id}",
+                    Type = type.ToLower(),
+                    OriginX = 0,
+                    OriginY = 0,
+                    Sprites = new Dictionary<string, SpriteStrip> { [action] = strip }
+                };
+
+                return (pngData, strip, config);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] BuildSpriteStripPng({id}/{action}/{type}): {ex.Message}");
-                return null;
+                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}): {ex.Message}");
+                return (null, null, null);
             }
         }
+
+        // 保留旧签名兼容
+        public (SpriteStrip? strip, PetConfig? config) ExportSpriteStrip(string mobId, string action) => ExportSpriteStrip(mobId, action, "Mob");
 
         // 保留旧签名兼容
         public byte[]? BuildSpriteStripPng(string mobId, string action) => BuildSpriteStripPng(mobId, action, "Mob");
@@ -791,77 +776,14 @@ namespace MiniPet.Services
             GetDirectoryChildren("Npc").Select(x => x.Id).Where(id => !string.IsNullOrEmpty(id) && id != "0").ToList();
 
         /// <summary>
-        /// 枚举 WZ 全量地图 id：遍历 Map/Map/Map{0..9} 下所有 .img，文件名去 .img = 9 位地图 id。持 _wzLock。
+        /// 枚举 WZ 全量地图 id（转发 MapCatalogService）。持 _wzLock。
         /// </summary>
-        public List<string> ListMapIds()
-        {
-            var result = new List<string>();
-            if (!_wzLoaded || _wzs?.WzNode == null) return result;
-            lock (_wzLock)
-            {
-                try
-                {
-                    var mapMapNode = _wzs.WzNode.FindNodeByPath(true, "Map", "Map");
-                    if (mapMapNode == null) return result;
-                    var ids = new HashSet<string>();
-                    for (int g = 0; g <= 9; g++)
-                    {
-                        var groupNode = mapMapNode.FindNodeByPath($"Map{g}");
-                        if (groupNode == null) continue;
-                        foreach (Wz_Node child in groupNode.Nodes)
-                        {
-                            var name = child.Text;
-                            if (!name.EndsWith(".img")) continue;
-                            var id = name[..^4];
-                            if (int.TryParse(id, out _)) ids.Add(id);
-                        }
-                    }
-                    result.AddRange(ids);
-                    result.Sort(StringComparer.Ordinal);
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"[WzService] ListMapIds: {ex.Message}"); }
-            }
-            return result;
-        }
+        public List<string> ListMapIds() => _mapCatalog.ListMapIds();
 
         /// <summary>
-        /// 构建 id→显示名 字典：遍历 String/Map.img/{地区分组}/{id}，id 节点 ResolveUol 后读 mapName+streetName，
-        /// 显示名 = streetName：mapName；缺失回退 map_{id}。持 _wzLock。
+        /// 构建 id→显示名 字典（转发 MapCatalogService）。持 _wzLock。
         /// </summary>
-        public Dictionary<string, string> BuildMapNameCache()
-        {
-            var cache = new Dictionary<string, string>();
-            if (!_wzLoaded || _wzs?.WzNode == null) return cache;
-            lock (_wzLock)
-            {
-                try
-                {
-                    var imgNode = _wzs.WzNode.FindNodeByPath(true, "String", "Map.img");
-                    var img = imgNode?.GetValue<Wz_Image>();
-                    if (img == null || !img.TryExtract()) return cache;
-                    foreach (Wz_Node group in img.Node.Nodes)
-                    {
-                        foreach (Wz_Node idNode in group.Nodes)
-                        {
-                            var id = idNode.Text;
-                            if (!int.TryParse(id, out _)) continue;
-                            var resolved = idNode.ResolveUol() ?? idNode;
-                            var mapName = resolved.FindNodeByPath("mapName")?.GetValueEx<string>(null);
-                            var streetName = resolved.FindNodeByPath("streetName")?.GetValueEx<string>(null);
-                            string display;
-                            if (!string.IsNullOrEmpty(streetName) && !string.IsNullOrEmpty(mapName))
-                                display = $"{streetName}：{mapName}";
-                            else if (!string.IsNullOrEmpty(mapName)) display = mapName;
-                            else if (!string.IsNullOrEmpty(streetName)) display = streetName;
-                            else display = $"map_{id}";
-                            cache[id] = display;
-                        }
-                    }
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"[WzService] BuildMapNameCache: {ex.Message}"); }
-            }
-            return cache;
-        }
+        public Dictionary<string, string> BuildMapNameCache() => _mapCatalog.BuildMapNameCache();
 
         /// <summary>在 _wzLock 内执行操作（可重入）：供 MapService.LoadMap 等外部消费者把整段节点遍历串行化。</summary>
         public T WithWzLock<T>(Func<T> action)
@@ -869,121 +791,27 @@ namespace MiniPet.Services
             lock (_wzLock) return action();
         }
 
-        /// <summary>等待地图目录缓存就绪（轮询，超时返回当前态）。供 MapBrowserWindow 后台消费。</summary>
-        public bool WaitForMapCatalog(int timeoutMs = 10000)
-        {
-            var deadline = Environment.TickCount + timeoutMs;
-            while (Environment.TickCount < deadline)
-            {
-                if (_mapNameCache != null && _mapNameCache.Count > 0) return true;
-                System.Threading.Thread.Sleep(100);
-            }
-            return _mapNameCache != null && _mapNameCache.Count > 0;
-        }
+        /// <summary>等待地图目录缓存就绪（转发 MapCatalogService）。供 MapBrowserWindow 后台消费。</summary>
+        public bool WaitForMapCatalog(int timeoutMs = 10000) => _mapCatalog.WaitForMapCatalog(timeoutMs);
 
-        /// <summary>取地图显示名（查目录缓存，未命中回退 map_{id}）。</summary>
-        public string GetMapName(string mapId)
-        {
-            if (string.IsNullOrEmpty(mapId)) return string.Empty;
-            var cache = _mapNameCache;
-            if (cache != null && cache.TryGetValue(mapId, out var name)) return name;
-            return $"map_{mapId}";
-        }
+        /// <summary>取地图显示名（转发 MapCatalogService，未命中回退 map_{id}）。</summary>
+        public string GetMapName(string mapId) => _mapCatalog.GetMapName(mapId);
 
         /// <summary>
-        /// 后台构建地图目录缓存（单飞 + 版本化）：LoadWz 成功后触发；WZ 重载时仅发布最新一次构建结果。
+        /// 后台构建地图目录缓存（转发 MapCatalogService，单飞 + 版本化）：LoadWz 成功后触发。
         /// </summary>
-        public void EnsureMapCatalog()
-        {
-            if (!_wzLoaded) return;
-            lock (_mapCatalogLock)
-            {
-                if (_mapNameCache != null && _mapNameCache.Count > 0) return;
-                if (_mapCatalogTask != null && !_mapCatalogTask.IsCompleted) return;
-                _mapCatalogGen++;
-                var gen = _mapCatalogGen;
-                _mapCatalogTask = Task.Run(() =>
-                {
-                    var built = BuildMapNameCache();
-                    lock (_mapCatalogLock)
-                    {
-                        if (gen == _mapCatalogGen)
-                        {
-                            _mapNameCache = built;
-                            Console.WriteLine($"[WzService] 地图目录构建完成: {built.Count} 个");
-                        }
-                    }
-                });
-            }
-        }
+        public void EnsureMapCatalog() => _mapCatalog.EnsureMapCatalog();
 
         /// <summary>
-        /// 构建 String/Map.img 的「区域 → 街道 → 地图」三级层级（F6 级联筛选）：
-        /// 顶层分组节点 = 区域(group.Text)，其下 id 节点的 streetName = 街道、mapName+id = 地图。
-        /// 与 BuildMapNameCache 同源遍历，但保留分组结构。持 _wzLock。
+        /// 构建 String/Map.img 的「区域 → 街道 → 地图」三级层级（转发 MapCatalogService，F6 级联筛选）。持 _wzLock。
         /// </summary>
-        public List<MapRegionNode> BuildMapHierarchy()
-        {
-            var regions = new List<MapRegionNode>();
-            if (!_wzLoaded || _wzs?.WzNode == null) return regions;
-            lock (_wzLock)
-            {
-                try
-                {
-                    var imgNode = _wzs.WzNode.FindNodeByPath(true, "String", "Map.img");
-                    var img = imgNode?.GetValue<Wz_Image>();
-                    if (img == null || !img.TryExtract()) return regions;
-                    // 保持 WZ 原始区域顺序，仅在区域内部对街道/地图排序
-                    foreach (Wz_Node group in img.Node.Nodes)
-                    {
-                        var regionName = group.Text;
-                        if (string.IsNullOrEmpty(regionName)) continue;
-                        Dictionary<string, List<MapEntry>>? streets = null;
-                        foreach (Wz_Node idNode in group.Nodes)
-                        {
-                            var id = idNode.Text;
-                            if (!int.TryParse(id, out _)) continue;
-                            var resolved = idNode.ResolveUol() ?? idNode;
-                            var mapName = resolved.FindNodeByPath("mapName")?.GetValueEx<string>(null);
-                            var streetName = resolved.FindNodeByPath("streetName")?.GetValueEx<string>(null);
-                            var streetKey = !string.IsNullOrEmpty(streetName) ? streetName : "(未分类街道)";
-                            var display = !string.IsNullOrEmpty(mapName) ? mapName
-                                          : (!string.IsNullOrEmpty(streetName) ? streetName : $"map_{id}");
-                            streets ??= new Dictionary<string, List<MapEntry>>();
-                            if (!streets.TryGetValue(streetKey, out var list)) { list = new List<MapEntry>(); streets[streetKey] = list; }
-                            list.Add(new MapEntry(id, display));
-                        }
-                        if (streets == null) continue;
-                        var region = new MapRegionNode { Name = regionName };
-                        foreach (var kv in streets.OrderBy(x => x.Key, StringComparer.Ordinal))
-                        {
-                            kv.Value.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.Ordinal));
-                            region.Streets.Add(new MapStreetNode { Name = kv.Key, Maps = kv.Value });
-                        }
-                        regions.Add(region);
-                    }
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"[WzService] BuildMapHierarchy: {ex.Message}"); }
-            }
-            return regions;
-        }
+        public List<MapRegionNode> BuildMapHierarchy() => _mapCatalog.BuildMapHierarchy();
 
         /// <summary>
-        /// 取区域→街道→地图 三级层级：目录已就绪则用缓存，否则现场构建并缓存（单飞由 _mapCatalogLock 保护）。
+        /// 取区域→街道→地图 三级层级（转发 MapCatalogService）：目录已就绪则用缓存，否则现场构建并缓存。
         /// 供背景设置 tab 的级联下拉消费。
         /// </summary>
-        public List<MapRegionNode> GetMapHierarchy()
-        {
-            var cached = _mapHierarchy;
-            if (cached != null) return cached;
-            var built = BuildMapHierarchy();
-            if (built.Count == 0) return built;
-            lock (_mapCatalogLock)
-            {
-                if (_mapHierarchy == null) _mapHierarchy = built;
-                return _mapHierarchy;
-            }
-        }
+        public List<MapRegionNode> GetMapHierarchy() => _mapCatalog.GetMapHierarchy();
 
         /// <summary>
         /// 节点解析：UOL → source/_inlink/_outlink → PNG

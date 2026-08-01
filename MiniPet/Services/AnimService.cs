@@ -223,7 +223,7 @@ namespace MiniPet.Services
             var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
             var (cs, cd) = _currentStrip;
-            var framePng = _spriteService.GetFramePng(cs!, _currentFrameIndex, cd);
+            var framePng = _spriteService.GetFramePng(_currentMobId, cs!, _currentFrameIndex, cd);
             return (frameData, framePng);
         }
 
@@ -237,7 +237,7 @@ namespace MiniPet.Services
 
             var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
-            var framePng = _spriteService.GetFramePng(strip!, _currentFrameIndex, pngData);
+            var framePng = _spriteService.GetFramePng(_currentMobId, strip!, _currentFrameIndex, pngData);
             return (frameData, framePng);
         }
 

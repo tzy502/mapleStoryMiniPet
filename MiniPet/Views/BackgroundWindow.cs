@@ -54,7 +54,9 @@ public class BackgroundWindow : Window
         Width = 800;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Topmost = false;
+        // 静态图置顶（仅次于桌宠）：背景作为壁纸层覆盖普通窗口，点击穿透由 ignoresMouseEvents 控制（非交互模式）
+        // 同级 Floating 层内 z-order：BackgroundWindow Show / 交互切换后 PetWindow 调 Activate 保持在上
+        Topmost = true;
         ShowActivated = false;
         ShowInTaskbar = false;
         WindowDecorations = WindowDecorations.None;

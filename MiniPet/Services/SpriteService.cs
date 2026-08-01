@@ -17,7 +17,7 @@ namespace MiniPet.Services
         private readonly Dictionary<string, LRUEntry> _memoryCache;
         private readonly LinkedList<string> _accessOrder;
         private readonly object _lock = new();
-        private const int MaxMobCache = 3;
+        private const int MaxMobCache = 5;
         private const char KeySep = '|';
 
         public SpriteService(CacheManager cacheManager)
@@ -69,25 +69,22 @@ namespace MiniPet.Services
         /// <summary>
         /// 获取第 frameIndex 帧的 PNG 字节（直接从预裁剪帧缓存返回，不解码不裁剪）
         /// </summary>
-        public byte[]? GetFramePng(SpriteStrip strip, int frameIndex, byte[]? pngData)
+        public byte[]? GetFramePng(string mobId, SpriteStrip strip, int frameIndex, byte[]? pngData)
         {
             if (strip == null) return null;
             if (frameIndex < 0 || frameIndex >= strip.FrameCount) return null;
 
-            // 从预裁剪帧缓存中直接返回
-            lock (_lock)
-            {
-                var key = MakeFrameKey(strip.Action, frameIndex);
-                if (_framesCache.TryGetValue(key, out var cached))
-                    return cached;
-            }
+            // 从预裁剪帧缓存中直接返回（key 含 mobId，避免不同 mob 同名 action 帧互相覆盖；免锁读）
+            var key = MakeFrameKey(mobId, strip.Action, frameIndex);
+            if (_framesCache.TryGetValue(key, out var cached))
+                return cached;
             return null;
         }
 
         /// <summary>
-        /// 预裁剪帧缓存：key = "action_frameIndex" → byte[]
+        /// 预裁剪帧缓存：key = "mobId|action_frameIndex" → byte[]（ConcurrentDictionary 免锁读，帧循环热路径）
         /// </summary>
-        private readonly Dictionary<string, byte[]> _framesCache = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> _framesCache = new();
 
         /// <summary>
         /// 缓存精灵图条到内存（含 PNG 数据和预裁剪帧）
@@ -99,7 +96,7 @@ namespace MiniPet.Services
             // 重活（整条 PNG 解码 + 逐帧像素裁剪 + 逐帧 PNG 重编码）放在锁外执行，
             // 否则会与 UI 帧循环的 GetCachedStrip/GetFramePng 争用 _lock，
             // 后台构建多个动作时 UI 线程长时间等锁 → 掉帧卡顿。
-            var frames = BuildFramesCache(action, strip, pngData);
+            var frames = BuildFramesCache(mobId, action, strip, pngData);
 
             lock (_lock)
             {
@@ -136,7 +133,7 @@ namespace MiniPet.Services
         /// 预裁剪精灵图条的所有帧（锁外执行）：解码整条 PNG → 逐帧 BGRA 裁剪 → 逐帧 PNG 重编码。
         /// 返回 action_frameIndex → PNG 字节的帧表，供 CacheStrip 在锁内快速合并。
         /// </summary>
-        private static Dictionary<string, byte[]> BuildFramesCache(string action, SpriteStrip strip, byte[] pngData)
+        private static Dictionary<string, byte[]> BuildFramesCache(string mobId, string action, SpriteStrip strip, byte[] pngData)
         {
             var result = new Dictionary<string, byte[]>();
             try
@@ -163,13 +160,13 @@ namespace MiniPet.Services
                     var framePng = PngEncoder.Encode(frameBgra, fw, fh);
                     if (framePng != null)
                     {
-                        result[MakeFrameKey(action, i)] = framePng;
+                        result[MakeFrameKey(mobId, action, i)] = framePng;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[SpriteService] BuildFramesCache({action}): {ex.Message}");
+                Console.Error.WriteLine($"[SpriteService] BuildFramesCache({mobId}_{action}): {ex.Message}");
             }
             return result;
         }
@@ -349,11 +346,9 @@ namespace MiniPet.Services
 
                 // 2. 缓存未命中，从 WZ 加载（需要 WZ 可用）
                 if (wz == null || !wz.IsLoaded) return false;
-                var pngDataWz = wz.BuildSpriteStripPng(mobId, action, type);
-                if (pngDataWz == null) return false;
-
-                var (stripWz, configWz) = wz.ExportSpriteStrip(mobId, action, type);
-                if (stripWz == null || configWz == null) return false;
+                // 单次遍历同时产出 PNG 条带 + strip + config（原 BuildSpriteStripPng + ExportSpriteStrip 两次遍历合并）
+                var (pngDataWz, stripWz, configWz) = wz.BuildSpriteStrip(mobId, action, type);
+                if (pngDataWz == null || stripWz == null || configWz == null) return false;
 
                 var configJson = JsonSerializer.Serialize(configWz);
                 var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
@@ -397,7 +392,7 @@ namespace MiniPet.Services
         }
 
         private static string MakeKey(string mobId, string action) => $"{mobId}{KeySep}{action}";
-        private static string MakeFrameKey(string action, int frameIndex) => $"{action}_{frameIndex}";
+        private static string MakeFrameKey(string mobId, string action, int frameIndex) => $"{mobId}{KeySep}{action}_{frameIndex}";
 
         private void EvictIfNeeded(string incomingMobId)
         {
@@ -419,11 +414,12 @@ namespace MiniPet.Services
                 var evictAction = parts.Length > 1 ? parts[1] : string.Empty;
                 if (evictMobId != incomingMobId)
                 {
-                    // 同时清理该 action 的帧缓存
+                    // 同时清理该 mob+action 的帧缓存（前缀含 mobId，避免误删其他 mob 的同名 action 帧）
+                    var prefix = evictMobId + KeySep + evictAction + "_";
                     var keysToRemove = _framesCache.Keys
-                        .Where(k => k.StartsWith(evictAction + "_"))
+                        .Where(k => k.StartsWith(prefix))
                         .ToList();
-                    foreach (var k in keysToRemove) _framesCache.Remove(k);
+                    foreach (var k in keysToRemove) _framesCache.TryRemove(k, out _);
 
                     _memoryCache.Remove(evictKey);
                     _accessOrder.Remove(node);

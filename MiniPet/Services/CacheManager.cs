@@ -14,7 +14,7 @@ namespace MiniPet.Services
         private readonly Dictionary<string, byte[]> _memoryCache;
         private readonly object _lock = new();
         private long _memoryCacheSize;
-        private const long MaxMemoryCacheSize = 128 * 1024 * 1024; // 128MB
+        private const long MaxMemoryCacheSize = 256 * 1024 * 1024; // 256MB（大素材下 128MB 过小，1~2 个 mob 即超限频繁淘汰）
 
         public CacheManager()
         {
