@@ -72,6 +72,8 @@ public class SettingsWindow : Window
     public event Action<string, string>? OnPetApplied;
     public event Action<CharacterAppearance>? OnPaperdollApplied;
     public event Action<MapSelection>? OnBackgroundMapApplied;
+    /// <summary>分层显隐 toggle（背景/地面/物件/NPC/传送门/地面线）变化后触发，PetWindow 据此重渲染桌面背景窗口。</summary>
+    public event Action? OnLayerTogglesChanged;
 
     // ── 素材桌宠 UI 引用 ──
     private TextBlock? _petNameLabel;
@@ -1520,6 +1522,8 @@ public class SettingsWindow : Window
                         _config.SaveSettings(_settings);
                         _mapSvc.InvalidateFullRenderCache();
                         if (_bgCurrentMap != null) BgRenderPreview(_bgCurrentMap.Id, null);
+                        // 通知 PetWindow：桌面背景窗口按新 flag 重渲染（否则桌面仍显示旧图）
+                        OnLayerTogglesChanged?.Invoke();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LayerToggle: {ex.Message}"); }
                 };

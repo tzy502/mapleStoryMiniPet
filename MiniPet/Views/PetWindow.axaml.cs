@@ -301,24 +301,26 @@ public class PetWindow : Window
                         _currentMap = map;
                         if (settings.MapMode == 2)
                         {
-                            // 模式2：摄像机不加载 life/portal（back 保留——视差是摄像机特色）
-                            _mapService.MapShowBack = true;
-                            _mapService.MapShowLife = false;
-                            _mapService.MapShowPortal = false;
-                            _mapService.MapShowObj = true;
-                            _mapService.MapShowTile = true;
+                            // 模式2：摄像机——分层 flag 读用户配置（不硬编码，尊重设置中心勾选）
+                            _mapService.MapShowBack = settings.MapShowBack;
+                            _mapService.MapShowLife = settings.MapShowLife;
+                            _mapService.MapShowPortal = settings.MapShowPortal;
+                            _mapService.MapShowObj = settings.MapShowObj;
+                            _mapService.MapShowTile = settings.MapShowTile;
+                            _mapService.MapShowFoothold = settings.MapShowFoothold;
                             _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                             _mapViewportWindow.Show();
                             RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
                         }
                         else
                         {
-                            // 模式1：静态默认不加载 back/life/portal（仅 obj/tile）
-                            _mapService.MapShowBack = false;
-                            _mapService.MapShowLife = false;
-                            _mapService.MapShowPortal = false;
-                            _mapService.MapShowObj = true;
-                            _mapService.MapShowTile = true;
+                            // 模式1：静态——分层 flag 读用户配置（不硬编码，尊重设置中心勾选）
+                            _mapService.MapShowBack = settings.MapShowBack;
+                            _mapService.MapShowLife = settings.MapShowLife;
+                            _mapService.MapShowPortal = settings.MapShowPortal;
+                            _mapService.MapShowObj = settings.MapShowObj;
+                            _mapService.MapShowTile = settings.MapShowTile;
+                            _mapService.MapShowFoothold = settings.MapShowFoothold;
                             _mapService.InvalidateFullRenderCache(); // 强制按新 flag 重新渲染
                             _backgroundWindow.SetMap(map, _mapService, settings.CropX, settings.CropY, settings.CropW, settings.CropH);
                             _backgroundWindow.Show();
@@ -692,6 +694,20 @@ public class PetWindow : Window
                         Position = new PixelPoint(
                             (int)(bounds.X + (bounds.Width - w) / 2),
                             (int)(bounds.Y + (bounds.Height - h) / 2));
+                        // 地图窗口一起重置到屏幕中央（静态图/摄像机二选一，避免双模式同载）
+                        if (_mapViewportWindow.IsVisible)
+                        {
+                            _mapViewportWindow.Position = new PixelPoint(
+                                (int)(bounds.X + (bounds.Width - _mapViewportWindow.Width) / 2),
+                                (int)(bounds.Y + (bounds.Height - _mapViewportWindow.Height) / 2));
+                        }
+                        else if (_backgroundWindow.IsVisible)
+                        {
+                            _backgroundWindow.Position = new PixelPoint(
+                                (int)(bounds.X + (bounds.Width - _backgroundWindow.Width) / 2),
+                                (int)(bounds.Y + (bounds.Height - _backgroundWindow.Height) / 2));
+                            _backgroundWindow.ClampToScreen();
+                        }
                     }
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CenterWindow: {ex.Message}"); }
@@ -1075,12 +1091,14 @@ public class PetWindow : Window
                         _currentMap = map;
                         _backgroundWindow.HideMap();
                         _backgroundWindow.Hide();
-                        // 模式2：摄像机不加载 life/portal（back 保留——视差是摄像机特色）
-                        _mapService.MapShowBack = true;
-                        _mapService.MapShowLife = false;
-                        _mapService.MapShowPortal = false;
-                        _mapService.MapShowObj = true;
-                        _mapService.MapShowTile = true;
+                        // 模式2：摄像机——分层 flag 读用户配置（不硬编码，尊重设置中心勾选）
+                        var s2 = _configService.LoadSettings();
+                        _mapService.MapShowBack = s2.MapShowBack;
+                        _mapService.MapShowLife = s2.MapShowLife;
+                        _mapService.MapShowPortal = s2.MapShowPortal;
+                        _mapService.MapShowObj = s2.MapShowObj;
+                        _mapService.MapShowTile = s2.MapShowTile;
+                        _mapService.MapShowFoothold = s2.MapShowFoothold;
                         _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                         _mapViewportWindow.Show();
                         RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
@@ -1107,12 +1125,13 @@ public class PetWindow : Window
             var s = _configService.LoadSettings();
             if (_currentMap != null && !string.IsNullOrEmpty(s.MapId) && _wzService.IsLoaded)
             {
-                // 模式1：静态默认不加载 back/life/portal（仅 obj/tile）
-                _mapService.MapShowBack = false;
-                _mapService.MapShowLife = false;
-                _mapService.MapShowPortal = false;
-                _mapService.MapShowObj = true;
-                _mapService.MapShowTile = true;
+                // 模式1：静态——分层 flag 读用户配置（不硬编码，尊重设置中心勾选）
+                _mapService.MapShowBack = s.MapShowBack;
+                _mapService.MapShowLife = s.MapShowLife;
+                _mapService.MapShowPortal = s.MapShowPortal;
+                _mapService.MapShowObj = s.MapShowObj;
+                _mapService.MapShowTile = s.MapShowTile;
+                _mapService.MapShowFoothold = s.MapShowFoothold;
                 _mapService.InvalidateFullRenderCache(); // 强制按新 flag 重新渲染
                 _backgroundWindow.SetMap(_currentMap, _mapService, s.CropX, s.CropY, s.CropW, s.CropH);
                 _backgroundWindow.Show();
@@ -1157,7 +1176,7 @@ public class PetWindow : Window
             }
             _bgMenu.Items.Add(new Separator());
 
-            var adjust = new MenuItem { Header = "🛓 调整地图…" };
+            var adjust = new MenuItem { Header = "🗺️ 调整地图…" };
             adjust.Click += (_, _) => OpenBackgroundTab();
             _bgMenu.Items.Add(adjust);
         }
@@ -1171,12 +1190,16 @@ public class PetWindow : Window
             var map = _mapService.LoadMap(sel.Id);
             if (map == null) return;
             _currentMap = map;
+            // 选图应用 = 静态背景模式：先停/关摄像机窗口，保证两种模式互斥（问题：双模式同载）
+            _mapViewportWindow.Stop();
+            _mapViewportWindow.Hide();
             _backgroundWindow.SetMap(map, _mapService, sel.CropX, sel.CropY, sel.CropW, sel.CropH);
             _backgroundWindow.Show();
             RaisePet();
             _placePetAfterRender = true; // 落地推迟到渲染完成（OnMapRendered），裁紧值此时才就绪
             var s = _configService.LoadSettings();
             s.MapId = sel.Id;
+            s.MapMode = 1; // 应用地图 = 静态模式
             s.CropX = sel.CropX; s.CropY = sel.CropY; s.CropW = sel.CropW; s.CropH = sel.CropH;
             s.MapHistory.RemoveAll(x => x.Id == sel.Id);
             s.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = sel.Name, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
@@ -1184,6 +1207,25 @@ public class PetWindow : Window
             _configService.SaveSettings(s);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyMapSelection: {ex.Message}"); }
+    }
+
+    /// <summary>设置中心分层 toggle 变化后：按当前可见的背景窗口模式重渲染（静态图重 SetMap / 摄像机重 SetMap）。</summary>
+    private void ReRenderBackground()
+    {
+        try
+        {
+            var s = _configService.LoadSettings();
+            if (_currentMap == null || string.IsNullOrEmpty(s.MapId)) return;
+            if (_mapViewportWindow.IsVisible)
+            {
+                _mapViewportWindow.SetMap(_currentMap, _mapService);
+            }
+            else if (_backgroundWindow.IsVisible)
+            {
+                _backgroundWindow.SetMap(_currentMap, _mapService, s.CropX, s.CropY, s.CropW, s.CropH);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ReRenderBackground: {ex.Message}"); }
     }
 
     private void ShowSettingsWindow()
@@ -1203,6 +1245,7 @@ public class PetWindow : Window
                 };
                 _settingsWindow.OnPaperdollApplied += appearance => ApplyPaperdoll(appearance);
                 _settingsWindow.OnBackgroundMapApplied += sel => Dispatcher.UIThread.Post(() => ApplyMapSelection(sel));
+                _settingsWindow.OnLayerTogglesChanged += () => Dispatcher.UIThread.Post(ReRenderBackground);
             }
             if (_settingsWindow.IsVisible)
                 _settingsWindow.Activate();

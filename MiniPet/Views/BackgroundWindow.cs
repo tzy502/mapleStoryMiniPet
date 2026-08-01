@@ -88,6 +88,32 @@ public class BackgroundWindow : Window
         // 默认 NO 状态下首次 SetInteractive(true) 的 setIgnoresMouseEvents:NO 是 no-op，AppKit 不刷新事件路由（首次拖不动的根因）。
         try { if (!_interactive) SetNativeIgnoresMouseEvents(true); }
         catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] OnOpened: {ex.Message}"); }
+        // 超大窗口（宽 > 屏幕宽）CenterScreen 会算出负 X（窗口主体在屏外，看起来"消失了"），强制 clamp 到屏幕内
+        Dispatcher.UIThread.Post(ClampToScreen);
+    }
+
+    /// <summary>把窗口位置 clamp 到屏幕可见区域：超大窗口左缘贴屏幕左缘（X>=0），避免窗口主体在屏外。</summary>
+    public void ClampToScreen()
+    {
+        try
+        {
+            var scr = Screens?.Primary;
+            if (scr == null) return;
+            int sw = (int)scr.Bounds.Width;
+            int sh = (int)scr.Bounds.Height;
+            int x = Position.X;
+            int y = Position.Y;
+            // 窗口比屏幕宽：左缘对齐屏幕左缘（X=0），保证可见
+            if (Width >= sw) x = 0;
+            else if (x < 0) x = 0;
+            else if (x + Width > sw) x = Math.Max(0, sw - (int)Width);
+            if (Height >= sh) y = 0;
+            else if (y < 0) y = 0;
+            else if (y + Height > sh) y = Math.Max(0, sh - (int)Height);
+            if (x != Position.X || y != Position.Y)
+                Position = new PixelPoint(x, y);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] ClampToScreen: {ex.Message}"); }
     }
 
     /// <summary>渲染并显示地图的 crop 区域（后台线程，_renderGen 代际保护防快速切换串台）。
