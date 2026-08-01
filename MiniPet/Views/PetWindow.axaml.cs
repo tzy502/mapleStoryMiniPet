@@ -59,8 +59,8 @@ public class PetWindow : Window
     private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
     private int _lastOriginX;
     private int _lastOriginY;
-    private int _lastFrameW;
-    private int _lastFrameH;
+    private double _lastFrameW;
+    private double _lastFrameH;
     private double _scale = 1.0;
     private string _currentEntityType = "Mob";
 
