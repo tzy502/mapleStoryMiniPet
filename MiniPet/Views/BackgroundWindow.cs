@@ -36,6 +36,14 @@ public class BackgroundWindow : Window
     // #4：交互模式切换且 z-order 被原生 makeKeyAndOrderFront 改变后触发，PetWindow 据此重新置顶
     public event Action? InteractiveChanged;
 
+    // #6：实际渲染返回图（裁紧透明 padding 后）对应的「世界坐标 crop」与尺寸。
+    // PetWindow.PlacePetOnMapGround 应改用本组属性（而非 SetMap 入参的 cropX/cropY），以保证裁紧后宠物落地仍对齐地面。
+    // 渲染未完成前为入参 crop 的占位值；渲染完成后在 UIThread Post 内更新为裁紧后的实际值。
+    public int EffectiveCropX { get; private set; }
+    public int EffectiveCropY { get; private set; }
+    public int EffectiveCropW { get; private set; }
+    public int EffectiveCropH { get; private set; }
+
     public BackgroundWindow()
     {
         Title = "MiniPet-Background";
@@ -79,8 +87,10 @@ public class BackgroundWindow : Window
     }
 
     /// <summary>渲染并显示地图的 crop 区域（后台线程，_renderGen 代际保护防快速切换串台）。
-    /// 整图渲染(相机=地图中心)→按像素裁 crop（CropFull 深拷贝），桌面与设置预览同源（ADR-0004）。
-    /// N1：cropW<=0 归一化为整图（与 CropFull 同规则），窗口尺寸匹配归一化后 crop。</summary>
+    /// 整图渲染(相机=地图中心)→按像素裁 crop（CropFull 深拷贝 + #6 裁紧透明 padding），桌面与设置预览同源（ADR-0004）。
+    /// N1：cropW<=0 归一化为整图（与 CropFull 同规则）。
+    /// #6：窗口 Width/Height 改为按「实际渲染返回图尺寸」（Bitmap.Size / CroppedMap.Width/Height）而非输入 cropW/cropH，
+    ///     透明 padding 不再计入窗口高度，用户拖动可直达顶部。EffectiveCrop* 同步更新为裁紧后的世界坐标 crop。</summary>
     public void SetMap(MapInfo? map, MapService? mapService, int cropX, int cropY, int cropW, int cropH)
     {
         _map = map;
@@ -89,20 +99,29 @@ public class BackgroundWindow : Window
         int cx = cropX, cy = cropY, cw = cropW, ch = cropH;
         if (cw <= 0 || ch <= 0) { cx = map.MinX; cy = map.MinY; cw = map.MaxX - map.MinX; ch = map.MaxY - map.MinY; }
         if (cw <= 0 || ch <= 0) { _image.Source = null; return; }
+        // 先用入参 crop 占位（窗口立即出现，尺寸接近），渲染完成后按返回图实际尺寸修正。
         Width = cw;
         Height = ch;
+        EffectiveCropX = cx; EffectiveCropY = cy; EffectiveCropW = cw; EffectiveCropH = ch;
         _image.Source = null;
         var gen = ++_renderGen;
         System.Threading.Tasks.Task.Run(() =>
         {
             try
             {
-                var png = mapService.CropFull(map, cx, cy, cw, ch);
+                var result = mapService.CropFull(map, cx, cy, cw, ch);
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (gen != _renderGen) return;
-                    if (png == null) return;
-                    using var ms = new MemoryStream(png);
+                    if (result == null) return;
+                    // #6：窗口尺寸 = 实际渲染返回图尺寸（裁紧后），透明 padding 不再计入高度。
+                    Width = result.Width;
+                    Height = result.Height;
+                    EffectiveCropX = result.WorldX;
+                    EffectiveCropY = result.WorldY;
+                    EffectiveCropW = result.Width;
+                    EffectiveCropH = result.Height;
+                    using var ms = new MemoryStream(result.Png);
                     _image.Source = new Bitmap(ms);
                 });
             }

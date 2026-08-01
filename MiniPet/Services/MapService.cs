@@ -552,11 +552,13 @@ public class MapService
     }
 
     /// <summary>
-    /// 从整图渲染取 crop 子区为 PNG（深拷贝，ADR-0004 / F3）。
+    /// 从整图渲染取 crop 子区为 PNG（深拷贝，ADR-0004 / F3），并裁紧四边透明 padding（#6）。
     /// N1：cw<=0 归一化为整图（"无 crop=整图"唯一规则点）；F5：源矩形与 [0,worldW]×[0,worldH] 求交，越界留透明、尺寸不变。
-    /// 内部 blit 到独立 SKBitmap（禁用 ExtractSubset 别名）→ 编码 PNG；返回字节不再依赖缓存。
+    /// #6：blit 完成后扫描 alpha 通道，裁掉四边全透明行/列（裁紧到实际非透明内容 bbox），返回裁紧后的 PNG。
+    ///     WorldX/WorldY = 返回图左上角对应的「世界坐标」（= 输入 cropX/cropY + 裁掉的左/上透明像素数），
+    ///     调用方（BackgroundWindow）据此修正窗口落地坐标，使宠物落地对齐（PlacePetOnMapGround）仍正确。
     /// </summary>
-    public byte[]? CropFull(MapInfo mapInfo, int cropX, int cropY, int cropW, int cropH)
+    public CroppedMap? CropFull(MapInfo mapInfo, int cropX, int cropY, int cropW, int cropH)
     {
         if (mapInfo == null) return null;
         return _wz.WithWzLock(() =>
@@ -570,7 +572,8 @@ public class MapService
                 var full = RenderMapFull(mapInfo);
                 if (full == null) return null;
 
-                using var dst = new SKBitmap(cropW, cropH);
+                // 固定 RGBA8888 以便 alpha 扫描（alpha 在每像素字节 3）；Skia 内部处理源图色域转换。
+                using var dst = new SKBitmap(cropW, cropH, SKColorType.Rgba8888, SKAlphaType.Premul);
                 using (var canvas = new SKCanvas(dst))
                 {
                     canvas.Clear(SKColors.Transparent);
@@ -584,11 +587,66 @@ public class MapService
                         canvas.DrawBitmap(full, new SKRect(x0, y0, x1, y1), new SKRect(x0 - srcX, y0 - srcY, x1 - srcX, y1 - srcY), paint);
                     }
                 }
-                using var img = SKImage.FromBitmap(dst);
-                return img.Encode(SKEncodedImageFormat.Png, 100).ToArray();
+
+                // #6: 扫描 alpha 找实际内容 bbox，裁紧四边全透明 padding。
+                var (trimL, trimT, trimR, trimB) = FindContentBBox(dst);
+                int contentW = trimR - trimL;
+                int contentH = trimB - trimT;
+                if (contentW <= 0 || contentH <= 0) return null; // 全透明：无可见内容
+
+                byte[] png;
+                if (trimL == 0 && trimT == 0 && contentW == cropW && contentH == cropH)
+                {
+                    using var img0 = SKImage.FromBitmap(dst);
+                    png = img0.Encode(SKEncodedImageFormat.Png, 100).ToArray();
+                }
+                else
+                {
+                    using var sub = new SKBitmap(contentW, contentH, SKColorType.Rgba8888, SKAlphaType.Premul);
+                    using (var c = new SKCanvas(sub))
+                    {
+                        c.Clear(SKColors.Transparent);
+                        using var paint = new SKPaint { IsAntialias = false, FilterQuality = SKFilterQuality.None };
+                        c.DrawBitmap(dst, new SKRect(trimL, trimT, trimR, trimB), new SKRect(0, 0, contentW, contentH), paint);
+                    }
+                    using var img = SKImage.FromBitmap(sub);
+                    png = img.Encode(SKEncodedImageFormat.Png, 100).ToArray();
+                }
+                // 返回图左上角对应的世界坐标：原 crop 左上 + 裁掉的透明偏移。
+                return new CroppedMap(png, cropX + trimL, cropY + trimT, contentW, contentH);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[MapService] CropFull: {ex.Message}"); return null; }
         });
+    }
+
+    /// <summary>
+    /// 扫描位图 alpha 通道，返回实际非透明内容的 bbox（左/上/右/下，半开区间）。
+    /// 用于 #6 裁紧四边全透明 padding。alpha==0 视为透明（仅裁真正空白边缘，不误伤抗锯齿淡边）。
+    /// 仅在 RGBA8888 位图上调用（CropFull 固定以此色域创建 dst）。
+    /// </summary>
+    private static (int l, int t, int r, int b) FindContentBBox(SKBitmap bmp)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w <= 0 || h <= 0) return (0, 0, 0, 0);
+        int left = w, top = h, right = 0, bottom = 0;
+        var span = bmp.GetPixelSpan();
+        int rowBytes = bmp.RowBytes;
+        for (int y = 0; y < h; y++)
+        {
+            int rowBase = y * rowBytes;
+            for (int x = 0; x < w; x++)
+            {
+                if (span[rowBase + x * 4 + 3] != 0) // RGBA8888: alpha 在字节 3
+                {
+                    if (x < left) left = x;
+                    if (x + 1 > right) right = x + 1;
+                    if (y < top) top = y;
+                    if (y + 1 > bottom) bottom = y + 1;
+                }
+            }
+        }
+        if (right <= left || bottom <= top) return (0, 0, 0, 0);
+        return (left, top, right, bottom);
     }
 
     /// <summary>
@@ -743,5 +801,23 @@ public class MapService
             ("103000000", "天空之城"),
             ("240010500", "神木村")
         };
+    }
+}
+
+/// <summary>
+/// CropFull 裁紧后的结果（#6）：Png 为裁去四边透明 padding 后的位图，
+/// WorldX/WorldY 为该图左上角对应的「地图世界坐标」，Width/Height 为实际像素尺寸。
+/// BackgroundWindow 据此把窗口尺寸设为实际可见内容尺寸，并暴露 EffectiveCrop 供宠物落地对齐使用。
+/// </summary>
+public sealed class CroppedMap
+{
+    public byte[] Png { get; }
+    public int WorldX { get; }
+    public int WorldY { get; }
+    public int Width { get; }
+    public int Height { get; }
+    public CroppedMap(byte[] png, int worldX, int worldY, int width, int height)
+    {
+        Png = png; WorldX = worldX; WorldY = worldY; Width = width; Height = height;
     }
 }
