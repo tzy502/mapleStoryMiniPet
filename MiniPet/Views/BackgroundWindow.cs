@@ -44,6 +44,10 @@ public class BackgroundWindow : Window
     public int EffectiveCropW { get; private set; }
     public int EffectiveCropH { get; private set; }
 
+    // #6：渲染（裁紧透明 padding）完成后触发。PetWindow 据此用 EffectiveCrop* 重新落地——
+    // 同步调用 SetMap 后渲染仍在后台线程，裁紧值未就绪；落地必须在渲染完成后。
+    public event Action? MapRendered;
+
     public BackgroundWindow()
     {
         Title = "MiniPet-Background";
@@ -123,6 +127,7 @@ public class BackgroundWindow : Window
                     EffectiveCropH = result.Height;
                     using var ms = new MemoryStream(result.Png);
                     _image.Source = new Bitmap(ms);
+                    MapRendered?.Invoke();
                 });
             }
             catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] Render: {ex.Message}"); }

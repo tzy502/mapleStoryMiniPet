@@ -52,6 +52,8 @@ public class PetWindow : Window
     private MenuItem? _bgMenu;
     private MenuItem? _bgQuickHideItem;
     private bool _isExiting;
+    private Models.MapInfo? _currentMap;          // #6：渲染完成回调落地时用
+    private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
     private int _lastOriginX;
     private int _lastOriginY;
     private int _lastFrameW;
@@ -75,6 +77,8 @@ public class PetWindow : Window
         _backgroundWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
         // #4：背景窗口交互模式 makeKeyAndOrderFront 改变 z-order 后，重新把宠物窗口提至最前
         _backgroundWindow.InteractiveChanged += () => Dispatcher.UIThread.Post(() => RaisePet());
+        // #6：渲染（裁紧）完成后再落地——同步时 EffectiveCrop* 尚未就绪。
+        _backgroundWindow.MapRendered += () => Dispatcher.UIThread.Post(OnMapRendered);
 
         Title = "MiniPet";
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -284,6 +288,7 @@ public class PetWindow : Window
                     var map = _mapService.LoadMap(settings.MapId);
                     if (map != null)
                     {
+                        _currentMap = map;
                         _backgroundWindow.SetMap(map, _mapService, settings.CropX, settings.CropY, settings.CropW, settings.CropH);
                         _backgroundWindow.Show();
                         RaisePet();
@@ -899,21 +904,42 @@ public class PetWindow : Window
     /// 把宠物图片中心点的最底部对齐到地图地面（foothold）：
     /// 横向居中于背景窗口，纵向让精灵图底部落在地面线上（foothold 缺失时落在背景窗口底部）。
     /// </summary>
+    /// <summary>#6：渲染（裁紧透明 padding）完成回调——EffectiveCrop* 此刻才就绪，此刻落地才精准。</summary>
+    private void OnMapRendered()
+    {
+        if (_placePetAfterRender && _currentMap != null)
+        {
+            _placePetAfterRender = false;
+            if (_backgroundWindow.IsVisible) PlacePetOnMapGround(_currentMap, 0, 0);
+        }
+    }
+
+    /// <summary>
+    /// 把宠物图片中心点的最底部对齐到地图地面（foothold）：
+    /// 横向居中于背景窗口，纵向让精灵图底部落在地面线上（foothold 缺失时落在背景窗口底部）。
+    /// #6：用 BackgroundWindow.EffectiveCrop*（裁紧后的世界坐标 crop + 实际尺寸）；
+    ///     入参 cropX/cropY 不再可信（裁紧后窗口顶部对应世界 y = cropY + 裁掉的顶部透明行数）。
+    /// </summary>
     private void PlacePetOnMapGround(MapInfo map, int cropX, int cropY)
     {
         try
         {
             var bg = _backgroundWindow;
-            int bgW = (int)bg.Width;
-            int bgH = (int)bg.Height;
+            int ecX = bg.EffectiveCropX, ecY = bg.EffectiveCropY;
+            int bgW = bg.EffectiveCropW > 0 ? bg.EffectiveCropW : (int)bg.Width;
+            int bgH = bg.EffectiveCropH > 0 ? bg.EffectiveCropH : (int)bg.Height;
             int centerScreenX = bg.Position.X + bgW / 2;
-            // crop 中心世界 x = cropX + bgW/2；窗口顶部对应世界 y = cropY
+            // crop 中心世界 x = ecX + bgW/2；窗口顶部对应世界 y = ecY
             int groundScreenY;
-            int? gy = MapService.GetGroundY(map, cropX + bgW / 2);
+            int? gy = MapService.GetGroundY(map, ecX + bgW / 2);
             if (gy != null)
-                groundScreenY = bg.Position.Y + (gy.Value - cropY);
+            {
+                groundScreenY = bg.Position.Y + (gy.Value - ecY);
+            }
             else
+            {
                 groundScreenY = bg.Position.Y + bgH - 24;
+            }
             int fw = (int)Width;
             int fh = (int)Height;
             Position = new PixelPoint(centerScreenX - fw / 2, groundScreenY - fh);
@@ -1020,10 +1046,11 @@ public class PetWindow : Window
         {
             var map = _mapService.LoadMap(sel.Id);
             if (map == null) return;
+            _currentMap = map;
             _backgroundWindow.SetMap(map, _mapService, sel.CropX, sel.CropY, sel.CropW, sel.CropH);
             _backgroundWindow.Show();
             RaisePet();
-            PlacePetOnMapGround(map, sel.CropX, sel.CropY);
+            _placePetAfterRender = true; // 落地推迟到渲染完成（OnMapRendered），裁紧值此时才就绪
             var s = _configService.LoadSettings();
             s.MapId = sel.Id;
             s.CropX = sel.CropX; s.CropY = sel.CropY; s.CropW = sel.CropW; s.CropH = sel.CropH;
