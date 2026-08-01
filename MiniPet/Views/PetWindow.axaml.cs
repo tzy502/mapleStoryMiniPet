@@ -301,15 +301,29 @@ public class PetWindow : Window
                         _currentMap = map;
                         if (settings.MapMode == 2)
                         {
-                            _mapViewportWindow.SetMap(map, _mapService);
+                            // 模式2：摄像机不加载 life/portal（back 保留——视差是摄像机特色）
+                            _mapService.MapShowBack = true;
+                            _mapService.MapShowLife = false;
+                            _mapService.MapShowPortal = false;
+                            _mapService.MapShowObj = true;
+                            _mapService.MapShowTile = true;
+                            _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                             _mapViewportWindow.Show();
+                            RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
                         }
                         else
                         {
+                            // 模式1：静态默认不加载 back/life/portal（仅 obj/tile）
+                            _mapService.MapShowBack = false;
+                            _mapService.MapShowLife = false;
+                            _mapService.MapShowPortal = false;
+                            _mapService.MapShowObj = true;
+                            _mapService.MapShowTile = true;
+                            _mapService.InvalidateFullRenderCache(); // 强制按新 flag 重新渲染
                             _backgroundWindow.SetMap(map, _mapService, settings.CropX, settings.CropY, settings.CropW, settings.CropH);
                             _backgroundWindow.Show();
+                            RaisePet();
                         }
-                        RaisePet();
                     }
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AutoMap: {ex.Message}"); }
@@ -1061,9 +1075,15 @@ public class PetWindow : Window
                         _currentMap = map;
                         _backgroundWindow.HideMap();
                         _backgroundWindow.Hide();
-                        _mapViewportWindow.SetMap(map, _mapService);
+                        // 模式2：摄像机不加载 life/portal（back 保留——视差是摄像机特色）
+                        _mapService.MapShowBack = true;
+                        _mapService.MapShowLife = false;
+                        _mapService.MapShowPortal = false;
+                        _mapService.MapShowObj = true;
+                        _mapService.MapShowTile = true;
+                        _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                         _mapViewportWindow.Show();
-                        RaisePet();
+                        RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
                         s.MapMode = 2;
                         _configService.SaveSettings(s);
                     }
@@ -1087,6 +1107,13 @@ public class PetWindow : Window
             var s = _configService.LoadSettings();
             if (_currentMap != null && !string.IsNullOrEmpty(s.MapId) && _wzService.IsLoaded)
             {
+                // 模式1：静态默认不加载 back/life/portal（仅 obj/tile）
+                _mapService.MapShowBack = false;
+                _mapService.MapShowLife = false;
+                _mapService.MapShowPortal = false;
+                _mapService.MapShowObj = true;
+                _mapService.MapShowTile = true;
+                _mapService.InvalidateFullRenderCache(); // 强制按新 flag 重新渲染
                 _backgroundWindow.SetMap(_currentMap, _mapService, s.CropX, s.CropY, s.CropW, s.CropH);
                 _backgroundWindow.Show();
                 RaisePet();

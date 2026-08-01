@@ -37,6 +37,11 @@ public class MapViewportWindow : Window
     private Point _dragStart;
     private float _dragStartCamX, _dragStartCamY;
 
+    // 右键拖动窗口位置状态（屏幕坐标 → Position 增量，仿 BackgroundWindow.OnPointerMoved）
+    private bool _winDragging;
+    private Point _winDragStartScreen;
+    private PixelPoint _winDragStartWindow;
+
     public event Action? RequestHide;
     public event Action? RequestSwitchMap;
 
@@ -52,7 +57,7 @@ public class MapViewportWindow : Window
         WindowDecorations = WindowDecorations.None;
         Background = Brushes.Transparent;
         TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
-        CanResize = false;
+        CanResize = true; // #4 摄像机窗口可设置大小
 
         // 始终交互（非点击穿透）：Panel 透明背景使其可命中
         var panel = new Panel { Background = Brushes.Transparent };
@@ -64,17 +69,13 @@ public class MapViewportWindow : Window
         PointerMoved += OnPointerMoved;
         PointerReleased += OnPointerReleased;
         PointerWheelChanged += OnPointerWheelChanged;
+        // #4 窗口缩放后立即按新 (int)Width/(int)Height 重渲（bitmap 大小=窗口大小 1:1）
+        Resized += (_, _) => KickRender();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) }; // ~30fps
         _timer.Tick += OnTimerTick;
 
-        var exitItem = new MenuItem { Header = "退出摄像机模式" };
-        exitItem.Click += (_, _) => RequestHide?.Invoke();
-        var switchItem = new MenuItem { Header = "切换地图…" };
-        switchItem.Click += (_, _) => RequestSwitchMap?.Invoke();
-        var hideItem = new MenuItem { Header = "隐藏背景" };
-        hideItem.Click += (_, _) => RequestHide?.Invoke();
-        ContextMenu = new ContextMenu { Items = { exitItem, new Separator(), switchItem, hideItem } };
+        // #4 去掉摄像机窗口自身的右键 ContextMenu（退出/切换地图/隐藏 已在桌宠右键菜单「背景模式」里有，避免与右键拖动冲突）
     }
 
     /// <summary>
@@ -181,10 +182,15 @@ public class MapViewportWindow : Window
         var point = e.GetCurrentPoint(this);
         if (point.Properties.IsRightButtonPressed)
         {
-            ContextMenu?.Open(this);
+            // #4 右键：移动窗口位置（手动 Position delta，仿 BackgroundWindow 拖动实现）
+            _winDragging = true;
+            _winDragStartScreen = e.GetPosition(null); // 屏幕坐标（DIP）
+            _winDragStartWindow = Position;
+            try { e.Pointer.Capture(this); }
+            catch (Exception ex) { Console.Error.WriteLine($"[MapViewportWindow] WinPointerCapture: {ex.Message}"); }
             return;
         }
-        // 左键：开始拖动相机
+        // 左键：开始拖动相机（camX/camY += −dx/zoom）
         _dragging = true;
         _dragStart = e.GetPosition(this); // DIP 坐标
         _dragStartCamX = _camX;
@@ -195,10 +201,20 @@ public class MapViewportWindow : Window
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        // #4 右键拖动窗口：屏幕 DIP 差 × RenderScaling → 物理像素差，叠加到 startWindow
+        if (_winDragging)
+        {
+            var current = e.GetPosition(null);
+            var scale = RenderScaling;
+            int winDx = (int)((current.X - _winDragStartScreen.X) * scale);
+            int winDy = (int)((current.Y - _winDragStartScreen.Y) * scale);
+            Position = new PixelPoint(_winDragStartWindow.X + winDx, _winDragStartWindow.Y + winDy);
+            return;
+        }
         if (!_dragging) return;
-        var current = e.GetPosition(this);
-        float dx = (float)(current.X - _dragStart.X);
-        float dy = (float)(current.Y - _dragStart.Y);
+        var cur = e.GetPosition(this);
+        float dx = (float)(cur.X - _dragStart.X);
+        float dy = (float)(cur.Y - _dragStart.Y);
         // 屏幕像素差 → 世界坐标差：camX -= dx/zoom（拖动方向与相机移动方向相反：右拖→相机左移）
         _camX = _dragStartCamX - dx / _zoom;
         _camY = _dragStartCamY - dy / _zoom;
@@ -208,6 +224,14 @@ public class MapViewportWindow : Window
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        // #4 右键拖动窗口结束
+        if (_winDragging)
+        {
+            _winDragging = false;
+            try { e.Pointer.Capture(null); }
+            catch (Exception ex) { Console.Error.WriteLine($"[MapViewportWindow] WinPointerRelease: {ex.Message}"); }
+            return;
+        }
         if (!_dragging) return;
         _dragging = false;
         try { e.Pointer.Capture(null); }
