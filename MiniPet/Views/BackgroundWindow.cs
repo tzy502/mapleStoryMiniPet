@@ -228,28 +228,27 @@ public class BackgroundWindow : Window
     [DllImport("/usr/lib/libobjc.dylib", CharSet = CharSet.Ansi)]
     private static extern IntPtr sel_registerName(string name);
 
-    // ── macOS 全局鼠标坐标（不依赖窗口大小，避免超大透明窗口下 Avalonia GetPosition(null) 跳变）──
-    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-    private static extern IntPtr CGEventCreate(IntPtr source);
+    // ── macOS 全局鼠标坐标：NSEvent.mouseLocation（AppKit 原生，返回左下原点 DIP，无需辅助功能权限）──
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NSPoint { public double X; public double Y; }
 
-    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
-    private static extern int CGEventGetLocation(IntPtr eventRef, out double x, out double y);
+    [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
+    private static extern NSPoint objc_msgSend_NSPoint(IntPtr receiver, IntPtr selector);
 
-    /// <summary>取全局鼠标坐标（DIP，左上原点）。CGEvent 的 y 是左下原点向上，需按屏幕高度翻转。</summary>
+    [DllImport("/usr/lib/libobjc.dylib")]
+    private static extern IntPtr objc_getClass(string name);
+
+    /// <summary>取全局鼠标坐标（DIP，左上原点）。NSEvent.mouseLocation 是左下原点 y 向上，翻转成 Avalonia 屏幕坐标。</summary>
     private Point GetGlobalMousePosition()
     {
         try
         {
-            var ev = CGEventCreate(IntPtr.Zero);
-            if (ev == IntPtr.Zero) return new Point(0, 0);
-            CGEventGetLocation(ev, out double x, out double y);
-            var scale = RenderScaling > 0 ? RenderScaling : 1;
-            // 主屏高度（物理像素）：Bounds 是 DIP，乘 scale 得物理像素
-            double screenH = 1440 * scale;
+            var cls = objc_getClass("NSEvent");
+            var sel = sel_registerName("mouseLocation");
+            var p = objc_msgSend_NSPoint(cls, sel);
             var scr = Screens?.Primary;
-            if (scr != null && scr.Bounds.Height > 0) screenH = scr.Bounds.Height * scale;
-            // CG y 向上 → 翻转成左上原点
-            return new Point(x / scale, (screenH - y) / scale);
+            double screenH = scr != null && scr.Bounds.Height > 0 ? scr.Bounds.Height : 1440;
+            return new Point(p.X, screenH - p.Y);
         }
         catch
         {

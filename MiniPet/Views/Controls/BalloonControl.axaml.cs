@@ -55,8 +55,9 @@ public partial class BalloonControl : UserControl
                 Height = renderedBitmap.PixelSize.Height;
                 Canvas.SetLeft(BalloonText, 20);
                 Canvas.SetTop(BalloonText, 20);
-                BalloonText.Width = Width - 40;
-                BalloonText.Height = Height - 40 - (renderedBitmap.PixelSize.Height > 60 ? 30 : 0);
+                // 防止气泡高度小于 40 时 Height 计算为负（Avalonia Height 不允许负值，会抛异常）
+                BalloonText.Width = Math.Max(0, Width - 40);
+                BalloonText.Height = Math.Max(0, Height - 40 - (renderedBitmap.PixelSize.Height > 60 ? 30 : 0));
             }
 
             // 淡入 0.2s

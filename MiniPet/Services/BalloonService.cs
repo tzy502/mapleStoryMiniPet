@@ -108,6 +108,10 @@ namespace MiniPet.Services
             int cornerW = nw.Width;
             int cornerH = nw.Height;
 
+            // 尺寸合法性保护：角块异常（宽/高 <= 0）时直接放弃本次渲染，
+            // 避免 new SKBitmap(负尺寸) 返回无效句柄 → SKImage.FromBitmap native 崩溃（try-catch 抓不到 SIGSEGV）
+            if (cornerW <= 0 || cornerH <= 0) return null;
+
             // 测量文字尺寸
             int textMaxW = Math.Max(100, cornerW * 4);
             var textSize = MeasureText(text, c.Height, textMaxW);
@@ -117,6 +121,9 @@ namespace MiniPet.Services
 
             int totalW = cornerW + contentW + cornerW;
             int totalH = cornerH + contentH + cornerH + (arrow?.Height ?? 0);
+
+            // 最终尺寸合法性保护（负尺寸 SKBitmap 会 native 崩）
+            if (totalW <= 0 || totalH <= 0) return null;
 
             // 创建目标位图
             var result = new SKBitmap(totalW, totalH, SKColorType.Bgra8888, SKAlphaType.Premul);
