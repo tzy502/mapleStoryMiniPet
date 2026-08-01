@@ -31,6 +31,7 @@ public class PetWindow : Window
     private readonly PaperdollService _paperdoll;
     private readonly MapService _mapService;
     private readonly BackgroundWindow _backgroundWindow;
+    private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
     private readonly Random _rng = new();
     private int _paperdollGen;
@@ -51,6 +52,8 @@ public class PetWindow : Window
     private MenuItem? _bgInteractiveItem;
     private MenuItem? _bgMenu;
     private MenuItem? _bgQuickHideItem;
+    private MenuItem? _modeStaticItem;
+    private MenuItem? _modeCameraItem;
     private bool _isExiting;
     private Models.MapInfo? _currentMap;          // #6：渲染完成回调落地时用
     private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
@@ -79,6 +82,11 @@ public class PetWindow : Window
         _backgroundWindow.InteractiveChanged += () => Dispatcher.UIThread.Post(() => RaisePet());
         // #6：渲染（裁紧）完成后再落地——同步时 EffectiveCrop* 尚未就绪。
         _backgroundWindow.MapRendered += () => Dispatcher.UIThread.Post(OnMapRendered);
+
+        // 模式2 摄像机窗口：RequestHide → 切回静态模式（与「背景模式」菜单一致）；RequestSwitchMap → 进设置中心。
+        _mapViewportWindow = new MapViewportWindow();
+        _mapViewportWindow.RequestHide += () => Dispatcher.UIThread.Post(() => SwitchToStaticMode());
+        _mapViewportWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
 
         Title = "MiniPet";
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -192,6 +200,7 @@ public class PetWindow : Window
                 _trayService.HideTrayIcon();
                 _settingsWindow?.Close();
                 _backgroundWindow.Close();
+                _mapViewportWindow.Close();
                 Close();
                 Dispatcher.UIThread.InvokeShutdown();
                 Environment.Exit(0);
@@ -280,7 +289,8 @@ public class PetWindow : Window
                 }
             }
 
-            // 开机自动展示背景地图（穿透态）；clamping/归一化交给 SetMap/CropFull（F12）
+            // 开机自动展示背景地图：按 settings.MapMode 决定静态（模式1）或摄像机（模式2）。
+            // clamping/归一化交给 SetMap/CropFull（F12）/ MapViewportWindow.SetMap。
             if (settings != null && !string.IsNullOrEmpty(settings.MapId) && _wzService.IsLoaded)
             {
                 try
@@ -289,8 +299,16 @@ public class PetWindow : Window
                     if (map != null)
                     {
                         _currentMap = map;
-                        _backgroundWindow.SetMap(map, _mapService, settings.CropX, settings.CropY, settings.CropW, settings.CropH);
-                        _backgroundWindow.Show();
+                        if (settings.MapMode == 2)
+                        {
+                            _mapViewportWindow.SetMap(map, _mapService);
+                            _mapViewportWindow.Show();
+                        }
+                        else
+                        {
+                            _backgroundWindow.SetMap(map, _mapService, settings.CropX, settings.CropY, settings.CropW, settings.CropH);
+                            _backgroundWindow.Show();
+                        }
                         RaisePet();
                     }
                 }
@@ -606,6 +624,16 @@ public class PetWindow : Window
             _bgQuickHideItem.Click += (_, _) => QuickHideBackground();
             cm.Items.Add(_bgQuickHideItem);
 
+            // ── 背景模式（单选：①静态图片 ②摄像机）—— Opening 时按 settings.MapMode 刷新勾选态 ──
+            var modeMenu = new MenuItem { Header = "🎥 背景模式" };
+            _modeStaticItem = new MenuItem { Header = "🖼️ 静态图片" };
+            _modeCameraItem = new MenuItem { Header = "📷 摄像机" };
+            _modeStaticItem.Click += (_, _) => SwitchToStaticMode();
+            _modeCameraItem.Click += (_, _) => SwitchToCameraMode();
+            modeMenu.Items.Add(_modeStaticItem);
+            modeMenu.Items.Add(_modeCameraItem);
+            cm.Items.Add(modeMenu);
+
             // ── 切换气泡 ──
             var balloonItem = new MenuItem { Header = "切换气泡" };
             balloonItem.Items.Add(new MenuItem { Header = "设置中心 > 气泡设置" });
@@ -668,6 +696,7 @@ public class PetWindow : Window
                     _trayService.HideTrayIcon();
                     _settingsWindow?.Close();
                     _backgroundWindow.Close();
+                    _mapViewportWindow.Close();
                     _eventBus.Publish(EventType.AppExit);
                     Close();
                     Dispatcher.UIThread.InvokeShutdown();
@@ -764,6 +793,14 @@ public class PetWindow : Window
             {
                 _bgQuickHideItem.IsEnabled = _backgroundWindow.IsVisible;
             }
+            // 背景模式单选勾选态：按 settings.MapMode 刷新（摄像机=2，其他=静态）
+            try
+            {
+                var mode = _configService.LoadSettings().MapMode;
+                if (_modeStaticItem != null) _modeStaticItem.IsChecked = mode != 2;
+                if (_modeCameraItem != null) _modeCameraItem.IsChecked = mode == 2;
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshModeCheck: {ex.Message}"); }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshAnimationMenu: {ex.Message}"); }
     }
@@ -998,6 +1035,66 @@ public class PetWindow : Window
             });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ToggleBackground: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 切换到摄像机模式（模式2）：后台 LoadMap（失败/无图→进设置中心背景 tab）→
+    /// 关静态（BackgroundWindow.HideMap+Hide）→ MapViewportWindow.SetMap+Show + RaisePet；持久化 MapMode=2。
+    /// 摄像机窗口的拖动/缩放由其内部处理，不触发 RaisePet 干扰；仅 Show/Hide 时 RaisePet。
+    /// </summary>
+    private void SwitchToCameraMode()
+    {
+        try
+        {
+            var s = _configService.LoadSettings();
+            if (string.IsNullOrEmpty(s.MapId) || !_wzService.IsLoaded) { OpenBackgroundTab(); return; }
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                MapInfo? map = null;
+                try { map = _mapService.LoadMap(s.MapId); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CameraMode LoadMap: {ex.Message}"); }
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (map == null) { OpenBackgroundTab(); return; }
+                        _currentMap = map;
+                        _backgroundWindow.HideMap();
+                        _backgroundWindow.Hide();
+                        _mapViewportWindow.SetMap(map, _mapService);
+                        _mapViewportWindow.Show();
+                        RaisePet();
+                        s.MapMode = 2;
+                        _configService.SaveSettings(s);
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CameraMode Show: {ex.Message}"); }
+                });
+            });
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToCameraMode: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 切换到静态图片模式（模式1）：Stop 摄像机（停 timer+清缓存+Hide）→
+    /// 复用 _currentMap 恢复 BackgroundWindow（无图则仅隐藏）；持久化 MapMode=1。
+    /// </summary>
+    private void SwitchToStaticMode()
+    {
+        try
+        {
+            _mapViewportWindow.Stop();
+            _mapViewportWindow.Hide();
+            var s = _configService.LoadSettings();
+            if (_currentMap != null && !string.IsNullOrEmpty(s.MapId) && _wzService.IsLoaded)
+            {
+                _backgroundWindow.SetMap(_currentMap, _mapService, s.CropX, s.CropY, s.CropW, s.CropH);
+                _backgroundWindow.Show();
+                RaisePet();
+            }
+            s.MapMode = 1;
+            _configService.SaveSettings(s);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToStaticMode: {ex.Message}"); }
     }
 
     /// <summary>Opening 时重建「切换背景」子菜单：开启/关闭 + 最近使用×4（空→占位）+ 调整地图。</summary>

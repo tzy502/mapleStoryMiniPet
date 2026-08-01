@@ -13,6 +13,8 @@ namespace MiniPet.Models
         public string CurrentMobId { get; set; } = string.Empty;
         public string CurrentEntityType { get; set; } = string.Empty;
         public string MapId { get; set; } = string.Empty;
+        // 背景模式：1=静态整图（BackgroundWindow），2=摄像机（MapViewportWindow，左键拖动相机 + 滚轮缩放 + back 视差实时）
+        public int MapMode { get; set; } = 1;
         public int CropX { get; set; }
         public int CropY { get; set; }
         public int CropW { get; set; }
