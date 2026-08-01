@@ -944,10 +944,10 @@ public class PetWindow : Window
         return type.Equals("Npc", StringComparison.OrdinalIgnoreCase) ? "Npc" : "Mob";
     }
 
-    /// <summary>把宠物窗口重新提到背景窗口之上（macOS 同级 Topmost z-order 脆弱的兜底）。</summary>
+    /// <summary>激活桌宠窗口焦点（背景窗口已降级 Topmost=false，PetWindow Topmost=true 天然在上，无需翻转）。</summary>
     private void RaisePet()
     {
-        try { Topmost = false; Topmost = true; Activate(); }
+        try { Activate(); }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RaisePet: {ex.Message}"); }
     }
 
