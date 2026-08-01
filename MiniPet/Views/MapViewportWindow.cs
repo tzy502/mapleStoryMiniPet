@@ -51,7 +51,7 @@ public class MapViewportWindow : Window
         Width = 800;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Topmost = true;
+        Topmost = false;
         ShowActivated = false;
         ShowInTaskbar = false;
         WindowDecorations = WindowDecorations.None;

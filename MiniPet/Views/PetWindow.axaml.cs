@@ -57,10 +57,8 @@ public class PetWindow : Window
     private bool _isExiting;
     private Models.MapInfo? _currentMap;          // #6：渲染完成回调落地时用
     private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
-    private int _lastOriginX;
-    private int _lastOriginY;
-    private int _lastFrameW;
-    private int _lastFrameH;
+    private double _lastFrameW;
+    private double _lastFrameH;
     private double _scale = 1.0;
     private string _currentEntityType = "Mob";
 
@@ -136,8 +134,6 @@ public class PetWindow : Window
         _timer.Tick += OnTimerTick;
         _balloonTimer = new DispatcherTimer();
         _animService.EnableRandomIdle(true);
-        _lastOriginX = 0;
-        _lastOriginY = 0;
 
         // 动画启动由 LoadDefaultPet 控制（WZ 加载后或缓存命中后）
 
@@ -505,28 +501,16 @@ public class PetWindow : Window
                 int fh = strip?.FrameHeight ?? 0;
                 _spriteCanvas.SetFrame(pngData, ox, oy, _scale);
 
-                // 窗口大小 = 帧像素 × 缩放；只在尺寸变化时 resize，避免每帧重布局卡顿
-                int scaledW = fw > 0 ? (int)(fw * _scale) : 0;
-                int scaledH = fh > 0 ? (int)(fh * _scale) : 0;
-                if (scaledW > 0 && scaledH > 0 && (scaledW != _lastFrameW || scaledH != _lastFrameH))
+                // 窗口大小 = 帧像素 × 缩放；只在尺寸变化时 resize，用 double 避免 int 截断抖动
+                double scaledW = fw > 0 ? fw * _scale : 0;
+                double scaledH = fh > 0 ? fh * _scale : 0;
+                if (scaledW > 0 && scaledH > 0 && (Math.Abs(scaledW - _lastFrameW) > 0.5 || Math.Abs(scaledH - _lastFrameH) > 0.5))
                 {
                     Width = scaledW;
                     Height = scaledH;
                     _lastFrameW = scaledW;
                     _lastFrameH = scaledH;
                 }
-
-                // 窗口位置补偿锚点偏移（锚点也乘缩放），使精灵图锚点对齐屏幕固定位置
-                int oxScaled = (int)(ox * _scale);
-                int oyScaled = (int)(oy * _scale);
-                int dx = oxScaled - _lastOriginX;
-                int dy = oyScaled - _lastOriginY;
-                if (dx != 0 || dy != 0)
-                {
-                    Position = new PixelPoint(Position.X - dx, Position.Y - dy);
-                }
-                _lastOriginX = oxScaled;
-                _lastOriginY = oyScaled;
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";
@@ -944,10 +928,10 @@ public class PetWindow : Window
         return type.Equals("Npc", StringComparison.OrdinalIgnoreCase) ? "Npc" : "Mob";
     }
 
-    /// <summary>把宠物窗口重新提到背景窗口之上（macOS 同级 Topmost z-order 脆弱的兜底）。</summary>
+    /// <summary>激活桌宠窗口焦点（背景窗口已降级 Topmost=false，PetWindow Topmost=true 天然在上，无需翻转）。</summary>
     private void RaisePet()
     {
-        try { Topmost = false; Topmost = true; Activate(); }
+        try { Activate(); }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RaisePet: {ex.Message}"); }
     }
 

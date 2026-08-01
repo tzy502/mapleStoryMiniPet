@@ -14,6 +14,9 @@ public partial class SpriteCanvas : UserControl
     private Bitmap? _currentBitmap;
     private int _originX;
     private int _originY;
+    private int _lastPixelW;
+    private int _lastPixelH;
+    private double _lastScale = -1;
 
     public SpriteCanvas()
     {
@@ -39,18 +42,25 @@ public partial class SpriteCanvas : UserControl
         _originX = originX;
         _originY = originY;
 
-        // 缩放：容器与图片尺寸 = 实际像素 × scale（Image 默认 Stretch=Uniform，设宽高后等比填满，不变形）
         double s = scale > 0 ? scale : 1.0;
-        double w = size.Width * s;
-        double h = size.Height * s;
-        this.Width = w;
-        this.Height = h;
-        RootCanvas.Width = w;
-        RootCanvas.Height = h;
-        SpriteImage.Width = w;
-        SpriteImage.Height = h;
+        // 尺寸不变时不重设 Width/Height，避免每帧触发 Avalonia 布局传递导致亚像素抖动
+        bool sizeChanged = (size.Width != _lastPixelW || size.Height != _lastPixelH || s != _lastScale);
+        if (sizeChanged)
+        {
+            double w = size.Width * s;
+            double h = size.Height * s;
+            this.Width = w;
+            this.Height = h;
+            RootCanvas.Width = w;
+            RootCanvas.Height = h;
+            SpriteImage.Width = w;
+            SpriteImage.Height = h;
+            _lastPixelW = size.Width;
+            _lastPixelH = size.Height;
+            _lastScale = s;
+        }
+        // Source 必须每帧设（换帧核心）
         SpriteImage.Source = _currentBitmap;
-        // 图片放在 (0,0)，不偏移
         Canvas.SetLeft(SpriteImage, 0);
         Canvas.SetTop(SpriteImage, 0);
     }
