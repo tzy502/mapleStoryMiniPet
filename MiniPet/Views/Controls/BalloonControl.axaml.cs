@@ -29,7 +29,7 @@ public partial class BalloonControl : UserControl
     }
 
     /// <summary>
-    /// 显示气泡（淡入 0.2s -> 自动 3~5s 后淡出 0.3s）
+    /// 显示气泡（常驻：淡入 0.2s 后保持显示，不自动隐藏；新气泡到来时替换内容）。
     /// </summary>
     public async Task ShowBalloon(string text, BalloonData balloonData, Bitmap? renderedBitmap = null)
     {
@@ -50,32 +50,22 @@ public partial class BalloonControl : UserControl
 
             if (renderedBitmap != null)
             {
+                // PNG 已含文字（BalloonService.RenderBalloon 绘制），不再叠加 TextBlock（旧版双重渲染 → 黑字盖白字）
                 BalloonImage.Source = renderedBitmap;
+                BalloonText.IsVisible = false;
                 Width = renderedBitmap.PixelSize.Width;
                 Height = renderedBitmap.PixelSize.Height;
-                Canvas.SetLeft(BalloonText, 20);
-                Canvas.SetTop(BalloonText, 20);
-                // 防止气泡高度小于 40 时 Height 计算为负（Avalonia Height 不允许负值，会抛异常）
-                BalloonText.Width = Math.Max(0, Width - 40);
-                BalloonText.Height = Math.Max(0, Height - 40 - (renderedBitmap.PixelSize.Height > 60 ? 30 : 0));
             }
-
-            // 淡入 0.2s
-            await FadeTo(1, TimeSpan.FromSeconds(0.2), cts.Token);
-
-            if (cts.Token.IsCancellationRequested) return;
-
-            // 自动隐藏：3~5s 随机
-            _autoHideCts = new CancellationTokenSource();
-            var autoCts = _autoHideCts;
-            var displayMs = _rng.Next(3000, 5001);
-            try
+            else
             {
-                await Task.Delay(displayMs, autoCts.Token);
-                if (!autoCts.Token.IsCancellationRequested)
-                    await HideBalloon();
+                BalloonText.IsVisible = true;
+                BalloonImage.Source = null;
+                Width = 260;
+                Height = 90;
             }
-            catch (TaskCanceledException) { }
+
+            // 淡入 0.2s，然后常驻（不自动隐藏，等待下一条替换）
+            await FadeTo(1, TimeSpan.FromSeconds(0.2), cts.Token);
         }
         catch (Exception ex)
         {

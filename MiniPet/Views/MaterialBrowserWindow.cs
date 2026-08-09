@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MiniPet.Models;
 using MiniPet.Services;
 
 namespace MiniPet.Views;
@@ -43,7 +44,24 @@ public partial class MaterialBrowserWindow : Window
     private List<MaterialEntry> _filteredEntries;
     private string _activeCategory = "全部";
     private readonly WzService? _wzService;
+    private readonly ConfigService? _configService;
+    private readonly PaperdollService? _paperdoll;
+    private readonly string? _initialCategory;
+    // 纸娃娃草稿外观（素材库选件用；穿身上预览 + 应用到主窗口）
+    private CharacterAppearance _draftAppearance = CreateDefaultDraft();
     private readonly List<string> _previewActions = new() { "stand", "say", "mouse", "move", "hand", "laugh", "eye", "fly", "die" };
+
+    private static CharacterAppearance CreateDefaultDraft() => new()
+    {
+        Gender = 0,
+        Hair = new ItemInfo { Id = "30000" },
+        Face = new ItemInfo { Id = "20000" },
+    };
+
+    /// <summary>纸娃娃部件分类（皮肤/发型/脸型/各部位/坐骑/椅子）：选中走草稿 + 穿身上预览。</summary>
+    private static bool IsPaperdollCategory(string category) =>
+        category is "皮肤" or "发型" or "脸型" or "帽子" or "上衣" or "长袍" or "裤子" or "鞋子"
+            or "手套" or "武器" or "盾牌" or "披风" or "饰品" or "坐骑" or "椅子";
 
     // ── 分页 ──
     private int _currentPage = 1;
@@ -51,31 +69,48 @@ public partial class MaterialBrowserWindow : Window
     private int _totalPages = 1;
 
     // ── UI 引用 ──
-    private TextBlock? _pageLabel;
+    private TextBox? _pageLabel;
     private Button? _prevBtn;
     private Button? _nextBtn;
     private TextBox? _searchInput;
     private ListBox? _itemList;
     private Border? _previewPanel;
+    private Border? _previewBox;
     private TextBlock? _detailTitle;
     private TextBlock? _detailInfo;
     private TextBlock? _detailType;
+    private Button? _selectBtn;
+    private ComboBox? _outfitCombo;
     private readonly Dictionary<string, Border> _categoryButtons = new();
 
     // ── 事件 ──
-    public event Action<string, string>? OnMaterialSelected;
+    public event Action<string, string, string>? OnMaterialSelected;
+    /// <summary>纸娃娃草稿应用到主窗口（素材库选件完成后）。</summary>
+    public event Action<CharacterAppearance>? OnPaperdollDraftApplied;
 
     /// <summary>
     /// 素材条目
     /// </summary>
     public record MaterialEntry(string Category, string Id, string Name, string Emoji = "📦")
     {
+        /// <summary>缩略图（默认动画 stand 首帧，后台懒加载缓存；胶水规则 2026-08-09）。</summary>
+        public Bitmap? Thumb { get; set; }
         public string Display => $"{Emoji} {Name}  [{Id}]";
     }
 
-    public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null)
+    public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null, PaperdollService? paperdoll = null, string? initialCategory = null)
     {
         _wzService = wzService;
+        _configService = configService;
+        _paperdoll = paperdoll;
+        _initialCategory = initialCategory;
+        // 草稿初始化为当前主窗口搭配（如有），素材库选件延续当前外观
+        try
+        {
+            var saved = configService?.LoadSettings().CurrentPaperdoll;
+            if (saved != null) _draftAppearance = CloneDraft(saved);
+        }
+        catch { }
         var hasWzConfig = false;
         if (wzService != null && !wzService.IsLoaded && configService != null)
         {
@@ -150,8 +185,8 @@ public partial class MaterialBrowserWindow : Window
 
         Content = root;
 
-        // 初始加载全部
-        SelectCategory("全部");
+        // 初始加载（有预选分类则选该分类）
+        SelectCategory(_initialCategory ?? "全部");
     }
 
     // ═══════════════════════════════════════════
@@ -171,7 +206,7 @@ public partial class MaterialBrowserWindow : Window
         };
         stack.Children.Add(title);
 
-        var categories = new[] { "全部", "怪物", "NPC", "装备", "发型", "脸型", "坐骑", "椅子" };
+        var categories = new[] { "全部", "怪物", "NPC", "皮肤", "发型", "脸型", "帽子", "上衣", "长袍", "裤子", "鞋子", "手套", "武器", "盾牌", "披风", "饰品", "坐骑", "椅子" };
         foreach (var cat in categories)
         {
             var btn = BuildCategoryButton(cat);
@@ -281,7 +316,7 @@ public partial class MaterialBrowserWindow : Window
 
         var stack = new StackPanel { Margin = new Thickness(14, 16), Spacing = 10 };
 
-        // 预览区
+        // 预览区（独立字段：LoadPreview 只替换预览框内容，保留下方标题/信息/按钮行）
         var previewBox = new Border
         {
             Height = 180,
@@ -290,8 +325,10 @@ public partial class MaterialBrowserWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromArgb(40, 94, 156, 255)),
             BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Top
+            VerticalAlignment = VerticalAlignment.Top,
+            ClipToBounds = true
         };
+        _previewBox = previewBox;
 
         var placeholder = new TextBlock
         {
@@ -337,7 +374,7 @@ public partial class MaterialBrowserWindow : Window
         // 按钮行
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
 
-        var selectBtn = new Button
+        _selectBtn = new Button
         {
             Content = "✅ 选择",
             FontSize = 11,
@@ -351,16 +388,22 @@ public partial class MaterialBrowserWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center
         };
-        selectBtn.Click += (_, _) =>
+        _selectBtn.Click += (_, _) =>
         {
-            if (_itemList?.SelectedItem is MaterialEntry entry)
+            if (_itemList?.SelectedItem is not MaterialEntry entry) return;
+            if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
             {
-                Console.WriteLine($"[MaterialBrowser] OnMaterialSelected invoked: Id={entry.Id}, Name={entry.Name}");
-                OnMaterialSelected?.Invoke(entry.Id, entry.Name);
+                // 纸娃娃部件：草稿已实时合成预览，点按钮应用草稿到主窗口
+                Console.WriteLine($"[MaterialBrowser] OnPaperdollDraftApplied: 分类={entry.Category} Id={entry.Id}");
+                OnPaperdollDraftApplied?.Invoke(_draftAppearance);
                 Close();
+                return;
             }
+            Console.WriteLine($"[MaterialBrowser] OnMaterialSelected invoked: Id={entry.Id}, Name={entry.Name}, Category={entry.Category}");
+            OnMaterialSelected?.Invoke(entry.Id, entry.Name, entry.Category);
+            Close();
         };
-        btnRow.Children.Add(selectBtn);
+        btnRow.Children.Add(_selectBtn);
 
         var cancelBtn = new Button
         {
@@ -379,6 +422,39 @@ public partial class MaterialBrowserWindow : Window
         btnRow.Children.Add(cancelBtn);
 
         stack.Children.Add(btnRow);
+
+        // 搭配管理（纸娃娃草稿保存/加载，走 SavedPaperdolls 磁盘存档）
+        var outfitRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
+        var saveOutfitBtn = new Button
+        {
+            Content = "💾 保存搭配",
+            FontSize = 11,
+            Padding = new Thickness(10, 5),
+            Background = Brushes.Transparent,
+            Foreground = BrushTxtSecondary,
+            BorderBrush = BrushBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        saveOutfitBtn.Click += (_, _) => { try { SaveDraftOutfit(); } catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] SaveOutfit: {ex.Message}"); } };
+        outfitRow.Children.Add(saveOutfitBtn);
+        _outfitCombo = new ComboBox
+        {
+            Width = 130,
+            Height = 26,
+            FontSize = 11,
+            Foreground = BrushTxtPrimary,
+            Background = BrushInputBg,
+            BorderBrush = BrushBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            PlaceholderText = "加载搭配"
+        };
+        _outfitCombo.SelectionChanged += (_, _) => { try { LoadDraftOutfit(); } catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] LoadOutfit: {ex.Message}"); } };
+        outfitRow.Children.Add(_outfitCombo);
+        stack.Children.Add(outfitRow);
+        RefreshOutfitList();
 
         _previewPanel.Child = stack;
         return _previewPanel;
@@ -464,14 +540,31 @@ public partial class MaterialBrowserWindow : Window
         _prevBtn.Click += (_, _) => GoPage(-1);
         pager.Children.Add(_prevBtn);
 
-        _pageLabel = new TextBlock
+        // 分页可输入：输入页码 Enter 跳转（胶水需求 2026-08-09）
+        _pageLabel = new TextBox
         {
-            Text = "第 1/1 页",
+            Text = "1/1",
             FontSize = 11,
             Foreground = BrushTxtSecondary,
             VerticalAlignment = VerticalAlignment.Center,
             Width = 80,
-            TextAlignment = TextAlignment.Center
+            TextAlignment = TextAlignment.Center,
+            Background = new SolidColorBrush(Color.FromArgb(16, 255, 255, 255)),
+            BorderBrush = BrushBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4)
+        };
+        _pageLabel.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            var t = _pageLabel.Text ?? "";
+            var num = t.Split('/')[0].Trim();
+            if (int.TryParse(num, out var p) && p >= 1 && p <= _totalPages)
+            {
+                _currentPage = p;
+                RefreshList();
+                UpdatePager();
+            }
         };
         pager.Children.Add(_pageLabel);
 

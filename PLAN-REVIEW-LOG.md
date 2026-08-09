@@ -1,4 +1,30 @@
-# Plan Review Log: 背景地图系统
+# Plan Review Log
+
+## Iteration 3 — 纸娃娃模块重新设计（实时合成 + 统一素材选择库）
+Act 1 (grill-with-docs) complete — plan locked，CONTEXT.md 增「部件/耳朵类型/表情/皮肤/染发/遮挡锁/搭配/实时合成」术语，新增 [ADR-0005](docs/adr/0005-paperdoll-real-time-compositing.md)（取代 ADR-0002）。MAX_ROUNDS=5。
+11 项决策：①实时合成弃图条；②AnimService 帧提供者接口(加法式)；③耳朵按 WZ piece 名分组(人类靠 head 圆耳)；④统一素材选择库重做(保留 Mob/NPC)；⑤眨眼表情+外部驱动接口；⑥全部动作+武器映射+拖拽随机 fly/swing；⑦zmap 遮挡 locks；⑧搭配持久化+离线缓存；⑨皮肤+染发；⑩草稿模式；⑪WriteableBitmap 直拷。
+
+## Round 1 — Codex（thread=019fe6a8-7a0e-7471-81eb-b8c06f58da83，model=glm-5.2）
+VERDICT: **REVISE** — 9 findings：
+- **F1（高）**：哨兵调用点未迁移——空闲随机(AnimService.cs:308)、拖拽(PetWindow.axaml.cs:211)、动画菜单(PetWindow.Menu.cs:230)、气泡锚点仍经 `SpriteService`/`GetCachedActionList` 解析哨兵动作。→ 全部改经 `IEntityFrameProvider`。
+- **F2（高）**：player 动作破坏现有状态机——纸娃娃动作 `stand1`/`walk1`/`swingOF` 不在 `_animDefs`；OneShot 完成硬编码回 `stand`(AnimService.cs:199)。→ 加 player 动作定义/别名(`stand→stand1`)、OneShot 回退按实体解析。
+- **F3（高）**：locks 算法未明确——`buildLock` 按 item ID 升序+走 zmap 锁 vslot；`refreshLock` 双查 self/layer-vslot + `mailArm`/`mailChest`/`pants`/`backPants`/`backHead`/cap/ear-fix 分支。→ 移植精确算法，非仅"smap+islot/vslot"。
+- **F4（高）**：layer resolution 不完整——`ResolveLayer` 缺数值 z、`Below/Under/Over/Above`、`ZmapIndex.fixLayers`。→ 移植 `resolveUseablePieceName` + `ZmapIndex`。
+- **F5（高/修正采纳）**：female body/skin 映射——Codex 称 MapleSalon2 用 female 12000/head 22000；**核实为误读**（store.ts:47 的 12000 是默认 Head id）。采核心：皮肤=Body/Head 槽 id(2000–2999 / +10000)，拒绝错误数值。
+- **F6（高）**：Earring/Overall 可选不可渲染——`EnumerateRoots` 缺 Earring、105xxxx 无字段。→ 加字段与前缀映射。
+- **F7（高）**：共享合成器状态竞态——预览/帧循环并发改 `_current`。→ `RenderFrame` 用不可变外观快照+代际 state。
+- **F8（中）**：离线缓存与重写矛盾——弃图条又复用哨兵图条，无 provider fallback/outfit-keyed 失效。→ 按外观哈希 key + 搭配变化失效。
+- **F9（中）**：素材枚举未统一——`GetEquipList` 枚举不同节点+cap 200。→ 单一 `_Canvas` 枚举器 + `String.wz` 名称 + 分页。
+
+### Claude's response
+9/9 采纳（F5 修正采纳——核心采纳、错误数值拒绝，已核实 MapleSalon2 itemId.ts 皮肤=body/head 槽 id）。已修订 PLAN.md（Rev 1）：F1→§2 哨兵调用点全量迁移；F2→§2 player 动作定义/别名+OneShot 回退；F3→§1 locks 精确分支移植；F4→§1 layer resolution 精确移植；F5→§1 皮肤=Body/Head 槽 id + 诊断验证，拒绝 female=12000/22000；F6→§1 `EnumerateRoots` 增 Earring/Longcoat；F7→§1 `RenderFrame` 不可变快照+代际；F8→§5 离线缓存外观哈希 key+失效；F9→§4 单一枚举器+`String.wz`+分页。无拒绝。
+
+## Round 2 — Codex（resume 同 session，model=glm-5.2）
+VERDICT: **APPROVED** — F1–F9 全部确认解决，无新阻塞缺陷。两条非阻塞实施约束，均已纳入 PLAN：①F1 清扫须显式含 `AnimService.Play`/`HasSpriteForAction`/`LoadStripWithFallback` + `PetWindow.StartAnimation`（启动 `Play("stand")` 仍走旧图条门 AnimService.cs:84 / PetWindow.axaml.cs:342）；②blink 为多帧表情时 `RenderFrame`/`IEntityFrameProvider` 需 face-expression 帧索引或内部表情时间线（对齐 characterFaceFrame.ts:99）。
+
+**Resolution (converged)** — 两 act 完成，计划锁定（PLAN.md Rev 1），等待实现方式裁决。有效评审 2 轮（R1 REVISE×9、R2 APPROVED）；另有 1 次 Round 1 代理故障重跑（cc-switch 未启动，用户启动后重跑成功）。
+
+
 
 ## Iteration 2 — 背景调整修复（渲染对齐 + 菜单历史 + 选图器并入设置中心）
 Act 1 (grill-with-docs) complete — plan locked，CONTEXT.md 增「裁剪视口」术语，新增 ADR-0004。MAX_ROUNDS=5。

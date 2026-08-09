@@ -26,21 +26,35 @@ public partial class PetWindow : Window
     private readonly TrayService _trayService;
     private readonly EventBus _eventBus;
     private readonly SpriteCanvas _spriteCanvas;
-    private readonly BalloonControl _balloonControl;
+    private readonly BalloonWindow _balloonWindow;
     private readonly BalloonService _balloonService;
     private readonly PaperdollService _paperdoll;
     private readonly MapService _mapService;
+    private readonly CacheManager _cacheManager;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
     private readonly Random _rng = new();
     private int _paperdollGen;
     private int _petSwitchGen;
+    private PixelPoint _lastDiagPos;
+    private int _lastDiagW = -1;
+    private int _lastDiagH = -1;
     private static readonly string[] _randomLines = {
         "今天天气真好~", "加油！", "记得喝水哦", "嘿嘿~", "我在看着你呢",
-        "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？"
+        "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？",
+        "悄悄告诉你，我其实会飞哦~", "要不要一起去打怪？", "我想吃鲷鱼烧了…",
+        "你认真工作的样子真帅！", "再玩十分钟就去睡觉！", "我在这里陪着你呀",
+        "好想出去冒险啊！", "摸摸我的头好不好？", "今天也要元气满满哦！",
+        "嘘——别告诉别人我会说话", "累了就靠在我身上休息吧", "我们是最好的搭档！",
+        "你有没有好好吃饭呀？", "窗外的云看起来好软~", "猜猜我现在在想什么？",
+        "一天不见，想我了吗？", "给你一个么么哒~", "发呆的时候也在想你哦",
+        "要不要听我讲个笑话？", "好喜欢和你一起的时光", "肚子饿了，喂我吃点啥呗",
+        "你笑起来真好看！", "保持好心情，好运自然来~"
     };
     private readonly TextBlock _infoText;
+    private ProgressBar? _loadingBar;
+    private TextBlock? _loadingText;
     private Point _dragStart;
     private bool _isDragging;
     private PixelPoint _windowStartPos;
@@ -54,12 +68,24 @@ public partial class PetWindow : Window
     private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
     private int _lastOriginX;
     private int _lastOriginY;
+    private bool _syncOriginOnNextFrame;
     private double _lastFrameW;
     private double _lastFrameH;
     private double _scale = 1.0;
     private string _currentEntityType = "Mob";
+    // 气泡锚点基准（胶水规则 2026-08-08）：按动作优先级从前到后第一个存在动作计算气泡位置，
+    // 不随每个动画重新计算 → 动画切换时气泡位置稳定。
+    private static readonly string[] BalloonAnchorPriority = { "stand", "say", "mouse", "move", "hand", "laugh", "eye", "fly", "move", "die" };
+    private string? _anchorActionName;   // 已解析的锚点基准动作名
+    private string? _anchorMobId;        // 锚点对应的 mobId（变了才重算）
+    private double _anchorFrameW;        // 基准动作帧宽（物理像素，未乘 scale）
+    private double _anchorFrameH;        // 基准动作帧高（物理像素，未乘 scale）
+    private string? _lastLogAction;      // 诊断日志：上次打印的动作名
+    private double _balloonAnchorX;      // 气泡锚点基准 X（屏幕像素，拖拽结束更新 → 动画切换气泡不动）
+    private double _balloonAnchorY;      // 气泡锚点基准 Y（屏幕像素）
+    private bool _balloonWasVisible;     // 拖拽前气泡是否可见（移动时隐藏，释放后恢复）
 
-    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService)
+    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager)
     {
         _configService = configService;
         _wzService = wzService;
@@ -69,7 +95,9 @@ public partial class PetWindow : Window
         _eventBus = eventBus;
         _balloonService = balloonService;
         _paperdoll = paperdoll;
+        _animService.RegisterFrameProvider(paperdoll); // 纸娃娃实时合成（ADR-0005）；Mob/NPC 走图条
         _mapService = mapService;
+        _cacheManager = cacheManager;
         _backgroundWindow = new BackgroundWindow();
         _backgroundWindow.RequestHide += () => Dispatcher.UIThread.Post(() => { _backgroundWindow.HideMap(); _backgroundWindow.Hide(); RaisePet(); });
         _backgroundWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
@@ -77,9 +105,22 @@ public partial class PetWindow : Window
         _backgroundWindow.InteractiveChanged += () => Dispatcher.UIThread.Post(() => RaisePet());
         // #6：渲染（裁紧）完成后再落地——同步时 EffectiveCrop* 尚未就绪。
         _backgroundWindow.MapRendered += () => Dispatcher.UIThread.Post(OnMapRendered);
+        // 静态图渲染完成 → 落盘 PNG 缓存（无 WZ 时背景可离线显示）
+        _backgroundWindow.OnMapRenderCached = (png, cx, cy, cw, ch) =>
+        {
+            try
+            {
+                var s = _configService.LoadSettings();
+                if (!string.IsNullOrEmpty(s.MapId))
+                    _cacheManager.SaveMapPng(s.MapId, cx, cy, cw, ch, png);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CacheMapPng: {ex.Message}"); }
+        };
 
         // 模式2 摄像机窗口：RequestHide → 切回静态模式（与「背景模式」菜单一致）；RequestSwitchMap → 进设置中心。
         _mapViewportWindow = new MapViewportWindow();
+        var vpSettings = _configService.LoadSettings();
+        _mapViewportWindow.SetViewportSize(vpSettings.ViewportW, vpSettings.ViewportH);
         _mapViewportWindow.RequestHide += () => Dispatcher.UIThread.Post(() => SwitchToStaticMode());
         _mapViewportWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
 
@@ -93,12 +134,37 @@ public partial class PetWindow : Window
         Background = Brushes.Transparent;
         TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
 
-        var grid = new Grid { Background = Brushes.Transparent };
+        var grid = new Grid { Background = Brushes.Transparent, ClipToBounds = false };
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         Content = grid;
+
+        // 切换桌宠 loading（进度条 + 文本，覆盖动画区；切宠物未缓存时显示。Avalonia 12.1 无 ProgressRing，用 indeterminate ProgressBar）
+        _loadingBar = new ProgressBar
+        {
+            IsIndeterminate = true,
+            Width = 120,
+            Height = 4,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+            IsVisible = false
+        };
+        _loadingText = new TextBlock
+        {
+            Text = "切换中…",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin = new Thickness(0, 34, 0, 0),
+            IsVisible = false
+        };
+        Grid.SetRow(_loadingBar, 1);
+        Grid.SetRow(_loadingText, 1);
+        grid.Children.Add(_loadingBar);
+        grid.Children.Add(_loadingText);
 
         _infoText = new TextBlock
         {
@@ -107,8 +173,11 @@ public partial class PetWindow : Window
             Foreground = new SolidColorBrush(Color.FromRgb(200, 200, 200)),
             TextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 4),
+            // 固定宽度：状态文字不随内容变宽 → 不撑大窗口（窗口宽度 = max(精灵宽, 此宽)）
+            Width = 100,
+            Height = 20,
         };
-        Grid.SetRow(_infoText, 0);
+        Grid.SetRow(_infoText, 3);  // 状态文字在窗口底部（胶水规则：气泡在顶部，状态显示在底部，两者不混淆）
         grid.Children.Add(_infoText);
 
         // 精灵画布（含 origin 对齐）
@@ -116,11 +185,9 @@ public partial class PetWindow : Window
         Grid.SetRow(_spriteCanvas, 1);
         grid.Children.Add(_spriteCanvas);
 
-        // 聊天气泡控件
-        _balloonControl = new BalloonControl();
-        Grid.SetRow(_balloonControl, 2);
-        grid.Children.Add(_balloonControl);
-
+        // 聊天气泡独立窗口（macOS 窗口顶部不能超过菜单栏 → 主窗口不含 headRoom 才能拖到顶；
+        // 气泡窗口独立跟随固定锚点，动画切换位置不动）
+        _balloonWindow = new BalloonWindow();
         ContextMenu = BuildContextMenu();
         ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RebuildBgMenu(); };
         SetupDragEvents();
@@ -159,8 +226,10 @@ public partial class PetWindow : Window
                     var mobId = _animService.GetCurrentMobId();
                     if (mobId == PaperdollService.SentinelMobId)
                     {
-                        var pa = GetCachedActionList(mobId);
-                        var pdAction = pa.Contains("walk1") ? "walk1" : "stand1";
+                        // 拖拽默认 walk1/walk2/fly（用户要求；只选有帧的动作，避免渲染失败）
+                        var pa = _paperdoll.GetActionList();
+                        var candidates = pa.Where(a => (a.StartsWith("walk") || a.StartsWith("fly")) && _paperdoll.GetFrameCount(a) > 0).ToList();
+                        var pdAction = candidates.Count > 0 ? candidates[_rng.Next(candidates.Count)] : (pa.Contains("walk1") ? "walk1" : "stand1");
                         _animService.Play(pdAction, PlayMode.Loop);
                         return;
                     }
@@ -258,14 +327,36 @@ public partial class PetWindow : Window
             if (settings != null && !string.IsNullOrEmpty(settings.CurrentMobId))
             {
                 var mobId = settings.CurrentMobId;
-                // 从最近使用记录推断实体类型（Mob/Npc），否则默认 Mob
-                var recentMatch = settings.RecentItems?.FirstOrDefault(r => r.Id == mobId);
-                _currentEntityType = NormalizeEntityType(recentMatch?.Type);
-                Console.WriteLine($"[PetWindow] 延迟加载默认宠物: {mobId} ({_currentEntityType})");
-                if (_spriteService.PreloadMob(wzService, mobId, _currentEntityType))
+                if (mobId == PaperdollService.SentinelMobId)
                 {
-                    _animService.SetCurrentMobId(mobId);
+                    // 纸娃娃恢复：上次实体为纸娃娃 → 恢复搭配（WZ 断线时 AnimService 回退离线图条）
+                    var pa = settings.CurrentPaperdoll;
+                    if (pa != null && _wzService.IsLoaded)
+                    {
+                        _paperdoll.SetAppearance(pa);
+                        Console.WriteLine($"[PetWindow] 恢复纸娃娃: hair={pa.Hair?.Id} face={pa.Face?.Id} ear={pa.Ear} body={pa.BodyId} coat={pa.Coat?.Id} cap={pa.Cap?.Id}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[PetWindow] 纸娃娃恢复跳过: CurrentPaperdoll={(pa == null ? "无" : "有")} WZ加载={_wzService.IsLoaded}");
+                    }
+                    _currentEntityType = "player";
+                    _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
                     StartAnimation();
+                    // 后台预热常用动作缓存（避免恢复后首帧合成卡顿抖动）
+                    System.Threading.Tasks.Task.Run(() => { try { _paperdoll.Warmup(); } catch { } });
+                }
+                else
+                {
+                    // 从最近使用记录推断实体类型（Mob/Npc），否则默认 Mob
+                    var recentMatch = settings.RecentItems?.FirstOrDefault(r => r.Id == mobId);
+                    _currentEntityType = NormalizeEntityType(recentMatch?.Type);
+                    Console.WriteLine($"[PetWindow] 延迟加载默认宠物: {mobId} ({_currentEntityType})");
+                    if (_spriteService.PreloadMob(wzService, mobId, _currentEntityType))
+                    {
+                        _animService.SetCurrentMobId(mobId);
+                        StartAnimation();
+                    }
                 }
             }
 
@@ -300,7 +391,8 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(30, 91));
+            // debug：固定 10s 间隔触发（气泡常驻，每次触发替换文本）
+            _balloonTimer.Interval = TimeSpan.FromSeconds(10);
             _balloonTimer.Tick += (_, _) => TryShowRandomBalloon();
             _balloonTimer.Start();
 
@@ -313,7 +405,14 @@ public partial class PetWindow : Window
                         if (png == null) return;
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
-                        await _balloonControl.ShowBalloon(text, data, bmp);
+                        await _balloonWindow.BalloonControl.ShowBalloon(text, data, bmp);
+                        _balloonWindow.Width = bmp.PixelSize.Width;
+                        _balloonWindow.Height = bmp.PixelSize.Height;
+                        // 锚点基准 = 当前角色锚点（拖拽结束会更新）
+                        _balloonAnchorX = Position.X + _lastOriginX;
+                        _balloonAnchorY = Position.Y + _lastOriginY;
+                        Console.WriteLine($"[PetWindow] BubbleShow: anchor=({_balloonAnchorX},{_balloonAnchorY}) lastOrigin=({_lastOriginX},{_lastOriginY}) pos={Position}");
+                        _balloonWindow.ShowBalloonWindow();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonShow: {ex.Message}"); }
                 });
@@ -326,13 +425,15 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(30, 91));
-            if (_animService.GetCurrentAction() != "stand") return;
+            _balloonTimer.Interval = TimeSpan.FromSeconds(10);
+            // 常驻模式：不限制动画动作，每次定时器触发都换气泡文本
             var balloonId = _configService.LoadSettings().BalloonId;
             if (string.IsNullOrEmpty(balloonId)) balloonId = "560";
             var data = _balloonService.LoadBalloon(balloonId);
+            Console.WriteLine($"[PetWindow] TryShowRandomBalloon: id={balloonId}, data={(data != null ? "ok" : "null(种子中)")}");
             if (data == null) return; // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
+            Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
             await _balloonService.Show(line, data);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
@@ -406,7 +507,10 @@ public partial class PetWindow : Window
 
     private void SetupDragEvents()
     {
-        // 左键拖拽 + 右键菜单，直接绑定在 Window 上（冒泡模式）
+        // 左键拖拽 + 右键菜单，直接绑定在 Window 上（冒泡模式）。
+        // ⚠️ 不用 BeginMoveDrag：OS 原生拖动限制窗口不能拖出屏幕顶部（窗口含头顶气泡区后角色拖不到顶）。
+        // 手动拖拽：鼠标绝对屏幕坐标 = Position + GetPosition(this)*RenderScaling（窗口移动时互相抵消，防抖），
+        // Position 允许负值 → 角色可部分拖出显示器（胶水规则 2026-08-08）
         PointerPressed += (_, e) =>
         {
             try
@@ -420,11 +524,28 @@ public partial class PetWindow : Window
                 _isDragging = true;
                 _dragStart = e.GetPosition(this);
                 _windowStartPos = Position;
+                // 移动时默认气泡关闭（胶水规则 2026-08-08）：拖拽期间隐藏气泡，释放后恢复
+                _balloonWasVisible = _balloonWindow.IsVisible;
+                if (_balloonWasVisible) _balloonWindow.HideBalloonWindow();
                 _eventBus.Publish(EventType.UserDragStart);
-                // 用 OS 原生拖拽
-                BeginMoveDrag(e);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerPressed: {ex.Message}"); }
+        };
+        PointerMoved += (_, e) =>
+        {
+            try
+            {
+                if (!_isDragging) return;
+                var p = e.GetPosition(this);
+                double rs = RenderScaling > 0 ? RenderScaling : 1.0;
+                double dx = (Position.X + p.X * rs) - (_windowStartPos.X + _dragStart.X * rs);
+                double dy = (Position.Y + p.Y * rs) - (_windowStartPos.Y + _dragStart.Y * rs);
+                // 贴顶 clamp：窗口顶 ≥ 0（大素材 8880837 按下偏移大，不 clamp 会推到屏外看似拖不到顶，胶水反馈 2026-08-09）
+                int ny = _windowStartPos.Y + (int)dy;
+                if (ny < 0) ny = 0;
+                Position = new PixelPoint(_windowStartPos.X + (int)dx, ny);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerMoved: {ex.Message}"); }
         };
         PointerReleased += (_, _) =>
         {
@@ -433,6 +554,14 @@ public partial class PetWindow : Window
                 if (!_isDragging) return;
                 _isDragging = false;
                 _eventBus.Publish(EventType.UserDragEnd);
+                // 气泡锚点基准 = 拖拽结束时的角色锚点（动画切换气泡位置不动）
+                _balloonAnchorX = Position.X + _lastOriginX;
+                _balloonAnchorY = Position.Y + _lastOriginY;
+                // 释放后第一帧先同步 origin 基准（不补偿）：否则动画帧 oy 已变 → 补偿恢复瞬间角色跳一下
+                _syncOriginOnNextFrame = true;
+                Console.WriteLine($"[PetWindow] DragEnd: anchor=({_balloonAnchorX},{_balloonAnchorY})");
+                // 移动结束恢复气泡（若拖拽前可见）
+                if (_balloonWasVisible) _balloonWindow.ShowBalloonWindow();
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerReleased: {ex.Message}"); }
         };
@@ -450,43 +579,199 @@ public partial class PetWindow : Window
             if (delta <= 0) delta = 33;
             if (delta > 500) delta = 33; // 防止大跳跃（窗口失焦后恢复）
 
-            var (fd, pngData) = _animService.Tick(delta);
-            if (pngData != null)
+            var fr = _animService.Tick(delta);
+            byte[]? pngData = null;
+            int ox = 0, oy = 0, fw = 0, fh = 0;
+            if (fr.Bitmap != null)
             {
+                // 纸娃娃 provider：合成帧位图（BGRA premul）+ union 公共 origin
+                ox = fr.OriginX; oy = fr.OriginY; fw = fr.FrameW; fh = fr.FrameH;
+            }
+            else if (fr.Png != null)
+            {
+                pngData = fr.Png;
                 var strip = _spriteService.GetCachedStrip(_animService.GetCurrentMobId(), _animService.GetCurrentAction()).Item1;
-                int ox = strip?.OriginX ?? 0;
-                int oy = strip?.OriginY ?? 0;
-                int fw = strip?.FrameWidth ?? 0;
-                int fh = strip?.FrameHeight ?? 0;
-                _spriteCanvas.SetFrame(pngData, ox, oy, _scale);
-
-                // 窗口大小 = 帧像素 × 缩放；只在尺寸变化时 resize，用 double 避免 int 截断抖动
-                double scaledW = fw > 0 ? fw * _scale : 0;
-                double scaledH = fh > 0 ? fh * _scale : 0;
-                if (scaledW > 0 && scaledH > 0 && (Math.Abs(scaledW - _lastFrameW) > 0.5 || Math.Abs(scaledH - _lastFrameH) > 0.5))
+                ox = strip?.OriginX ?? 0;
+                oy = strip?.OriginY ?? 0;
+                fw = strip?.FrameWidth ?? 0;
+                fh = strip?.FrameHeight ?? 0;
+            }
+            if (pngData != null || fr.Bitmap != null)
+            {
+                if (fr.Bitmap != null)
                 {
-                    Width = scaledW;
+                    _spriteCanvas.SetFrameBitmap(fr.Bitmap, ox, oy, _scale);
+                    fr.Bitmap.Dispose();
+                }
+                else
+                {
+                    _spriteCanvas.SetFrame(pngData!, ox, oy, _scale);
+                }
+
+                // 窗口尺寸 = max(当前帧, 气泡锚点基准帧) × 缩放（无 headRoom：macOS 窗口顶不能超过菜单栏，
+                // 含头顶预留区会导致角色拖不到顶。气泡在独立 BalloonWindow，不占主窗口高度）
+                EnsureBalloonAnchor();
+                _spriteCanvas.SetAnchorHeight(_anchorFrameH * _scale);
+                double scaledW = Math.Max(fw > 0 ? fw * _scale : 0, _anchorFrameW * _scale);
+                double scaledH = Math.Max(fh > 0 ? fh * _scale : 0, _anchorFrameH * _scale);
+                // ±2px 容忍 + 取整：超长帧 PNG 宽偶有 1-2px 微变，窗口尺寸重设会抖动（胶水反馈 2026-08-09）
+                if (scaledW > 0 && scaledH > 0 && (Math.Abs(scaledW - _lastFrameW) > 2 || Math.Abs(scaledH - _lastFrameH) > 2))
+                {
+                    Width = Math.Round(scaledW);
                     Height = scaledH;
                     _lastFrameW = scaledW;
                     _lastFrameH = scaledH;
                 }
 
-                // 窗口位置补偿锚点偏移（锚点也乘缩放），使精灵图锚点对齐屏幕固定位置
+                // 窗口位置补偿锚点偏移（锚点也乘缩放），使精灵图锚点对齐屏幕固定位置。
+                // ⚠️ 拖拽期间暂停补偿（_isDragging）：否则拖到顶后动画切换（oy 变）会把窗口拉回锚点 →
+                // 「拖不到顶」+ 看起来像 origin 变动。拖拽中只更新基准，拖完从新位置继续补偿
                 int oxScaled = (int)(ox * _scale);
                 int oyScaled = (int)(oy * _scale);
-                int dx = oxScaled - _lastOriginX;
-                int dy = oyScaled - _lastOriginY;
-                if (dx != 0 || dy != 0)
+                if (_isDragging)
                 {
-                    Position = new PixelPoint(Position.X - dx, Position.Y - dy);
+                    _lastOriginX = oxScaled;
+                    _lastOriginY = oyScaled;
                 }
-                _lastOriginX = oxScaled;
-                _lastOriginY = oyScaled;
+                else if (_syncOriginOnNextFrame)
+                {
+                    // 拖完第一帧：基准同步为当前 origin（不补偿）→ 角色停在释放位置，不因补偿恢复而跳
+                    _lastOriginX = oxScaled;
+                    _lastOriginY = oyScaled;
+                    _balloonAnchorX = Position.X + oxScaled;
+                    _balloonAnchorY = Position.Y + oyScaled;
+                    _syncOriginOnNextFrame = false;
+                }
+                else
+                {
+                    int dx = oxScaled - _lastOriginX;
+                    int dy = oyScaled - _lastOriginY;
+                    if (dx != 0 || dy != 0)
+                    {
+                        // 贴顶（窗口顶=0）时垂直不补偿：保持角色顶贴屏顶（大素材动画切换 oy 变大不会把角色顶推出屏外）
+                        int ny = Position.Y - dy;
+                        if (Position.Y <= 0 && ny < 0)
+                        {
+                            Position = new PixelPoint(Position.X - dx, Position.Y);
+                        }
+                        else
+                        {
+                            Position = new PixelPoint(Position.X - dx, ny);
+                        }
+                    }
+                    _lastOriginX = oxScaled;
+                    _lastOriginY = oyScaled;
+                }
+
+                // 气泡独立窗口位置：底 = 角色头顶（锚点基准固定 → 动画切换气泡不动）。
+                // 水平：纸娃娃 = MapleSalon2 character.ts L136 固定 x=-10（arrow 在气泡左下 ≈ origin x 同一竖线）；
+                // mob/npc = 居中于锚点（原逻辑，胶水规则 2026-08-08：arrow 修复不改动其他类型）
+                if (_balloonWindow.IsVisible)
+                {
+                    // 动态 headMargin：按锚点帧长宽比（高/宽）调整——超长帧（chibi 大透明）系数缩小，
+                    // 气泡贴角色不被推远；正常比例（≤1.8）维持 0.75（胶水需求 2026-08-09）
+                    // 2026-08-09 胶水：「最高 -0.5 看看」——超长帧系数 -0.5（气泡底在锚点下方 0.5×帧高，深入角色区域/透明区）
+                    double aw = _anchorFrameW > 0 ? _anchorFrameW : fw;
+                    double ah = _anchorFrameH > 0 ? _anchorFrameH : fh;
+                    double ratio = aw > 0 ? ah / aw : 1.5;
+                    // 纸娃娃 = MapleSalon2 character.ts L136 原样：chatBalloon.position.set(-10, -60) 固定偏移（不做动态——胶水钦定 2026-08-09）；
+                    // Mob/NPC 锚点=脚底，正常 0.75/超长 -0.5
+                    double headMargin = IsSentinelActive() ? 60 * _scale : ah * (ratio <= 1.8 ? 0.75 : -0.5) * _scale;
+                    int bw = Math.Max(1, (int)_balloonWindow.Width);
+                    int bh = Math.Max(1, (int)_balloonWindow.Height);
+                    // 水平：纸娃娃 = MapleSalon2 character.ts L136 固定 x=-10（arrow 在气泡左下 ≈ origin x 同一竖线）；
+                    // NPC 学习纸娃娃同样 -10（arrow 对齐角色 origin x）；mob 保持居中（胶水规则 2026-08-09）
+                    double bx = (IsSentinelActive() || _currentEntityType == "Npc")
+                        ? _balloonAnchorX - 10 * _scale
+                        : _balloonAnchorX - bw / 2.0;
+                    _balloonWindow.Position = new PixelPoint(
+                        (int)bx,
+                        (int)(_balloonAnchorY - headMargin - bh));
+                    Console.WriteLine($"[PetWindow] Bubble: anchor=({_balloonAnchorX},{_balloonAnchorY}) win={Position} oy={oyScaled} bub={_balloonWindow.Position} hm={(int)headMargin}");
+                }
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";
+            // 抖动诊断：记忆每帧坐标/尺寸，变化即打印（定位抖动源）
+            if (Position != _lastDiagPos || (int)Width != _lastDiagW || (int)Height != _lastDiagH)
+            {
+                Console.WriteLine($"[Diag] t={_tickCount} pos={Position} size={(int)Width}x{(int)Height} fw={fw} fh={fh} ox={ox} oy={oy} action={action} drag={_isDragging}");
+                _lastDiagPos = Position;
+                _lastDiagW = (int)Width;
+                _lastDiagH = (int)Height;
+            }
+            // 诊断日志：动画切换/每60帧打印一次，实证锚点(Position+oy)是否恒定
+            if (action != _lastLogAction || _tickCount % 300 == 0)
+            {
+                var strip2 = _spriteService.GetCachedStrip(_animService.GetCurrentMobId(), action).Item1;
+                Console.WriteLine($"[PetWindow] TickLog: action={action} pos={Position} w={(int)Width} h={(int)Height} fw={fw} fh={fh} drag={_isDragging}");
+                _lastLogAction = action;
+            }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 解析气泡锚点基准动作（胶水规则 2026-08-08）：按
+    /// ["stand","say","mouse","move","hand","laugh","eye","fly","move","die"] 从前到后第一个存在的动作
+    /// 计算气泡位置基准，不随每个动画重新计算（动画切换时气泡位置稳定）。
+    /// 动作列表：WZ 加载时用 GetActionList，否则用磁盘缓存清单。结果缓存到 _anchorActionName。
+    /// </summary>
+    private void EnsureBalloonAnchor()
+    {
+        try
+        {
+            var mobId = _animService.GetCurrentMobId();
+            if (string.IsNullOrEmpty(mobId)) return;
+            if (mobId == PaperdollService.SentinelMobId)
+            {
+                // 纸娃娃锚点基准固定 stand1（站姿 union），不随 BalloonAnchorPriority 找错动作 → 窗口/气泡稳定
+                if (_anchorMobId == mobId && _anchorActionName != null) return;
+                _anchorActionName = "stand1";
+                _anchorMobId = mobId;
+                var (aw, ah, _, _) = _paperdoll.GetActionBounds("stand1");
+                _anchorFrameW = aw;
+                _anchorFrameH = ah;
+                Console.WriteLine($"[PetWindow] EnsureBalloonAnchor: 纸娃娃 anchor=stand1 frame={_anchorFrameW}x{_anchorFrameH}");
+                return;
+            }
+            if (_anchorMobId == mobId && _anchorActionName != null) return; // 同 mob 已解析
+
+            List<string> actions;
+            try
+            {
+                actions = _wzService.IsLoaded
+                    ? new List<string>(_wzService.GetActionList(mobId))
+                    : GetCachedActionList(mobId);
+            }
+            catch { actions = GetCachedActionList(mobId); }
+
+            string? anchor = null;
+            foreach (var a in BalloonAnchorPriority)
+            {
+                if (actions.Contains(a)) { anchor = a; break; }
+            }
+            anchor ??= actions.Count > 0 ? actions[0] : null;
+            if (anchor == null) return;
+
+            var strip = _spriteService.GetCachedStrip(mobId, anchor).Item1;
+            // ⚠️ 锚点动作未缓存 → strip null → FrameH=0 → headMargin fallback 当前帧高（随动画变 → 气泡跳）。
+            // 修复：fallback 到已缓存的常用动作（stand/move/fly/walk/jump），保证锚点帧高固定
+            if (strip == null)
+            {
+                foreach (var alt in new[] { "stand", "move", "fly", "walk", "jump" })
+                {
+                    var altStrip = _spriteService.GetCachedStrip(mobId, alt).Item1;
+                    if (altStrip != null) { strip = altStrip; anchor = alt; break; }
+                }
+            }
+            _anchorActionName = anchor;
+            _anchorMobId = mobId;
+            _anchorFrameW = strip?.FrameWidth ?? 0;
+            _anchorFrameH = strip?.FrameHeight ?? 0;
+            Console.WriteLine($"[PetWindow] EnsureBalloonAnchor: mob={mobId} anchor={anchor} frame={_anchorFrameW}x{_anchorFrameH}");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] EnsureBalloonAnchor: {ex.Message}"); }
     }
 
     private static List<string> GetCachedActionList(string mobId)
@@ -542,13 +827,28 @@ public partial class PetWindow : Window
             {
                 try
                 {
-                    var ok = _paperdoll.BuildAndCacheAppearance(appearance);
+                    _paperdoll.SetAppearance(appearance); // 切换外观清依赖外观缓存；引用赋值原子，帧循环安全
+                    // 持久化当前搭配（启动恢复）+ 构建离线精灵图条（WZ 断线兜底）
+                    try
+                    {
+                        var s = _configService.LoadSettings();
+                        s.CurrentMobId = PaperdollService.SentinelMobId;
+                        s.CurrentEntityType = "player";
+                        s.CurrentPaperdoll = appearance;
+                        _configService.SaveSettings(s);
+                        Console.WriteLine($"[PetWindow] Paperdoll 持久化成功: CurrentMobId={s.CurrentMobId} CurrentPaperdoll={(s.CurrentPaperdoll != null ? $"有 {s.CurrentPaperdoll.Hair?.Id}" : "无")}");
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollSave 失败: {ex}"); }
+                    try { _paperdoll.BuildOfflineStrips(); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OfflineStrips: {ex.Message}"); }
+                    // 预热拖拽/常用动作缓存（避免运行时首次合成卡顿抖动）
+                    try { _paperdoll.Warmup(); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollWarmup: {ex.Message}"); }
                     Dispatcher.UIThread.Post(() =>
                     {
                         try
                         {
                             if (gen != _paperdollGen) return; // 被更新的选择覆盖
-                            if (!ok) return;
                             _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
                             _animService.Play("stand1", PlayMode.Loop);
                             _trayService.SetTooltip("MiniPet - 纸娃娃");
@@ -562,8 +862,17 @@ public partial class PetWindow : Window
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyPaperdoll: {ex.Message}"); }
     }
 
+    /// <summary>显示/隐藏切换桌宠 loading（进度条 + 文本，覆盖动画区）。</summary>
+    private void ShowPetLoading(bool show, string? name = null)
+    {
+        if (_loadingBar == null || _loadingText == null) return;
+        _loadingBar.IsVisible = show;
+        _loadingText.IsVisible = show;
+        if (show && !string.IsNullOrEmpty(name)) _loadingText.Text = $"切换中: {name}…";
+    }
+
     /// <summary>
-    /// 切换到指定素材桌宠：stand 已缓存则立即切；未缓存则后台预加载，期间保持旧角色播放，加载完成后切换。
+    /// 切换到指定素材桌宠：stand 已缓存则立即切；未缓存则后台预加载（显示 loading 菊花），期间保持旧角色播放，加载完成后切换。
     /// 避免首次切换（WZ 构建/磁盘读取）在 UI 线程同步执行导致的明显卡顿。代际 token 防快速连点竞态。
     /// </summary>
     private void SwitchToPet(string id, string name, string type)
@@ -574,11 +883,15 @@ public partial class PetWindow : Window
             var gen = ++_petSwitchGen;
             if (_spriteService.GetCachedStrip(id, "stand").Item1 != null)
             {
+                ShowPetLoading(false);
+                _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
+                _lastFrameW = 0; _lastFrameH = 0;
                 _animService.SetCurrentMobId(id);
                 _animService.SwitchTo("stand");
             }
             else
             {
+                ShowPetLoading(true, name);
                 System.Threading.Tasks.Task.Run(() =>
                 {
                     bool ok;
@@ -589,7 +902,10 @@ public partial class PetWindow : Window
                         try
                         {
                             if (gen != _petSwitchGen) return; // 被更新的切换覆盖
+                            ShowPetLoading(false);
                             if (!ok) return;
+                            _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
+                            _lastFrameW = 0; _lastFrameH = 0;
                             _animService.SetCurrentMobId(id);
                             _animService.SwitchTo("stand");
                         }
@@ -632,15 +948,21 @@ public partial class PetWindow : Window
             // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
             if (_settingsWindow == null)
             {
-                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService);
-                _settingsWindow.OnPetApplied += (id, name) =>
+                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService, _balloonService);
+                _settingsWindow.OnPetApplied += (id, name, type) =>
                 {
-                    try { SwitchToPet(id, name, "Mob"); }
+                    try { SwitchToPet(id, name, type); }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetApplied: {ex.Message}"); }
                 };
                 _settingsWindow.OnPaperdollApplied += appearance => ApplyPaperdoll(appearance);
                 _settingsWindow.OnBackgroundMapApplied += sel => Dispatcher.UIThread.Post(() => ApplyMapSelection(sel));
+                _settingsWindow.OnViewportSizeApplied += (w, h) => Dispatcher.UIThread.Post(() => _mapViewportWindow.SetViewportSize(w, h));
                 _settingsWindow.OnLayerTogglesChanged += () => Dispatcher.UIThread.Post(ReRenderBackground);
+                _settingsWindow.OnWzRefreshed += () =>
+                {
+                    try { LoadDefaultPet(_wzService); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnWzRefreshed: {ex.Message}"); }
+                };
             }
             if (_settingsWindow.IsVisible)
                 _settingsWindow.Activate();

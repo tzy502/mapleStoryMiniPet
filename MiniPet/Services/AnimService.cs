@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MiniPet.Models;
+using SkiaSharp;
 
 namespace MiniPet.Services
 {
@@ -57,6 +58,10 @@ namespace MiniPet.Services
         // 当前帧缓存
         private (SpriteStrip?, byte[]?) _currentStrip;
 
+        // 实体帧提供者（纸娃娃实时合成；Mob/NPC 为 null 走图条）
+        private IEntityFrameProvider? _frameProvider;
+        private int _lastDiagFrame = -1;
+
         public AnimService(SpriteService spriteService)
         {
             _spriteService = spriteService;
@@ -83,6 +88,22 @@ namespace MiniPet.Services
         /// </summary>
         public void Play(string action, PlayMode mode)
         {
+            if (ActiveProvider != null)
+            {
+                // 纸娃娃：动作名解析到 provider 实际动作（stand→stand1 等），不查图条
+                _currentAction = ResolveActionForProvider(action);
+                _currentMode = mode;
+                _currentFrameIndex = 0;
+                _accumulatedDelay = 0;
+                _isPlaying = true;
+                _isPaused = false;
+                _idleAccumulated = 0;
+                ResetIdleThreshold();
+                Console.WriteLine($"[Anim] Play: 请求={action} → {_currentAction} 帧数={(_frameProvider?.GetFrameCount(_currentAction) ?? 0)}");
+                EmitEvent(AnimEventType.ActionStarted, _currentAction);
+                return;
+            }
+
             if (!_animDefs.ContainsKey(action) && !HasSpriteForAction(action))
             {
                 // 未定义的动作，尝试 fallback
@@ -146,16 +167,20 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 每帧调用，返回当前帧数据
+        /// 每帧调用，返回当前帧数据。纸娃娃（provider）走实时合成，Mob/NPC 走图条裁剪。
         /// </summary>
-        public (FrameData? data, byte[]? pngData) Tick(double deltaMs)
+        public FrameResult Tick(double deltaMs)
         {
             if (!_isPlaying || _isPaused)
-                return (null, null);
+                return new FrameResult();
+
+            var provider = ActiveProvider;
+            if (provider != null)
+                return TickProvider(provider, deltaMs);
 
             var (strip, pngData) = _currentStrip;
             if (strip == null || pngData == null)
-                return (null, null);
+                return new FrameResult();
 
             _accumulatedDelay += deltaMs;
 
@@ -224,21 +249,144 @@ namespace MiniPet.Services
 
             var (cs, cd) = _currentStrip;
             var framePng = _spriteService.GetFramePng(_currentMobId, cs!, _currentFrameIndex, cd);
-            return (frameData, framePng);
+            return new FrameResult { Data = frameData, Png = framePng };
+        }
+
+        /// <summary>纸娃娃 provider 路径：用 provider 的帧延迟推进，每帧实时合成位图。</summary>
+        private FrameResult TickProvider(IEntityFrameProvider provider, double deltaMs)
+        {
+            _accumulatedDelay += deltaMs;
+
+            if (_randomIdleEnabled)
+            {
+                _idleAccumulated += deltaMs;
+                if (_currentMode == PlayMode.Loop && _idleAccumulated >= _currentIdleThreshold)
+                {
+                    var randomAction = GetRandomAction();
+                    if (randomAction != null && randomAction != _currentAction)
+                    {
+                        Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction}");
+                        _pendingAction = ResolveActionForProvider("stand");
+                        SwitchTo(randomAction);
+                        return TickProvider(provider, 0);
+                    }
+                    ResetIdleThreshold();
+                }
+            }
+
+            int frameCount = provider.GetFrameCount(_currentAction);
+            if (frameCount <= 0)
+            {
+                var stand = ResolveActionForProvider("stand");
+                if (_currentAction != stand)
+                {
+                    _currentAction = stand;
+                    _currentFrameIndex = 0;
+                    _accumulatedDelay = 0;
+                    return TickProvider(provider, 0);
+                }
+                // WZ 不可用/动作无帧：回退缓存精灵图条（离线兜底）
+                return FallbackToOfflineStrip(_currentAction);
+            }
+
+            int advances = 0;
+            while (_accumulatedDelay >= provider.GetFrameDelay(_currentAction, _currentFrameIndex) && advances < 8)
+            {
+                _accumulatedDelay -= provider.GetFrameDelay(_currentAction, _currentFrameIndex);
+                _currentFrameIndex++;
+                advances++;
+
+                if (_currentFrameIndex >= frameCount)
+                {
+                    if (_currentMode == PlayMode.OneShot)
+                    {
+                        EmitEvent(AnimEventType.ActionCompleted, _currentAction);
+                        var onComplete = _onComplete;
+                        _onComplete = null;
+                        onComplete?.Invoke();
+
+                        var nextAction = !string.IsNullOrEmpty(_pendingAction)
+                            ? _pendingAction
+                            : ResolveActionForProvider("stand");
+                        _pendingAction = string.Empty;
+                        SwitchTo(nextAction);
+                        return TickProvider(provider, 0);
+                    }
+                    _currentFrameIndex = 0;
+                }
+            }
+
+            if (advances > 0) EmitEvent(AnimEventType.FrameChanged, _currentAction);
+
+            // 诊断：帧推进（变化即打印，定位"动画只有一帧"）
+            if (_currentFrameIndex != _lastDiagFrame)
+            {
+                Console.WriteLine($"[Anim] action={_currentAction} frame={_currentFrameIndex}/{frameCount}");
+                _lastDiagFrame = _currentFrameIndex;
+            }
+
+            var (bmp, ox, oy, fw, fh) = provider.RenderFrame(_currentAction, _currentFrameIndex);
+            if (bmp == null) return FallbackToOfflineStrip(_currentAction);
+            return new FrameResult
+            {
+                Bitmap = bmp,
+                OriginX = ox,
+                OriginY = oy,
+                FrameW = fw,
+                FrameH = fh,
+                Data = FrameDataOf(provider, _currentFrameIndex)
+            };
+        }
+
+        private FrameData FrameDataOf(IEntityFrameProvider provider, int frameIndex)
+        {
+            return new FrameData
+            {
+                Index = frameIndex,
+                Delay = provider.GetFrameDelay(_currentAction, frameIndex),
+                A0 = 255,
+                A1 = 255
+            };
+        }
+
+        /// <summary>WZ 不可用/合成失败时回退缓存精灵图条（离线兜底；由 PaperdollService.BuildOfflineStrips 预存）。</summary>
+        private FrameResult FallbackToOfflineStrip(string action)
+        {
+            try
+            {
+                _currentStrip = LoadStripWithFallback(action);
+                var (cs, cd) = _currentStrip;
+                if (cs == null || cd == null) return new FrameResult();
+                int idx = Math.Max(0, Math.Min(_currentFrameIndex, cs.FrameCount - 1));
+                var framePng = _spriteService.GetFramePng(_currentMobId, cs, idx, cd);
+                return new FrameResult { Data = GetFrameMeta(cs, idx), Png = framePng };
+            }
+            catch { return new FrameResult(); }
         }
 
         /// <summary>
         /// 获取当前帧
         /// </summary>
-        public (FrameData? data, byte[]? image) GetCurrentFrame()
+        public FrameResult GetCurrentFrame()
         {
+            var provider = ActiveProvider;
+            if (provider != null)
+            {
+                var (bmp, ox, oy, fw, fh) = provider.RenderFrame(_currentAction, _currentFrameIndex);
+                return new FrameResult
+                {
+                    Bitmap = bmp, OriginX = ox, OriginY = oy, FrameW = fw, FrameH = fh,
+                    Data = FrameDataOf(provider, _currentFrameIndex)
+                };
+            }
+
             var (strip, pngData) = _currentStrip;
-            if (strip == null || pngData == null) return (null, null);
+            if (strip == null || pngData == null) return new FrameResult();
 
             var frameData = GetFrameMeta(strip, _currentFrameIndex);
 
             var framePng = _spriteService.GetFramePng(_currentMobId, strip!, _currentFrameIndex, pngData);
-            return (frameData, framePng);
+            return new FrameResult { Data = frameData, Png = framePng };
         }
 
         /// <summary>
@@ -307,6 +455,21 @@ namespace MiniPet.Services
         /// </summary>
         public string? GetRandomAction()
         {
+            var provider = ActiveProvider;
+            if (provider != null)
+            {
+                var pAll = provider.GetAvailableActions()
+                    .Where(a => a != _currentAction
+                        && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
+                        && !a.StartsWith("hit", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (pAll.Count == 0) return null;
+                var pPreferred = pAll.Where(a => a.StartsWith("skill", StringComparison.OrdinalIgnoreCase)
+                                            || a.StartsWith("attack", StringComparison.OrdinalIgnoreCase)).ToList();
+                var pPool = pPreferred.Count > 0 ? pPreferred : pAll;
+                return pPool[Random.Shared.Next(pPool.Count)];
+            }
+
             var all = _spriteService.GetAvailableActions(_currentMobId)
                 .Where(a => a != _currentAction
                     && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
@@ -349,6 +512,34 @@ namespace MiniPet.Services
         public void SetCurrentMobId(string mobId)
         {
             _currentMobId = mobId ?? string.Empty;
+        }
+
+        /// <summary>注册帧提供者（纸娃娃实时合成）。Mob/NPC 不注册。</summary>
+        public void RegisterFrameProvider(IEntityFrameProvider? provider)
+        {
+            _frameProvider = provider;
+        }
+
+        /// <summary>当前是否走帧提供者（纸娃娃哨兵 + 已注册）。</summary>
+        public bool IsProviderActive => _frameProvider != null && _currentMobId == PaperdollService.SentinelMobId;
+
+        private IEntityFrameProvider? ActiveProvider => IsProviderActive ? _frameProvider : null;
+
+        // 标准动作 → 纸娃娃动作别名（对齐 MapleSalon2 updateActionByWeapon / stand 变体）
+        private static readonly Dictionary<string, string> PlayerActionAliases = new()
+        {
+            ["stand"] = "stand1",
+            ["move"] = "walk1",
+            ["walk"] = "walk1",
+            ["fly"] = "jump",
+        };
+
+        /// <summary>把请求动作解析为 provider 实际播放动作（武器变体/别名由 provider 决定）。</summary>
+        private string ResolveActionForProvider(string action)
+        {
+            var p = ActiveProvider;
+            if (p == null) return action;
+            return p.ResolveAction(action);
         }
 
         /// <summary>
@@ -458,5 +649,20 @@ namespace MiniPet.Services
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// 单帧结果：图条路径填 Png，纸娃娃 provider 路径填 Bitmap（WriteableBitmap 直拷）。
+    /// OriginX/Y、FrameW/H 为 union canvas 公共锚点与尺寸（纸娃娃路径有效）。
+    /// </summary>
+    public class FrameResult
+    {
+        public FrameData? Data { get; set; }
+        public byte[]? Png { get; set; }
+        public SKBitmap? Bitmap { get; set; }
+        public int OriginX { get; set; }
+        public int OriginY { get; set; }
+        public int FrameW { get; set; }
+        public int FrameH { get; set; }
     }
 }

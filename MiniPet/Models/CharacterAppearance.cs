@@ -9,12 +9,17 @@ namespace MiniPet.Models
     {
         public int Gender { get; set; }
         public int Skin { get; set; }
-        public EarType Ear { get; set; } = EarType.Human;
+        /// <summary>皮肤 = body item id（2000–2999，head=body+10000）。0 时按 Gender 回落 2000/2001。</summary>
+        public int BodyId { get; set; }
+        /// <summary>耳朵类型 = head WZ canvas 名（humanEar/ear/lefEar/highlefEar，对齐 MapleSalon2 CharacterEarType）。</summary>
+        public string Ear { get; set; } = "humanEar";
         public ItemInfo Hair { get; set; } = new ItemInfo();
         public ItemInfo Face { get; set; } = new ItemInfo();
         public ItemInfo? Cap { get; set; }
         public ItemInfo? Cape { get; set; }
         public ItemInfo? Coat { get; set; }
+        /// <summary>105xxxx 长袍/套服（与 Coat/Pants 冲突，选穿互斥）。</summary>
+        public ItemInfo? Overall { get; set; }
         public ItemInfo? Pants { get; set; }
         public ItemInfo? Shoes { get; set; }
         public ItemInfo? Weapon { get; set; }
@@ -26,9 +31,6 @@ namespace MiniPet.Models
         public int DyeHue { get; set; }
         public bool DyeEnabled { get; set; }
     }
-
-    /// <summary>耳朵类型（人类/精灵/高等精灵等，互斥渲染；默认人类）</summary>
-    public enum EarType { Human, Elf, Lef, HighLef }
 
     /// <summary>
     /// 装备信息

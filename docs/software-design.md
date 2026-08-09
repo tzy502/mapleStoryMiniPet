@@ -886,3 +886,141 @@ MiniPet/
 └── Assets/
     └── icon.png
 ```
+
+---
+
+## 10. 增量设计 v1.1（2026-08-08）— WZ 加载失败提示 + 刷新素材 + 默认 wzlib 兜底
+
+> 对应需求：F12（启动 WZ 加载失败弹窗）+ F13（WZ 设置弹窗刷新按钮）+ F14（默认 wzlib 兜底 + 下载引导）
+> 需求来源：docs/requirements-analysis.md 第 7 章（2026-08-08 逐条确认）
+
+### 10.1 设计总览
+
+| 功能 | 改动位置 | 关键点 |
+|------|---------|--------|
+| F12+F14 启动失败弹窗 | `App.axaml.cs` 失败分支 + 新增 `WzLoadFailWindow` | 独立小窗口，一次启动只弹一次，含下载引导 |
+| F14 默认 wzlib 兜底 | `WzService.LoadWz` 开头 wzlib 校验 | 用户配置无效 → 回退内置 + 警告字段 |
+| F13 刷新按钮 | `SettingsWindow.BuildWzOverlay` + `SaveWzConfig` 重构 | 按输入框当前路径重载，成功通知 PetWindow |
+
+**核心设计决策（已与胶水确认）**：
+1. **wzlib 运行时语义**：WzLib DLL 是编译期引用（内置随应用发布），**运行时不做动态加载**。「用户配置优先」= 启动时校验用户配置的 wzlib 路径下存在 `WzComparerR2.WzLib.dll`；存在 → 视为用户版本（通过校验），不存在 → 回退内置并提示。
+2. **F12 与 F14 弹窗合并**：同一场景（启动 LoadWz 失败）只弹一次，文案含错误原因 + 下载引导。
+3. **弹窗形态**：独立小窗口（居中、可点「知道了」关闭），不用悬浮气泡。
+4. **一次打开只读一次**：启动自动加载仅一次、失败不自动重试；F13 刷新按钮是用户手动触发例外。
+
+### 10.2 WzService 改动
+
+```csharp
+// 新增字段
+public string? LastWzLibWarning { get; private set; }   // 用户 wzlib 配置无效时设置
+
+// LoadWz 开头（_loading 守卫之后、baseWzPath 校验之前）新增 wzlib 校验：
+// 1. wzLibPath 为空 → LastWzLibWarning = null（用内置，无警告）
+// 2. wzLibPath 非空：
+//    - 若指向文件 → File.Exists 校验
+//    - 若指向目录 → 检查 {dir}/Lib/WzComparerR2.WzLib.dll 与 {dir}/WzComparerR2.WzLib.dll
+//    - 校验通过 → LastWzLibWarning = null
+//    - 校验失败 → LastWzLibWarning = "用户配置的 wzlib 无效，已回退默认"; 继续加载（不阻断）
+// ⚠️ 注意：wzLibPath 参数本身运行时仍不用于 DLL 加载（编译期引用），仅做校验与提示
+```
+
+**WzError → 中文文案映射**（新增静态方法，放 WzService 或 WzError.cs）：
+
+| WzError | 中文文案 |
+|---------|---------|
+| DllNotFound | wzlib DLL 文件不存在 |
+| DllLoadFailed | wzlib DLL 加载失败 |
+| WzPathInvalid | BaseWZ 路径无效 |
+| WzFileCorrupted | WZ 文件损坏 |
+| VersionMismatch | WZ 版本不兼容 |
+| Unknown | 未知错误 |
+
+### 10.3 新增 WzLoadFailWindow（F12+F14 弹窗）
+
+- **文件**：`MiniPet/Views/WzLoadFailWindow.cs`（纯代码窗口，无 .axaml——参考 PetWindow 纯代码模式）
+- **形态**：`Window`，`Width≈460`，居中显示（`WindowStartupLocation.CenterScreen`），普通窗口（非 Topmost）
+- **内容**：
+  1. 标题：「WZ 素材读取失败」
+  2. 错误原因：WzError 中文文案
+  3. wzlib 警告：`LastWzLibWarning` 非空时追加一行（黄色提示）
+  4. 下载引导：文案「可前往 GitHub 下载 WzComparerR2（含 WzComparerR2.WzLib.dll）」，下方显示可点击链接 `https://github.com/Kagamia/WzComparerR2/releases`（点击用 `Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true })` 打开默认浏览器；macOS/Windows 均可用）
+  5. 按钮：「知道了」→ Close()
+- **弹出时机**：`App.axaml.cs` 启动 LoadWz 失败分支（`ok == false` 或 catch 异常）→ `new WzLoadFailWindow(errText, warning).Show()`。**在 UI 线程**（App.OnFrameworkInitializationCompleted 主线程内直接 Show 即可，窗口自然出现在桌面）
+
+### 10.4 SettingsWindow 改动（F13 刷新按钮）
+
+**BuildWzOverlay 按钮行**（现 L643-650）：
+```
+[刷新当前素材]  [取消]  [保存]
+```
+- 「刷新当前素材」放最左（主操作靠前，符合胶水按钮顺序偏好）
+- **点击行为**（`RefreshWzMaterial()` 新方法）：
+  1. 立即禁用按钮 + 文案变「刷新中…」
+  2. 读取**当前输入框**的 `_wzLibInput.Text` / `_baseWzInput.Text`（未保存也生效）
+  3. `Task.Run(() => _wzService.LoadWz(libPath, basePath))` 异步执行（WZ 目录加载耗时，避免 UI 冻结）
+  4. 完成后 `Dispatcher.UIThread.Post` 回主线程：
+     - 成功 → 弹窗内提示「素材刷新完成：Mob X 个 / Map Y 个」；`LoadPetListFromWz()` 刷新列表；**触发 `OnWzRefreshed` 事件**通知 PetWindow 重载当前宠物
+     - 失败 → 弹窗内提示 WzError 中文文案 + wzlib 警告（不关闭弹窗，用户可改路径重试）
+  5. 恢复按钮可用
+- **新增事件**：`public event Action? OnWzRefreshed;`
+
+**SaveWzConfig 复用刷新逻辑**：保存后调用同样的刷新路径（保存 + 刷新分离，刷新按钮不隐式保存配置——刷新只改内存加载状态；保存只持久化。但保存后自动触发一次刷新，保持现行为）。
+
+**注意**：`LoadWz` 有 `_loadLock` 单飞守卫，但刷新按钮自身也要防连点（Task.Run 并发），按钮禁用即可；刷新期间 `SaveWzConfig` 同时点 → `_loadLock` 已兜底。
+
+### 10.5 PetWindow 改动（刷新成功后重载素材）
+
+- 现有 `OpenSettings()` 创建 `SettingsWindow` 处（L646-648）新增订阅：
+  ```csharp
+  _settingsWindow.OnWzRefreshed += () =>
+  {
+      try { LoadDefaultPet(_wzService); }   // 重载当前宠物（从新 WZ）
+      catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnWzRefreshed: {ex.Message}"); }
+  };
+  ```
+- `LoadDefaultPet` 已存在（L266），签名 `LoadDefaultPet(WzService? wzService)`，传 `_wzService` 即从 WZ 重载（WZ 未加载时自动走缓存，现有逻辑已处理）
+- 地图素材刷新：`MapService`/`MapCatalogService` 由 LoadWz 内部 `EnsureMapCatalog()` 重建，背景 tab 下次打开自动用新目录，无需额外处理
+
+### 10.6 App.axaml.cs 改动（F12 弹窗接入）
+
+启动分支 L52-61 失败路径改造：
+
+```csharp
+else
+{
+    Console.Error.WriteLine($"[App] WZ 自动加载失败: {err}");
+    // 弹窗提示（一次启动只弹一次）
+    try
+    {
+        var failWindow = new WzLoadFailWindow(
+            WzService.GetErrorText(err ?? WzError.Unknown),
+            wzService.LastWzLibWarning);
+        failWindow.Show();
+    }
+    catch (Exception ex) { Console.Error.WriteLine($"[App] 失败弹窗: {ex.Message}"); }
+    // 缓存加载默认宠物（现有逻辑保留）
+    if (petWindow != null) petWindow.LoadDefaultPet(null);
+}
+```
+
+catch 异常分支同理弹窗（err 文案「未知错误」+ 异常消息）。
+
+### 10.7 改动文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `MiniPet/Services/WzService.cs` | LoadWz 开头 wzlib 校验 + LastWzLibWarning + GetErrorText 静态映射 |
+| `MiniPet/Services/WzError.cs` | （可选）加 GetErrorText 映射放这里更内聚 |
+| `MiniPet/Views/WzLoadFailWindow.cs` | **新增**：失败弹窗窗口 |
+| `MiniPet/Views/SettingsWindow.axaml.cs` | BuildWzOverlay 加刷新按钮 + RefreshWzMaterial + OnWzRefreshed 事件 + SaveWzConfig 复用 |
+| `MiniPet/Views/PetWindow.axaml.cs` | OpenSettings 处订阅 OnWzRefreshed → LoadDefaultPet |
+| `MiniPet/App.axaml.cs` | 失败/异常分支弹窗 |
+
+### 10.8 验证方案
+
+1. 编译：`dotnet build --no-restore` 0 错误
+2. 单元测试：109/109 通过
+3. 黑盒（正常路径）：配置正确 WZ → 启动无弹窗、素材可用
+4. 黑盒（失败路径）：改 wz-config.json 的 BaseWzPath 为无效路径 → 启动弹 WzLoadFailWindow，点「知道了」关闭，桌宠走缓存正常显示
+5. 黑盒（刷新按钮）：WZ 路径无效启动 → 打开设置 → WZ 配置 → 修正路径 → 点「刷新当前素材」→ 提示成功 + 宠物列表出现 + 桌宠重载
+6. 黑盒（wzlib 兜底）：wz-config.json 配无效 wzlib 路径 + 有效 BaseWzPath → 启动仍成功加载（回退内置），失败弹窗才显示警告

@@ -1,25 +1,64 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using MiniPet.Models;
 using SkiaSharp;
 using WzComparerR2.WzLib;
 
 namespace MiniPet.Services;
 
-public class PaperdollService
+/// <summary>
+/// 纸娃娃实时合成（ADR-0005，取代 ADR-0002 合成图条）。
+/// 按 action/frame 逐帧合成 body/head/hair/face/equip 部件：耳朵按 head WZ 里以 "ear" 结尾的
+/// canvas 名分组、按 earType 直接索引（人类靠 head 自带圆耳、空组不画）；表情 default/blink；
+/// zmap 分层 + 基于 vslot 的遮挡锁。经 IEntityFrameProvider 接入 AnimService，
+/// WZ 读取全部缓存（roots/bounds/meta/bmp），帧循环热路径只做组装与绘制。
+/// </summary>
+public class PaperdollService : IEntityFrameProvider
 {
-    /// <summary>纸娃娃在 AnimService 中的哨兵 mobId（字符串常量；走未改动的 AnimService 管线）</summary>
+    /// <summary>纸娃娃在 AnimService 中的哨兵 mobId。</summary>
     public const string SentinelMobId = "__paperdoll__";
+
+    // 耳朵类型 = head WZ canvas 名（对齐 MapleSalon2 CharacterEarType：src/const/ears.ts）
+    public const string EarHuman = "humanEar";
+    public const string EarElf = "ear";
+    public const string EarLef = "lefEar";
+    public const string EarHighLef = "highlefEar";
+    public static readonly string[] AllEarTypes = { EarHuman, EarElf, EarLef, EarHighLef };
+
+    // 表情
+    public const string ExpressionDefault = "default";
+    public const string ExpressionBlink = "blink";
 
     private readonly WzService _wz;
     private readonly CacheManager _cache;
     private readonly SpriteService _sprite;
-    private CharacterAppearance? _current;
-    private readonly Dictionary<string, CharacterAppearance> _presets = new();
 
-    // 应用纸娃娃时预构建的动作（覆盖空闲 stand1 + 拖拽 walk1）
-    private static readonly string[] BuildActions = { "stand1", "stand2", "walk1", "walk2", "jump" };
+    // 当前活动外观（主窗口渲染；IEntityFrameProvider 消费）。切换外观清空依赖外观的缓存。
+    private CharacterAppearance? _current;
+    private string _currentHash = "";
+
+    // 表情驱动（预留 gateway：未来 Hermes/Claude/Codex 按 agent 状态注入）。
+    public IExpressionDriver? ExpressionDriver { get; set; }
+
+    /// <summary>面向（true=朝左，水平翻转渲染；默认朝右）。</summary>
+    public bool Flip { get; set; }
+
+    // zmap
+    private List<string>? _zmapCache;
+    private readonly Dictionary<string, int> _zmapIndex = new();
+
+    // 缓存（ConcurrentDictionary：后台预热/离线构建与 UI 帧合成并发安全，防抖动/竞态）
+    private readonly ConcurrentDictionary<string, List<(string Category, string Root)>> _rootCache = new();
+    private readonly ConcurrentDictionary<string, Bounds> _boundsCache = new();
+    private readonly ConcurrentDictionary<string, List<PieceSource>> _frameSourcesCache = new();
+    private readonly ConcurrentDictionary<string, PieceMeta> _metaCache = new();
+    private readonly ConcurrentDictionary<string, SKBitmap> _bmpCache = new();
+    private readonly ConcurrentDictionary<string, SKBitmap> _dyeBmpCache = new();
+    private readonly ConcurrentDictionary<string, int> _delayCache = new();
 
     // zmap 不可用时回退（顶→底）
     private static readonly string[] FallbackZmapTopToBottom =
@@ -29,9 +68,6 @@ public class PaperdollService
         "head", "body", "hairBelowHead", "back", "effect"
     };
 
-    private List<string>? _zmapCache;
-    private readonly Dictionary<string, int> _zmapIndex = new();
-
     public PaperdollService(WzService wz, CacheManager cache, SpriteService sprite)
     {
         _wz = wz;
@@ -39,167 +75,323 @@ public class PaperdollService
         _sprite = sprite;
     }
 
-    public bool LoadAppearance(CharacterAppearance appearance)
+    public CharacterAppearance? Current => _current;
+    public string CurrentHash => _currentHash;
+
+    /// <summary>设置当前外观（主窗口渲染目标）。切换外观清空依赖外观的缓存。</summary>
+    public void SetAppearance(CharacterAppearance appearance)
     {
         _current = appearance;
-        // 重新加载外观时清掉 zmap 缓存（WZ 可能换过）
+        _currentHash = HashAppearance(appearance);
         _zmapCache = null;
-        return true;
+        _boundsCache.Clear();
+        _frameSourcesCache.Clear();
+        _rootCache.Clear();
+        _delayCache.Clear();
+        _validActionsCache = null;
+        _actionValidCache.Clear();
     }
 
-    // ── body / head 身份（head = body + 10000）──
-    private static int BodyNumber(CharacterAppearance a) => a.Gender == 0 ? 2000 : 2001;
-    private static string BodyRoot(CharacterAppearance a) => $"Character/{BodyNumber(a):D8}.img";
-    private static string HeadRoot(CharacterAppearance a) => $"Character/{BodyNumber(a) + 10000:D8}.img";
-
-    private static bool HasId(ItemInfo? it) => it != null && !string.IsNullOrEmpty(it.Id) && int.TryParse(it.Id, out _);
-
-    /// <summary>装备 id → WZ img 根路径（目录映射参考 MapleSalon2 itemFolder.ts，统一 8 位补零）。</summary>
-    private static string ItemRoot(string id)
+    public void ClearBitmapCache()
     {
-        int n = int.TryParse(id, out var v) ? v : 0;
-        int part = n / 10000;
-        string folder = part switch
+        foreach (var b in _bmpCache.Values) b.Dispose();
+        _bmpCache.Clear();
+        _metaCache.Clear();
+    }
+
+    // ═══════════════════════════════════════════
+    // IEntityFrameProvider（AnimService 消费）
+    // ═══════════════════════════════════════════
+
+    public bool HasAction(string action) => _current != null && GetActionFrameCount(BodyRoot(_current), action) > 0;
+
+    public int GetFrameCount(string action) => _current == null ? 0 : GetActionFrameCount(BodyRoot(_current), action);
+
+    public int GetFrameDelay(string action, int frame)
+    {
+        if (_current == null) return 100;
+        string key = $"{action}|{frame}";
+        if (_delayCache.TryGetValue(key, out var cached)) return cached;
+        try
         {
-            2 or 5 => "Face/",
-            3 or 4 or 6 or 7 => "Hair/",
-            100 => "Cap/",
-            101 or 102 or 103 => "Accessory/",
-            104 => "Coat/",
-            105 => "Longcoat/",
-            106 => "Pants/",
-            107 => "Shoes/",
-            108 => "Glove/",
-            109 => "Shield/",
-            110 => "Cape/",
-            _ when part >= 112 && part <= 119 => "Accessory/",
-            _ when part >= 121 && part <= 170 => "Weapon/",
-            _ when part >= 190 && part <= 199 => "TamingMob/",
-            _ => ""
-        };
-        return $"Character/{folder}{id.PadLeft(8, '0')}.img";
-    }
-
-    private IEnumerable<(string category, string root)> EnumerateRoots(CharacterAppearance a)
-    {
-        yield return ("body", BodyRoot(a));
-        yield return ("head", HeadRoot(a));
-        if (HasId(a.Hair)) yield return ("hair", ItemRoot(a.Hair.Id));
-        if (HasId(a.Face)) yield return ("face", ItemRoot(a.Face.Id));
-        if (HasId(a.Cap)) yield return ("cap", ItemRoot(a.Cap.Id));
-        if (HasId(a.Cape)) yield return ("cape", ItemRoot(a.Cape.Id));
-        if (HasId(a.Coat)) yield return ("coat", ItemRoot(a.Coat.Id));
-        if (HasId(a.Pants)) yield return ("pants", ItemRoot(a.Pants.Id));
-        if (HasId(a.Shoes)) yield return ("shoe", ItemRoot(a.Shoes.Id));
-        if (HasId(a.Glove)) yield return ("glove", ItemRoot(a.Glove.Id));
-        if (HasId(a.Shield)) yield return ("shield", ItemRoot(a.Shield.Id));
-        if (HasId(a.Weapon)) yield return ("weapon", ItemRoot(a.Weapon.Id));
-    }
-
-    /// <summary>读取 zmap（顶→底）并构建层名→索引。WZ 不可用时用回退表。</summary>
-    private List<string> GetZmapTopToBottom()
-    {
-        if (_zmapCache != null) return _zmapCache;
-        var zmap = _wz.GetZmapOrder();
-        if (zmap.Count == 0) zmap = FallbackZmapTopToBottom.ToList();
-        _zmapIndex.Clear();
-        for (int i = 0; i < zmap.Count; i++)
-        {
-            _zmapIndex[zmap[i]] = i;
-            if (zmap[i].Length > 2) _zmapIndex[zmap[i].ToLowerInvariant()] = i;
+            int delay = _wz.GetDelay($"{BodyRoot(_current)}/{action}/{frame}");
+            if (delay <= 0) delay = 100;
+            // 限速上限 300ms（WZ 极慢动作如 500ms 呼吸太像静止；正常 walk/swing 100ms 不变）
+            if (delay > 300) delay = 300;
+            if (_delayDiag.Add($"{action}|{frame}")) Console.WriteLine($"[Paperdoll] GetFrameDelay {action}/{frame}={delay}");
+            _delayCache[key] = delay;
+            return delay;
         }
-        _zmapCache = zmap;
-        return zmap;
+        catch { return 100; }
     }
 
-    private string ResolveFaceAction(string root)
+    public List<string> GetAvailableActions()
     {
-        if (_wz.FindNodeByPath($"{root}/default") != null) return "default";
-        if (_wz.FindNodeByPath($"{root}/blink") != null) return "blink";
-        return "default";
+        // 只返回合成成功的动作（排除僵尸技能动作如 ShamanTigerRiot：帧数>0 但 bounds=0 → 空闲随机显示空白）
+        if (_validActionsCache != null) return _validActionsCache;
+        var valid = new List<string>();
+        foreach (var a in GetActionList())
+        {
+            bool ok;
+            if (!_actionValidCache.TryGetValue(a, out ok)) { ok = IsActionValid(a); _actionValidCache[a] = ok; }
+            if (ok) valid.Add(a);
+        }
+        _validActionsCache = valid;
+        return valid;
     }
 
-    private static readonly HashSet<string> EarPieces = new() { "ear", "humanEar", "lefEar", "highlefEar" };
-    private static bool IsEarPiece(string n) => EarPieces.Contains(n);
-    // 注：本 WZ 的 humanEar sprite 为空（透明），无法显示；故 Human 也用可见的精灵耳 "ear"。
-    // Elf 同样用 "ear"；lefEar/highlefEar 仍各自独立（可见）。
-    private string ExpectedEarPiece() => _current?.Ear switch
+    private bool IsActionValid(string action)
     {
-        EarType.Lef => "lefEar",
-        EarType.HighLef => "highlefEar",
-        _ => "ear" // Human / Elf 都用精灵耳（humanEar 在本 WZ 为空图）
-    };
+        try
+        {
+            if (_current == null) return false;
+            if (GetActionFrameCount(BodyRoot(_current), action) <= 0) return false;
+            return GetBounds(_currentHash, _current, action).W > 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>某动作的 union 尺寸与公共 origin（窗口/锚点基准用；WZ 不可用返回 0）。</summary>
+    public (int w, int h, int originX, int originY) GetActionBounds(string action)
+    {
+        if (_current == null) return (0, 0, 0, 0);
+        var b = GetBounds(_currentHash, _current, action);
+        return (b.W, b.H, -b.Left, -b.Top);
+    }
+
+    /// <summary>动作解析：stand/walk 武器变体（单手 stand1/walk1、双手 stand2/walk2），move→walk1，fly→jump。</summary>
+    public string ResolveAction(string requested)
+    {
+        if (string.IsNullOrEmpty(requested)) return requested;
+        if (HasAction(requested)) return requested;
+        if (requested == "stand" || requested == "walk")
+        {
+            bool twoHand = IsTwoHandWeapon(_current?.Weapon?.Id);
+            string primary = (requested == "stand" ? "stand" : "walk") + (twoHand ? "2" : "1");
+            if (HasAction(primary)) return primary;
+            string alt = (requested == "stand" ? "stand" : "walk") + (twoHand ? "1" : "2");
+            if (HasAction(alt)) return alt;
+        }
+        if (requested == "move" && HasAction("walk1")) return "walk1";
+        if (requested == "fly" && HasAction("jump")) return "jump";
+        var actions = GetAvailableActions();
+        if (actions.Count > 0) return actions.Contains("stand1") ? "stand1" : actions[0];
+        return requested;
+    }
+
+    /// <summary>双手武器（141-146 双手剑/斧/钝器、170 枪）→ 用 stand2/walk2 变体。</summary>
+    private static bool IsTwoHandWeapon(string? weaponId)
+    {
+        if (string.IsNullOrEmpty(weaponId) || !int.TryParse(weaponId, out var n)) return false;
+        int part = n / 10000;
+        return (part >= 141 && part <= 146) || part == 170;
+    }
+
+    public (SKBitmap? Frame, int OriginX, int OriginY, int FrameW, int FrameH) RenderFrame(string action, int frame)
+    {
+        if (_current == null) return (null, 0, 0, 0, 0);
+        return RenderFrame(_current, action, frame, ResolveExpression());
+    }
+
+    // ═══════════════════════════════════════════
+    // 实时合成
+    // ═══════════════════════════════════════════
 
     /// <summary>
-    /// 收集某帧的全部 piece：遍历每个部件根的 {action}/{frame} 子节点。
-    /// face 走表情分支（default/blink），其余走身体动作。
+    /// 合成单帧到 union canvas（该 action 各帧共用联合画布 + 公共 origin，窗口不抖）。
+    /// appearance 用不可变快照（草稿/主窗口并发安全，F7）。
     /// </summary>
-    private List<Piece> CollectPieces(string action, int frame)
+    public (SKBitmap? Frame, int OriginX, int OriginY, int FrameW, int FrameH) RenderFrame(
+        CharacterAppearance a, string action, int frame, string expression)
+    {
+        if (a == null) return (null, 0, 0, 0, 0);
+        try
+        {
+            var hash = HashAppearance(a);
+            var bounds = GetBounds(hash, a, action);
+            if (bounds.W <= 0 || bounds.H <= 0)
+            {
+                if (!_renderFailDiag)
+                {
+                    _renderFailDiag = true;
+                    Console.WriteLine($"[Paperdoll] RenderFrame FAIL: action={action} frame={frame} bounds={bounds.W}x{bounds.H} hash={hash}");
+                }
+                return (null, 0, 0, 0, 0);
+            }
+
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression));
+            ResolveAnchors(pieces);
+            AssignLayers(pieces);
+            // 调试：locks 疑似错误隐藏披风，先禁用观察（旧代码无 locks）
+            // ApplyLocks(hash, a, pieces);
+
+            var locked = pieces.Where(p => p.Locked && !p.Hidden).ToList();
+            if (_renderFramesDiag.Add($"{action}|{frame}"))
+            {
+                var paths = string.Join(",", locked.Select(p =>
+                {
+                    var b = GetBmp(p.PiecePath);
+                    var tail = p.PiecePath.Length > 30 ? p.PiecePath[^30..] : p.PiecePath;
+                    var m = p.Category == "body" ? $" map=[{string.Join(",", p.Map.Take(4).Select(kv => $"{kv.Key}:{kv.Value.x},{kv.Value.y}"))}]" : "";
+                    return $"{p.Category}:{tail}@{b?.Width}x{b?.Height} F=({p.FinalX},{p.FinalY}){m}";
+                }));
+                Console.WriteLine($"[Paperdoll] RenderFrame {action}/{frame}: 可画={locked.Count} [{paths}]");
+            }
+            if (locked.Count == 0) return (null, 0, 0, 0, 0);
+
+            // 帧位移 move（对齐 MapleSalon2 instruction.move）：WZ 每帧有 move 位移数据，
+            // 角色位置由 move 决定（平滑）；忽略它则位置纯靠锚点（body 每帧 navel 变 → 呼吸整体摆 → 抖动）
+            int mvX = 0, mvY = 0;
+            try
+            {
+                var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{frame}/move")?.GetValueEx<Wz_Vector>(null);
+                if (mv != null) { mvX = mv.X; mvY = mv.Y; }
+            }
+            catch { }
+            if (_renderFramesDiag.Add($"{action}|{frame}|mv"))
+                Console.WriteLine($"[Paperdoll] {action}/{frame} move=({mvX},{mvY})");
+
+            // 画布原点 = body 锚点（照抄 MapleSalon2 updateCharacterPivotByBodyPiece：bodyFrame.pivot = bodyFrame.ancher）
+            var bodyP = locked.FirstOrDefault(p => p.Category == "body");
+            int bx = bodyP?.AnchorX ?? 0;
+            int by = bodyP?.AnchorY ?? 0;
+
+            var bmp = new SKBitmap(bounds.W, bounds.H, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var canvas = new SKCanvas(bmp);
+            canvas.Clear(SKColors.Transparent);
+            // 面向：水平翻转（绕画布中心镜像）
+            if (Flip)
+            {
+                canvas.Save();
+                canvas.Translate(bounds.W / 2f, 0);
+                canvas.Scale(-1, 1);
+                canvas.Translate(-bounds.W / 2f, 0);
+            }
+            // z 大（底）先画，z 小（顶）后画；piece 相对 body 锚点平移到画布 + 帧位移 move
+            foreach (var p in locked.OrderByDescending(p => p.ZIndex))
+            {
+                var pb = GetBmp(p.PiecePath);
+                if (pb == null) continue;
+                var dyeBmp = GetDyeBmp(a, p.Category, p.PiecePath);
+                if (dyeBmp != null)
+                    canvas.DrawBitmap(dyeBmp, p.FinalX - bx - bounds.Left + mvX, p.FinalY - by - bounds.Top + mvY);
+                else
+                    canvas.DrawBitmap(pb, p.FinalX - bx - bounds.Left + mvX, p.FinalY - by - bounds.Top + mvY);
+            }
+            if (Flip) canvas.Restore();
+            // 翻转后 origin 镜像（水平）
+            int outOriginX = Flip ? bounds.W + bounds.Left : -bounds.Left;
+            return (bmp, outOriginX, -bounds.Top, bounds.W, bounds.H);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PaperdollService] RenderFrame({action}/{frame}): {ex.Message}");
+            return (null, 0, 0, 0, 0);
+        }
+    }
+
+    /// <summary>合成单帧输出 PNG（设置中心预览用；透明背景）。</summary>
+    public byte[]? CompositeFrame(CharacterAppearance a, string action, int frame, string expression = ExpressionDefault)
+    {
+        if (a == null) return null;
+        var (bmp, _, _, _, _) = RenderFrame(a, action, frame, expression);
+        if (bmp == null) return null;
+        try
+        {
+            using var image = SKImage.FromBitmap(bmp);
+            return image.Encode(SKEncodedImageFormat.Png, 100).ToArray();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] CompositeFrame: {ex.Message}"); return null; }
+        finally { bmp.Dispose(); }
+    }
+
+    // ═══════════════════════════════════════════
+    // 部件收集（WZ 读取在此，结果缓存 per hash|action|frame|expression）
+    // ═══════════════════════════════════════════
+
+    private List<PieceSource> CollectPiecesForFrame(string hash, CharacterAppearance a, string action, int frame, string expression)
+    {
+        string key = $"{hash}|{action}|{frame}|{expression}";
+        if (_frameSourcesCache.TryGetValue(key, out var cached)) return cached;
+
+        var sources = new List<PieceSource>();
+        foreach (var (category, root) in GetRoots(hash, a))
+        {
+            string act = category == "face" ? ResolveFaceAction(root, expression) : action;
+            string framePath;
+            if (category == "face")
+            {
+                // face 无数字帧号（default/blink 下直接是 piece）：恒用 {root}/{act}，
+                // 避免 body 帧号越界时脸缺失 → 呼吸动画脸闪烁抖动（对齐旧合成图条行为）
+                framePath = $"{root}/{act}";
+                if (_wz.FindNodeByPath(framePath) == null) continue;
+            }
+            else
+            {
+                framePath = $"{root}/{act}/{frame}";
+                if (_wz.FindNodeByPath(framePath) == null) continue;
+            }
+
+            if (!_collectFailDiag)
+            {
+                _collectFailDiag = true;
+                Console.WriteLine($"[Paperdoll] Collect diag: {category} root={root} framePath={framePath} 存在={_wz.FindNodeByPath(framePath) != null}");
+            }
+
+            string itemId = GetCategoryItemId(a, category);
+            foreach (var pieceName in _wz.GetFramePieceNames(framePath))
+            {
+                // 耳朵互斥：head 中 key 以 "ear" 结尾的 canvas 按 earType 取组（对齐 MapleSalon2 EarReg /ear$/i）
+                if (category == "head" && IsEarPiece(pieceName) && pieceName != (a.Ear ?? EarHuman)) continue;
+                sources.Add(new PieceSource(category, pieceName, $"{framePath}/{pieceName}", itemId));
+            }
+        }
+
+        _frameSourcesCache[key] = sources;
+        return sources;
+    }
+
+    private static string GetCategoryItemId(CharacterAppearance a, string category) => category switch
+    {
+        "hair" => a.Hair?.Id ?? "", "face" => a.Face?.Id ?? "",
+        "cap" => a.Cap?.Id ?? "", "cape" => a.Cape?.Id ?? "",
+        "coat" => a.Coat?.Id ?? "", "overall" => a.Overall?.Id ?? "",
+        "pants" => a.Pants?.Id ?? "", "shoe" => a.Shoes?.Id ?? "",
+        "glove" => a.Glove?.Id ?? "", "shield" => a.Shield?.Id ?? "",
+        "weapon" => a.Weapon?.Id ?? "", "earring" => a.Earring?.Id ?? "",
+        _ => ""
+    };
+
+    private List<Piece> MaterializePieces(List<PieceSource> sources)
     {
         var pieces = new List<Piece>();
-        if (_current == null) return pieces;
-        foreach (var (category, root) in EnumerateRoots(_current))
+        foreach (var s in sources)
         {
-            string act = category == "face" ? ResolveFaceAction(root) : action;
-            int frm = category == "face" ? 0 : frame;
-            // face 的动作节点(default/blink)下直接是 piece，无数字帧号；身体动作才是 {act}/{frame}
-            var framePath = category == "face" ? $"{root}/{act}" : $"{root}/{act}/{frm}";
-            if (_wz.FindNodeByPath(framePath) == null)
+            var meta = GetMeta(s.PiecePath);
+            if (meta == null) continue;
+            pieces.Add(new Piece
             {
-                Console.WriteLine($"[Paperdoll DBG] {category}: framePath 不存在 {framePath}");
-                if (category == "face")
-                {
-                    var acts = new List<string>();
-                    var faceRootNode = _wz.FindNodeByPath(root);
-                    if (faceRootNode != null)
-                        foreach (Wz_Node c in faceRootNode.Nodes) acts.Add(c.Text);
-                    Console.WriteLine($"[Paperdoll DBG] face {root} actions=[{string.Join(",", acts.Take(20))}]");
-                    _wz.DiagPiece($"{root}/default");
-                }
-                continue;
-            }
-
-            var rawNames = _wz.GetFramePieceNames(framePath);
-            if (category == "body" || category == "head" || category == "hair")
-            {
-                Console.WriteLine($"[Paperdoll DBG] {category} {framePath} rawChildren=[{string.Join(",", rawNames)}]");
-                if (rawNames.Count > 0) _wz.DiagPiece($"{framePath}/{rawNames[0]}");
-            }
-
-            var foundNames = new List<string>();
-            foreach (var pieceName in rawNames)
-            {
-                // 耳朵互斥：只渲染当前 EarType 对应的耳朵 piece（默认人类 humanEar）
-                if (category == "head" && IsEarPiece(pieceName) && pieceName != ExpectedEarPiece()) continue;
-                var piecePath = $"{framePath}/{pieceName}";
-                var png = _wz.ExtractPng(piecePath);
-                if (png == null || png.Length == 0) continue;
-                var bmp = SKBitmap.Decode(png);
-                if (bmp == null) continue;
-                var (ox, oy) = _wz.GetOrigin(piecePath);
-                var map = _wz.GetPieceMap(piecePath);
-                var z = _wz.GetZField(piecePath) ?? "";
-                foundNames.Add(pieceName);
-                pieces.Add(new Piece
-                {
-                    Category = category,
-                    PieceName = pieceName,
-                    Bmp = bmp,
-                    Ox = ox,
-                    Oy = oy,
-                    Map = map,
-                    ZField = z
-                });
-            }
-            Console.WriteLine($"[Paperdoll DBG] {category}: {framePath} → pieces=[{string.Join(",", foundNames)}]");
+                Category = s.Category, PieceName = s.PieceName, PiecePath = s.PiecePath,
+                ItemId = s.ItemId, Ox = meta.Ox, Oy = meta.Oy, Map = meta.Map, ZField = meta.ZField
+            });
         }
         return pieces;
     }
 
-    /// <summary>
-    /// 锚点扩散：以 navel=(0,0) 为种子，件与件之间通过 map 锚点链（navel→neck→brow→hand…）相互对齐。
-    /// 参考 MapleSalon2 itemPiece.buildAncher / characterBodyFrame。
-    /// </summary>
+    /// <summary>head 的耳朵 canvas：以 "ear" 结尾（排除 capeArm 等含 ear 子串的 key）。</summary>
+    private static bool IsEarPiece(string name) => name.EndsWith("ear", StringComparison.OrdinalIgnoreCase);
+
+    private string ResolveFaceAction(string root, string expression)
+    {
+        if (!string.IsNullOrEmpty(expression) && _wz.FindNodeByPath($"{root}/{expression}") != null) return expression;
+        if (_wz.FindNodeByPath($"{root}/{ExpressionBlink}") != null) return ExpressionBlink;
+        return ExpressionDefault;
+    }
+
+    // ═══════════════════════════════════════════
+    // 锚点解算（对齐 MapleSalon2 itemPiece.buildAncher / characterBodyFrame）
+    // ═══════════════════════════════════════════
+
     private void ResolveAnchors(List<Piece> pieces)
     {
         var anchors = new Dictionary<string, (int x, int y)> { ["navel"] = (0, 0) };
@@ -233,20 +425,21 @@ public class PaperdollService
             if (!changed) break;
         }
 
-        // 最终绘制位置 = anchor - origin；anchor = base锚点世界位(A) - piece图内map位(M)
         foreach (var p in pieces)
         {
             if (!p.Locked) continue;
             p.FinalX = p.AnchorX - p.Ox;
             p.FinalY = p.AnchorY - p.Oy;
         }
-        foreach (var p in pieces)
-            Console.WriteLine($"[Paperdoll DBG] piece {p.Category}/{p.PieceName} Ox={p.Ox} Oy={p.Oy} anchor=({p.AnchorX},{p.AnchorY}) map=[{string.Join(",", p.Map.Keys)}] base={p.BaseAnchor} final=({p.FinalX},{p.FinalY}) z={p.ZField}");
     }
 
-    /// <summary>求每个 piece 归属的 zmap 层名与数值 z（顶=0，底=大），用于排序。</summary>
-    private void AssignLayersAndZIndex(List<Piece> pieces)
+    // ═══════════════════════════════════════════
+    // 分层 + 遮挡锁（vslot 驱动 + zmap 顺序，对齐 MapleSalon2 buildLock/refreshLock 思想）
+    // ═══════════════════════════════════════════
+
+    private void AssignLayers(List<Piece> pieces)
     {
+        var zmap = GetZmapTopToBottom();
         foreach (var p in pieces)
         {
             p.ResolvedLayer = ResolveLayer(p);
@@ -254,171 +447,377 @@ public class PaperdollService
         }
     }
 
+    /// <summary>顶→底遍历 zmap 层，每层穿戴部件按 item id 升序把 vslot 槽位占掉；下层同槽被非自身占用则隐藏。</summary>
+    private void ApplyLocks(string hash, CharacterAppearance a, List<Piece> pieces)
+    {
+        var locks = BuildLayerLocks(hash, a);
+        if (locks == null || locks.Count == 0) return;
+        foreach (var p in pieces)
+        {
+            if (p.Hidden) continue;
+            if (!locks.TryGetValue(p.ResolvedLayer, out var layerLocks)) continue;
+            var vslot = GetVslotForCategory(p.Category);
+            if (string.IsNullOrEmpty(vslot)) continue;
+            foreach (var ch in vslot)
+            {
+                if (layerLocks.TryGetValue(ch, out var owner) && owner != p.ItemId)
+                {
+                    p.Hidden = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    private Dictionary<string, Dictionary<char, string>>? BuildLayerLocks(string hash, CharacterAppearance a)
+    {
+        var zmap = GetZmapTopToBottom();
+        // 只对实际穿戴的部位建立锁
+        var idMap = new Dictionary<string, string>();
+        foreach (var (category, root) in GetRoots(hash, a))
+        {
+            var id = GetCategoryItemId(a, category);
+            if (!string.IsNullOrEmpty(id)) idMap[category] = id;
+        }
+        if (idMap.Count == 0) return null;
+
+        var result = new Dictionary<string, Dictionary<char, string>>();
+        foreach (var layerName in zmap)
+        {
+            var layerCats = idMap.Keys.Where(c => CategoryInLayer(c, layerName)).ToList();
+            if (layerCats.Count == 0) continue;
+            var layerLocks = new Dictionary<char, string>();
+            foreach (var cat in layerCats.OrderBy(c => idMap[c], StringComparer.Ordinal))
+            {
+                foreach (var ch in GetVslotForCategory(cat))
+                    if (!layerLocks.ContainsKey(ch)) layerLocks[ch] = idMap[cat];
+            }
+            result[layerName] = layerLocks;
+        }
+        return result;
+    }
+
+    private static bool CategoryInLayer(string cat, string layerName)
+    {
+        string def = cat switch
+        {
+            "cap" => "cap", "hair" => "hairOverHead", "coat" => "coat", "overall" => "coat",
+            "pants" => "pants", "shoe" => "shoe", "glove" => "glove", "shield" => "shield",
+            "weapon" => "weapon", "cape" => "cape", "face" => "face", "earring" => "accessory",
+            "body" => "body", "head" => "head", _ => ""
+        };
+        if (!string.IsNullOrEmpty(def) && layerName == def) return true;
+        if (cat == "hair" && (layerName.Contains("hair", StringComparison.OrdinalIgnoreCase) || layerName == "backHead")) return true;
+        if (cat == "earring" && layerName.Contains("accessory", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static string GetVslotForCategory(string cat) => cat switch
+    {
+        "cap" => "Cp", "hair" => "Hd", "head" => "Hd", "face" => "Fa", "earring" => "Er",
+        "coat" => "CpTn", "overall" => "CpTnPn", "pants" => "Pn", "shoe" => "So",
+        "glove" => "Gv", "shield" => "Sd", "weapon" => "Wp", "cape" => "Cp",
+        "body" => "Bd", _ => ""
+    };
+
+    // ═══════════════════════════════════════════
+    // 层名解析
+    // ═══════════════════════════════════════════
+
     private string ResolveLayer(Piece p)
     {
+        var zmap = GetZmapTopToBottom();
         if (!string.IsNullOrEmpty(p.ZField))
         {
             if (_zmapIndex.ContainsKey(p.ZField)) return p.ZField;
             if (_zmapIndex.ContainsKey(p.ZField.ToLowerInvariant())) return p.ZField.ToLowerInvariant();
+            // 数值 z：zmap[count - 10 - z]（对齐 MapleSalon2 resolveUseablePieceName）
+            if (int.TryParse(p.ZField, out var zn))
+            {
+                int zi = zmap.Count - 10 - zn;
+                if (zi >= 0 && zi < zmap.Count) return zmap[zi];
+            }
+            // Below/Under/Over/Above 层名（如 hairBelowBody）
+            var prep = ResolvePrepLayer(p.ZField);
+            if (prep != null) return prep;
         }
         if (_zmapIndex.ContainsKey(p.PieceName)) return p.PieceName;
         if (_zmapIndex.ContainsKey(p.PieceName.ToLowerInvariant())) return p.PieceName.ToLowerInvariant();
+        var prep2 = ResolvePrepLayer(p.PieceName);
+        if (prep2 != null) return prep2;
         return p.Category switch
         {
             "body" => "body", "head" => "head", "face" => "face",
-            "hair" => "hairOverHead", "cap" => "cap", "coat" => "coat",
+            "hair" => "hairOverHead", "cap" => "cap", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove",
-            "weapon" => "weapon", "shield" => "shield", "cape" => "cape",
+            "weapon" => "weapon", "shield" => "shield", "cape" => "cape", "earring" => "accessory",
             _ => p.PieceName
         };
     }
 
-    /// <summary>单帧合成（自身包围盒），用于设置中心预览。</summary>
-    public byte[]? CompositeFrame(string action, int frameIndex)
-    {
-        if (_current == null) return null;
-        var zmap = GetZmapTopToBottom();
-        var pieces = CollectPieces(action, frameIndex);
-        try
-        {
-            if (pieces.Count == 0) return null;
-            ResolveAnchors(pieces);
-            AssignLayersAndZIndex(pieces);
-            return CompositePieces(pieces);
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] CompositeFrame: {ex.Message}"); return null; }
-        finally { foreach (var p in pieces) p.Bmp?.Dispose(); }
-    }
-
-    private static byte[]? CompositePieces(List<Piece> pieces)
-    {
-        var locked = pieces.Where(p => p.Locked).ToList();
-        if (locked.Count == 0) return null;
-        int minX = 0, minY = 0, maxX = 0, maxY = 0;
-        foreach (var p in locked)
-        {
-            minX = Math.Min(minX, p.FinalX); minY = Math.Min(minY, p.FinalY);
-            maxX = Math.Max(maxX, p.FinalX + p.Bmp!.Width); maxY = Math.Max(maxY, p.FinalY + p.Bmp.Height);
-        }
-        int cw = maxX - minX, ch = maxY - minY;
-        if (cw <= 0 || ch <= 0) return null;
-        int ox = -minX, oy = -minY;
-
-        using var result = new SKBitmap(cw, ch);
-        using var canvas = new SKCanvas(result);
-        canvas.Clear(SKColors.Transparent);
-        // z 大（底）先画，z 小（顶）后画
-        foreach (var p in locked.OrderByDescending(p => p.ZIndex))
-            canvas.DrawBitmap(p.Bmp!, ox + p.FinalX, oy + p.FinalY);
-
-        using var image = SKImage.FromBitmap(result);
-        return image.Encode(SKEncodedImageFormat.Png, 100).ToArray();
-    }
-
     /// <summary>
-    /// 构建某动作的精灵图条：先算所有帧的联合画布 + 公共锚点，再把每帧画进共享画布，水平拼接。
-    /// 返回 (SpriteStrip, png字节)。
+    /// Below/Under/Over/Above 层名解析：基于相邻层 index 推断并注册到 zmap 索引
+    /// （对齐 MapleSalon2 isPossiblyResolvableLayer：below/under = target-1，over/above = target+1）。
     /// </summary>
-    public (SpriteStrip? strip, byte[]? png) BuildActionStrip(string action)
+    private string? ResolvePrepLayer(string name)
     {
-        if (_current == null) return (null, null);
-        var bodyRoot = BodyRoot(_current);
-        int frameCount = GetActionFrameCount(bodyRoot, action);
-        if (frameCount <= 0) return (null, null);
+        var m = Regex.Match(name, "(Below|Under|Over|Above)", RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var parts = Regex.Split(name, "(Below|Under|Over|Above)", RegexOptions.IgnoreCase);
+        if (parts.Length < 3) return null;
+        string baseName = parts[0];
+        if (string.IsNullOrEmpty(baseName)) return null;
+        if (!_zmapIndex.TryGetValue(baseName, out int index))
+        {
+            var bl = baseName.ToLowerInvariant();
+            if (!_zmapIndex.TryGetValue(bl, out index)) index = 0;
+        }
+        for (int i = 1; i + 1 < parts.Length; i += 2)
+        {
+            string prep = parts[i];
+            string target = parts[i + 1];
+            int tIdx = _zmapIndex.TryGetValue(target, out var ti) ? ti : 0;
+            if (prep.Equals("Below", StringComparison.OrdinalIgnoreCase) || prep.Equals("Under", StringComparison.OrdinalIgnoreCase))
+                index = tIdx - 1;
+            else
+                index = tIdx + 1;
+        }
+        if (index < 0) index = 0;
+        _zmapIndex[name] = index;
+        _zmapIndex[name.ToLowerInvariant()] = index;
+        return name;
+    }
 
-        var zmap = GetZmapTopToBottom();
-        var frames = new List<List<Piece>>();
+    // ═══════════════════════════════════════════
+    // 部件根 / union bounds / 元数据缓存
+    // ═══════════════════════════════════════════
+
+    private static int BodyNumber(CharacterAppearance a)
+    {
+        if (a.BodyId >= 2000 && a.BodyId <= 2999) return a.BodyId;
+        return a.Gender == 0 ? 2000 : 2001;
+    }
+    private static string BodyRoot(CharacterAppearance a) => $"Character/{BodyNumber(a):D8}.img";
+    private static string HeadRoot(CharacterAppearance a) => $"Character/{BodyNumber(a) + 10000:D8}.img";
+
+    private static bool HasId(ItemInfo? it) => it != null && !string.IsNullOrEmpty(it.Id) && int.TryParse(it.Id, out _);
+
+    /// <summary>装备 id → WZ img 根路径（目录映射参考 MapleSalon2 itemFolder.ts，统一 8 位补零）。</summary>
+    private static string ItemRoot(string id)
+    {
+        int n = int.TryParse(id, out var v) ? v : 0;
+        int part = n / 10000;
+        string folder = part switch
+        {
+            2 or 5 => "Face/",
+            3 or 4 or 6 or 7 => "Hair/",
+            100 => "Cap/",
+            101 or 102 or 103 => "Accessory/",
+            104 => "Coat/",
+            105 => "Longcoat/",
+            106 => "Pants/",
+            107 => "Shoes/",
+            108 => "Glove/",
+            109 => "Shield/",
+            110 => "Cape/",
+            _ when part >= 112 && part <= 119 => "Accessory/",
+            _ when part >= 121 && part <= 170 => "Weapon/",
+            _ when part >= 190 && part <= 199 => "TamingMob/",
+            _ => ""
+        };
+        return $"Character/{folder}{id.PadLeft(8, '0')}.img";
+    }
+
+    private List<(string Category, string Root)> GetRoots(string hash, CharacterAppearance a)
+    {
+        if (_rootCache.TryGetValue(hash, out var cached)) return cached;
+        var list = new List<(string, string)>
+        {
+            ("body", BodyRoot(a)),
+            ("head", HeadRoot(a))
+        };
+        if (HasId(a.Hair)) list.Add(("hair", ItemRoot(a.Hair!.Id)));
+        if (HasId(a.Face)) list.Add(("face", ItemRoot(a.Face!.Id)));
+        if (HasId(a.Cap)) list.Add(("cap", ItemRoot(a.Cap!.Id)));
+        if (HasId(a.Cape)) list.Add(("cape", ItemRoot(a.Cape!.Id)));
+        if (HasId(a.Coat)) list.Add(("coat", ItemRoot(a.Coat!.Id)));
+        if (HasId(a.Overall)) list.Add(("overall", ItemRoot(a.Overall!.Id)));
+        if (HasId(a.Pants)) list.Add(("pants", ItemRoot(a.Pants!.Id)));
+        if (HasId(a.Shoes)) list.Add(("shoe", ItemRoot(a.Shoes!.Id)));
+        if (HasId(a.Glove)) list.Add(("glove", ItemRoot(a.Glove!.Id)));
+        if (HasId(a.Shield)) list.Add(("shield", ItemRoot(a.Shield!.Id)));
+        if (HasId(a.Weapon)) list.Add(("weapon", ItemRoot(a.Weapon!.Id)));
+        if (HasId(a.Earring)) list.Add(("earring", ItemRoot(a.Earring!.Id)));
+        _rootCache[hash] = list;
+        return list;
+    }
+
+    /// <summary>该 action 全部帧的联合包围盒（union bounds，缓存）。</summary>
+    private Bounds GetBounds(string hash, CharacterAppearance a, string action)
+    {
+        string key = $"{hash}|{action}";
+        if (_boundsCache.TryGetValue(key, out var cached)) return cached;
+
+        int frameCount = GetActionFrameCount(BodyRoot(a), action);
+        int minX = 0, minY = 0, maxX = 0, maxY = 0;
+        for (int f = 0; f < frameCount; f++)
+        {
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+            ResolveAnchors(pieces);
+            // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
+            var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
+            int bx = bodyP?.AnchorX ?? 0;
+            int by = bodyP?.AnchorY ?? 0;
+            // 该帧 move（bounds 需容纳位移）
+            int fmvX = 0, fmvY = 0;
+            try
+            {
+                var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{f}/move")?.GetValueEx<Wz_Vector>(null);
+                if (mv != null) { fmvX = mv.X; fmvY = mv.Y; }
+            }
+            catch { }
+            foreach (var p in pieces.Where(x => x.Locked))
+            {
+                var w = GetBmp(p.PiecePath)?.Width ?? 0;
+                var h = GetBmp(p.PiecePath)?.Height ?? 0;
+                minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
+                maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
+                if (p.Category == "body" && _boundsFrameDiag.Add($"{action}|{f}"))
+                    Console.WriteLine($"[Paperdoll] {action} 帧{f} body={w}x{h} Final=({p.FinalX},{p.FinalY}) move=({fmvX},{fmvY})");
+            }
+        }
+        var bounds = new Bounds(minX, minY, maxX - minX, maxY - minY);
+        _boundsCache[key] = bounds;
+        if (_boundsDiag.Add(key))
+            Console.WriteLine($"[Paperdoll] GetBounds: key={key} {bounds.W}x{bounds.H}");
+        return bounds;
+    }
+
+    private PieceMeta? GetMeta(string piecePath)
+    {
+        if (_metaCache.TryGetValue(piecePath, out var m)) return m;
+        var meta = new PieceMeta
+        {
+            Ox = _wz.GetOrigin(piecePath).x,
+            Oy = _wz.GetOrigin(piecePath).y,
+            Map = _wz.GetPieceMap(piecePath),
+            ZField = _wz.GetZField(piecePath) ?? ""
+        };
+        _metaCache[piecePath] = meta;
+        return meta;
+    }
+
+    private SKBitmap? GetBmp(string piecePath)
+    {
+        if (_bmpCache.TryGetValue(piecePath, out var b)) return b;
+        var png = _wz.ExtractPng(piecePath);
+        if (png == null || png.Length == 0) return null;
+        var bmp = SKBitmap.Decode(png);
+        if (bmp == null) return null;
+        _bmpCache[piecePath] = bmp;
+        return bmp;
+    }
+
+    /// <summary>染发位图：hair/face 部件带 Hue/Sat/Bright 时返回缓存染色位图（逐像素 HSV 调整），否则 null。</summary>
+    private SKBitmap? GetDyeBmp(CharacterAppearance a, string category, string piecePath)
+    {
+        if (category != "hair" && category != "face") return null;
+        var it = category == "hair" ? a.Hair : a.Face;
+        if (it == null) return null;
+        bool active = it.Dye != 0 || it.Hue != 0 || it.Saturation != 0 || it.Brightness != 0;
+        if (!active) return null;
+        string key = $"{it.Id}|{it.Hue}|{it.Saturation}|{it.Brightness}|{piecePath}";
+        if (_dyeBmpCache.TryGetValue(key, out var b)) return b;
+        var src = GetBmp(piecePath);
+        if (src == null) return null;
+        var dyed = ApplyHsv(src, it.Hue, it.Saturation / 100f, it.Brightness / 100f);
+        if (dyed != null) _dyeBmpCache[key] = dyed;
+        return dyed;
+    }
+
+    /// <summary>逐像素 HSV 调整（hue 旋转 + 饱和度 + 明度）。BGRA premul 输出，透明保留。</summary>
+    private static SKBitmap? ApplyHsv(SKBitmap src, float hueDeg, float sat, float val)
+    {
         try
         {
-            int minX = 0, minY = 0, maxX = 0, maxY = 0;
-            for (int f = 0; f < frameCount; f++)
+            var dst = new SKBitmap(src.Width, src.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using (var canvas = new SKCanvas(dst))
+                canvas.DrawBitmap(src, 0, 0);
+            using var pixmap = dst.PeekPixels();
+            int count = src.Width * src.Height;
+            unsafe
             {
-                var pieces = CollectPieces(action, f);
-                ResolveAnchors(pieces);
-                AssignLayersAndZIndex(pieces);
-                frames.Add(pieces);
-                foreach (var p in pieces.Where(x => x.Locked))
+                byte* px = (byte*)pixmap.GetPixels();
+                for (int i = 0; i < count; i++)
                 {
-                    minX = Math.Min(minX, p.FinalX); minY = Math.Min(minY, p.FinalY);
-                    maxX = Math.Max(maxX, p.FinalX + p.Bmp!.Width); maxY = Math.Max(maxY, p.FinalY + p.Bmp.Height);
+                    byte* p = px + i * 4;
+                    if (p[3] == 0) continue;
+                    // BGRA premul：先除 alpha 得直通色
+                    float a = p[3] / 255f;
+                    float r = a > 0 ? p[2] / 255f / a : 0;
+                    float g = a > 0 ? p[1] / 255f / a : 0;
+                    float b = a > 0 ? p[0] / 255f / a : 0;
+                    float max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                    float delta = max - min;
+                    float h = 0;
+                    if (delta > 0)
+                    {
+                        if (max == r) h = 60f * (((g - b) / delta) % 6);
+                        else if (max == g) h = 60f * (((b - r) / delta) + 2);
+                        else h = 60f * (((r - g) / delta) + 4);
+                        if (h < 0) h += 360;
+                    }
+                    float s = max > 0 ? delta / max : 0;
+                    float v = max;
+                    h = (h + hueDeg) % 360; if (h < 0) h += 360;
+                    s = Math.Clamp(s * (1 + sat), 0, 1);
+                    v = Math.Clamp(v * (1 + val), 0, 1);
+                    float c2 = v * s;
+                    float x = c2 * (1 - Math.Abs(((h / 60f) % 2) - 1));
+                    float m2 = v - c2;
+                    float nr, ng, nb;
+                    if (h < 60) { nr = c2; ng = x; nb = 0; }
+                    else if (h < 120) { nr = x; ng = c2; nb = 0; }
+                    else if (h < 180) { nr = 0; ng = c2; nb = x; }
+                    else if (h < 240) { nr = 0; ng = x; nb = c2; }
+                    else if (h < 300) { nr = x; ng = 0; nb = c2; }
+                    else { nr = c2; ng = 0; nb = x; }
+                    p[2] = (byte)Math.Clamp((nr + m2) * a * 255, 0, 255);
+                    p[1] = (byte)Math.Clamp((ng + m2) * a * 255, 0, 255);
+                    p[0] = (byte)Math.Clamp((nb + m2) * a * 255, 0, 255);
                 }
             }
-            int cw = maxX - minX, ch = maxY - minY;
-            if (cw <= 0 || ch <= 0) return (null, null);
-
-            int originX = -minX, originY = -minY;
-            int stripW = cw * frameCount;
-
-            using var strip = new SKBitmap(stripW, ch);
-            using var canvas = new SKCanvas(strip);
-            canvas.Clear(SKColors.Transparent);
-
-            var frameData = new List<FrameData>();
-            for (int f = 0; f < frameCount; f++)
-            {
-                int dx = f * cw + originX;
-                foreach (var p in frames[f].Where(x => x.Locked).OrderByDescending(x => x.ZIndex))
-                    canvas.DrawBitmap(p.Bmp!, dx + p.FinalX, originY + p.FinalY);
-
-                int delay = _wz.GetDelay($"{bodyRoot}/{action}/{f}");
-                frameData.Add(new FrameData { Index = f, Delay = delay > 0 ? delay : 100, A0 = 255, A1 = 255 });
-            }
-
-            using var image = SKImage.FromBitmap(strip);
-            var png = image.Encode(SKEncodedImageFormat.Png, 100).ToArray();
-
-            var sp = new SpriteStrip
-            {
-                Action = action,
-                FrameCount = frameCount,
-                FrameWidth = cw,
-                FrameHeight = ch,
-                OriginX = originX,
-                OriginY = originY,
-                FrameData = frameData,
-                DefaultDelay = 100
-            };
-            return (sp, png);
+            return dst;
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] BuildActionStrip({action}): {ex.Message}"); return (null, null); }
-        finally
-        {
-            foreach (var fr in frames)
-                foreach (var p in fr) p.Bmp?.Dispose();
-        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] ApplyHsv: {ex.Message}"); return null; }
     }
 
-    /// <summary>
-    /// 为当前外观构建优先动作的精灵图条，缓存到哨兵 mobId（磁盘 + 内存），供未改动的 AnimService 播放。
-    /// </summary>
-    public bool BuildAndCacheAppearance(CharacterAppearance appearance)
+    // ═══════════════════════════════════════════
+    // zmap
+    // ═══════════════════════════════════════════
+
+    private List<string> GetZmapTopToBottom()
     {
-        try
+        if (_zmapCache != null) return _zmapCache;
+        var zmap = _wz.GetZmapOrder();
+        if (zmap.Count == 0)
         {
-            _current = appearance;
-            _zmapCache = null;
-            bool any = false;
-            foreach (var action in BuildActions)
-            {
-                var (strip, png) = BuildActionStrip(action);
-                if (strip == null || png == null) continue;
-
-                var config = new PetConfig
-                {
-                    Name = "paperdoll",
-                    Type = "player",
-                    Sprites = new Dictionary<string, SpriteStrip> { [action] = strip }
-                };
-                var configJson = System.Text.Json.JsonSerializer.Serialize(config);
-                var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
-
-                _cache.SaveSpriteStrip(SentinelMobId, action, png, configBytes);
-                _sprite.CacheStrip(SentinelMobId, action, strip, png);
-                any = true;
-            }
-            return any;
+            zmap = FallbackZmapTopToBottom.ToList();
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] BuildAndCacheAppearance: {ex.Message}"); return false; }
+        else
+        {
+            // 桌宠 WZ zmap.img 是顶→底（mobEquipFront 顶 … Bd 底），直接用，不 reverse
+            // （MapleSalon2 后端 zmap 是底→顶才 reverse，桌宠 WZ 不同源；reverse 会导致层级全反→披风错位）
+            Console.WriteLine($"[Paperdoll] zmap 原始前5=[{string.Join(",", zmap.Take(5))}] 后5=[{string.Join(",", zmap.Skip(Math.Max(0, zmap.Count - 5)))}] 共{zmap.Count}");
+        }
+        _zmapIndex.Clear();
+        for (int i = 0; i < zmap.Count; i++)
+        {
+            _zmapIndex[zmap[i]] = i;
+            if (zmap[i].Length > 2) _zmapIndex[zmap[i].ToLowerInvariant()] = i;
+        }
+        _zmapCache = zmap;
+        return zmap;
     }
 
     private int GetActionFrameCount(string bodyRoot, string action)
@@ -428,15 +827,40 @@ public class PaperdollService
             return _wz.WithWzLock(() =>
             {
                 var node = _wz.FindNodeByPath($"{bodyRoot}/{action}");
-                if (node == null) return 0;
+                if (node == null)
+                {
+                    if (_frameCountDiag.Add(action)) Console.WriteLine($"[Paperdoll] GetActionFrameCount: {action} 节点不存在 {bodyRoot}/{action}");
+                    return 0;
+                }
                 int count = 0;
                 foreach (Wz_Node child in node.Nodes)
                     if (int.TryParse(child.Text, out _)) count++;
+                if (_frameCountDiag.Add(action))
+                {
+                    var texts = string.Join(",", node.Nodes.Take(40).Select(x => x.Text));
+                    Console.WriteLine($"[Paperdoll] GetActionFrameCount: {action}={count} 节点=[{texts}]");
+                }
                 return count;
             });
         }
         catch { return 0; }
     }
+
+    /// <summary>纸娃娃动作简体中文名（对齐 MapleSalon2 zh-TW 转简体，actions.ts 动作集）。</summary>
+    public static readonly Dictionary<string, string> ActionNames = new()
+    {
+        ["stand1"] = "站立", ["stand2"] = "站立(双手)",
+        ["walk1"] = "行走", ["walk2"] = "行走(双手)",
+        ["alert"] = "警戒", ["fly"] = "飞行", ["heal"] = "施放", ["jump"] = "跳跃",
+        ["ladder"] = "攀爬(梯子)", ["rope"] = "攀爬(绳子)",
+        ["prone"] = "趴下", ["proneStab"] = "趴下攻击", ["sit"] = "坐下",
+        ["shoot1"] = "射击1", ["shoot2"] = "射击2", ["shootF"] = "射击F",
+        ["stabO1"] = "刺击1", ["stabO2"] = "刺击2", ["stabOF"] = "刺击F",
+        ["stabT1"] = "刺击T1", ["stabT2"] = "刺击T2", ["stabTF"] = "刺击TF",
+        ["swingO1"] = "挥击1", ["swingO2"] = "挥击2", ["swingO3"] = "挥击3", ["swingOF"] = "挥击F",
+        ["swingP1"] = "挥击P1", ["swingP2"] = "挥击P2", ["swingPF"] = "挥击PF",
+        ["swingT1"] = "挥击T1", ["swingT2"] = "挥击T2", ["swingT3"] = "挥击T3", ["swingTF"] = "挥击TF",
+    };
 
     public List<string> GetActionList()
     {
@@ -456,6 +880,142 @@ public class PaperdollService
         catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] GetActionList: {ex.Message}"); }
         return new() { "stand1", "stand2", "walk1", "walk2", "jump", "alert", "swingOF", "stabOF" };
     }
+
+    // ═══════════════════════════════════════════
+    // 外观哈希
+    // ═══════════════════════════════════════════
+
+    public static string HashAppearance(CharacterAppearance a)
+    {
+        var sb = new StringBuilder();
+        sb.Append(a.Gender).Append('|').Append(a.Skin).Append('|').Append(a.BodyId).Append('|').Append(a.Ear ?? "").Append('|');
+        AppendId(sb, a.Hair); AppendId(sb, a.Face); AppendId(sb, a.Cap); AppendId(sb, a.Cape);
+        AppendId(sb, a.Coat); AppendId(sb, a.Overall); AppendId(sb, a.Pants); AppendId(sb, a.Shoes);
+        AppendId(sb, a.Glove); AppendId(sb, a.Shield); AppendId(sb, a.Weapon); AppendId(sb, a.Earring);
+        return sb.ToString();
+    }
+
+    private static void AppendId(StringBuilder sb, ItemInfo? it)
+    {
+        if (it == null || string.IsNullOrEmpty(it.Id)) { sb.Append("-|"); return; }
+        sb.Append(it.Id).Append(':').Append(it.Dye).Append(':').Append(it.Hue).Append(':')
+          .Append(it.Saturation).Append(':').Append(it.Brightness).Append('|');
+    }
+
+    private string ResolveExpression()
+    {
+        try { return ExpressionDriver?.GetExpression() ?? ExpressionDefault; }
+        catch { return ExpressionDefault; }
+    }
+
+    private static bool _renderFailDiag;
+    private static bool _collectFailDiag;
+    private static readonly HashSet<string> _boundsDiag = new();
+    private static readonly HashSet<string> _frameCountDiag = new();
+    private static readonly HashSet<string> _renderFramesDiag = new();
+    private static readonly HashSet<string> _delayDiag = new();
+    private static readonly HashSet<string> _boundsFrameDiag = new();
+    private List<string>? _validActionsCache;
+    private readonly ConcurrentDictionary<string, bool> _actionValidCache = new();
+
+    // ═══════════════════════════════════════════
+    // 离线缓存（WZ 断线兜底）：把当前外观合成精灵图条存 CacheManager 哨兵
+    // ═══════════════════════════════════════════
+
+    private static readonly string[] OfflineActions = { "stand1", "stand2", "walk1", "walk2", "jump" };
+
+    // 拖拽/常用动作预热（减少运行时首次合成卡顿抖动）
+    private static readonly string[] WarmupActions = { "swingO3", "swingOF", "stabOF", "fly", "walk1", "walk2", "jump", "alert" };
+
+    /// <summary>预热拖拽/常用动作的 union bounds 与部件位图缓存。在后台调用（ApplyPaperdoll 的后台 Task，与主窗口合成线程错开）。</summary>
+    public void Warmup()
+    {
+        if (_current == null || !_wz.IsLoaded) return;
+        var a = _current;
+        var hash = _currentHash;
+        foreach (var action in WarmupActions)
+        {
+            try
+            {
+                if (GetActionFrameCount(BodyRoot(a), action) <= 0) continue;
+                GetBounds(hash, a, action);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>为当前外观合成离线精灵图条（WZ 不可用时经 AnimService 图条路径播放兜底）。</summary>
+    public void BuildOfflineStrips()
+    {
+        if (_current == null || !_wz.IsLoaded) return;
+        var hash = _currentHash;
+        foreach (var action in OfflineActions)
+        {
+            try
+            {
+                int frameCount = GetActionFrameCount(BodyRoot(_current), action);
+                if (frameCount <= 0) continue;
+                var bounds = GetBounds(hash, _current, action);
+                if (bounds.W <= 0 || bounds.H <= 0) continue;
+
+                int stripW = bounds.W * frameCount;
+                using var strip = new SKBitmap(stripW, bounds.H, SKColorType.Bgra8888, SKAlphaType.Premul);
+                using var canvas = new SKCanvas(strip);
+                canvas.Clear(SKColors.Transparent);
+                var frameData = new List<FrameData>();
+                for (int f = 0; f < frameCount; f++)
+                {
+                    int dx = f * bounds.W;
+                    var pieces = MaterializePieces(CollectPiecesForFrame(hash, _current, action, f, ExpressionDefault));
+                    ResolveAnchors(pieces);
+                    AssignLayers(pieces);
+                    foreach (var p in pieces.Where(x => x.Locked).OrderByDescending(x => x.ZIndex))
+                    {
+                        var pb = GetBmp(p.PiecePath);
+                        if (pb == null) continue;
+                        var dyeBmp = GetDyeBmp(_current!, p.Category, p.PiecePath);
+                        if (dyeBmp != null)
+                            canvas.DrawBitmap(dyeBmp, dx + p.FinalX - bounds.Left, p.FinalY - bounds.Top);
+                        else
+                            canvas.DrawBitmap(pb, dx + p.FinalX - bounds.Left, p.FinalY - bounds.Top);
+                    }
+                    int delay = _wz.GetDelay($"{BodyRoot(_current)}/{action}/{f}");
+                    frameData.Add(new FrameData { Index = f, Delay = delay > 0 ? delay : 100, A0 = 255, A1 = 255 });
+                }
+                using var image = SKImage.FromBitmap(strip);
+                var png = image.Encode(SKEncodedImageFormat.Png, 90).ToArray();
+                if (png == null || png.Length == 0) continue;
+
+                var stripObj = new SpriteStrip
+                {
+                    Action = action,
+                    FrameCount = frameCount,
+                    FrameWidth = bounds.W,
+                    FrameHeight = bounds.H,
+                    TotalWidth = stripW,
+                    OriginX = -bounds.Left,
+                    OriginY = -bounds.Top,
+                    FrameData = frameData,
+                    DefaultDelay = 100
+                };
+                var config = new PetConfig
+                {
+                    Name = "paperdoll",
+                    Type = "player",
+                    Sprites = new Dictionary<string, SpriteStrip> { [action] = stripObj }
+                };
+                var configJson = System.Text.Json.JsonSerializer.Serialize(config);
+                var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
+                _cache.SaveSpriteStrip(SentinelMobId, action, png, configBytes);
+                _sprite.CacheStrip(SentinelMobId, action, stripObj, png);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] BuildOfflineStrip({action}): {ex.Message}"); }
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // 选择 UI 辅助（素材库 / 设置中心）
+    // ═══════════════════════════════════════════
 
     public List<EquippedItem> GetEquipList(string category)
     {
@@ -491,11 +1051,13 @@ public class PaperdollService
             case "Cap": _current.Cap = item; break;
             case "Cape": _current.Cape = item; break;
             case "Coat": _current.Coat = item; break;
+            case "Overall": _current.Overall = item; break;
             case "Pants": _current.Pants = item; break;
             case "Shoes": _current.Shoes = item; break;
             case "Weapon": _current.Weapon = item; break;
             case "Shield": _current.Shield = item; break;
             case "Glove": _current.Glove = item; break;
+            case "Earring": _current.Earring = item; break;
         }
     }
 
@@ -507,23 +1069,49 @@ public class PaperdollService
             case "Cap": _current.Cap = null; break;
             case "Cape": _current.Cape = null; break;
             case "Coat": _current.Coat = null; break;
+            case "Overall": _current.Overall = null; break;
             case "Pants": _current.Pants = null; break;
             case "Shoes": _current.Shoes = null; break;
             case "Weapon": _current.Weapon = null; break;
             case "Shield": _current.Shield = null; break;
             case "Glove": _current.Glove = null; break;
+            case "Earring": _current.Earring = null; break;
         }
     }
 
-    public void SavePreset(string name, CharacterAppearance appearance) { _presets[name] = appearance; }
-    public CharacterAppearance? LoadPreset(string name) => _presets.TryGetValue(name, out var p) ? p : null;
+    // ═══════════════════════════════════════════
+    // 内部类型
+    // ═══════════════════════════════════════════
 
-    /// <summary>单件 piece 描述。</summary>
+    private sealed class Bounds
+    {
+        public int Left, Top, W, H;
+        public Bounds(int left, int top, int w, int h) { Left = left; Top = top; W = w; H = h; }
+    }
+
+    private sealed class PieceSource
+    {
+        public string Category;
+        public string PieceName;
+        public string PiecePath;
+        public string ItemId;
+        public PieceSource(string category, string pieceName, string piecePath, string itemId)
+        { Category = category; PieceName = pieceName; PiecePath = piecePath; ItemId = itemId; }
+    }
+
+    private sealed class PieceMeta
+    {
+        public int Ox, Oy;
+        public Dictionary<string, (int x, int y)> Map = new();
+        public string ZField = "";
+    }
+
     private sealed class Piece
     {
         public string Category = "";
         public string PieceName = "";
-        public SKBitmap? Bmp;
+        public string PiecePath = "";
+        public string ItemId = "";
         public int Ox, Oy;
         public Dictionary<string, (int x, int y)> Map = new();
         public string ZField = "";
@@ -532,8 +1120,15 @@ public class PaperdollService
         public int AnchorX, AnchorY;
         public string? BaseAnchor;
         public bool Locked;
+        public bool Hidden;
         public int FinalX, FinalY;
     }
+}
+
+/// <summary>表情驱动接口（预留）：外部（未来 Hermes/Claude/Codex gateway）按 agent 状态返回当前表情名。</summary>
+public interface IExpressionDriver
+{
+    string GetExpression();
 }
 
 public class EquippedItem

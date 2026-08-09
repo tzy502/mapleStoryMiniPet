@@ -46,13 +46,19 @@ public class MapViewportWindow : Window
     public event Action? RequestHide;
     public event Action? RequestSwitchMap;
 
+    /// <summary>应用设置的镜头大小（设置中心背景 tab「镜头大小」）。</summary>
+    public void SetViewportSize(int w, int h)
+    {
+        if (w >= 320 && h >= 200) { Width = w; Height = h; }
+    }
+
     public MapViewportWindow()
     {
         Title = "MiniPet-MapViewport";
         Width = 800;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Topmost = false;
+        Topmost = true; // 地图背景不被其他应用盖住（胶水规则 2026-08-09）
         ShowActivated = false;
         ShowInTaskbar = false;
         WindowDecorations = WindowDecorations.None;

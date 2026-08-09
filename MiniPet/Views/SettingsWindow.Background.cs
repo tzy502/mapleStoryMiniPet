@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using System.IO;
 using Avalonia.Controls.Templates;
 using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Primitives;
+using Avalonia.VisualTree;
 using Avalonia.Media.Imaging;
 using Avalonia.Layout;
 using Avalonia.Controls;
@@ -31,60 +33,72 @@ public partial class SettingsWindow
             grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1)));
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
 
-            // 左：级联筛选(F6) + 搜索 + 列表 + 分页 + 选择历史(F2)
+            // 左：区域树（唯一选择器，叶子=具体地图，选中直接预览）+ 选择历史(F2) + 镜头大小（摄像机专属，独立区域）
             var left = new Grid();
-            left.RowDefinitions.Add(new RowDefinition(new GridLength(62)));  // 级联：区域/街道
-            left.RowDefinitions.Add(new RowDefinition(new GridLength(32)));  // 搜索
-            left.RowDefinitions.Add(new RowDefinition(GridLength.Star));     // 地图列表
-            left.RowDefinitions.Add(new RowDefinition(new GridLength(30)));  // 分页
+            left.RowDefinitions.Add(new RowDefinition(GridLength.Auto));    // 区域树（内容高度，最多 380 滚动）
             left.RowDefinitions.Add(new RowDefinition(new GridLength(150))); // 选择历史
+            left.RowDefinitions.Add(new RowDefinition(GridLength.Auto));    // 镜头大小（摄像机窗口尺寸）
 
-            // ── F6 级联筛选：区域 → 街道 ──
+            // ── F6 区域树（世界 → 区域 → 子区域 → 地图叶子；搜索框整合进树：搜索时逆向渲染匹配路径）──
             var cascadePanel = new Grid { Margin = new Thickness(10, 8, 5, 2) };
-            cascadePanel.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-            cascadePanel.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+            cascadePanel.RowDefinitions.Add(new RowDefinition(new GridLength(30)));  // 搜索框
+            cascadePanel.RowDefinitions.Add(new RowDefinition(GridLength.Star));     // 树
             cascadePanel.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
             cascadePanel.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-            var regionLabel = new TextBlock { Text = "区域", FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
-            _bgRegionCombo = new ComboBox { FontSize = 11, Height = 26, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
-            _bgRegionCombo.SelectionChanged += (_, _) => BgOnRegionChanged();
-            Grid.SetRow(regionLabel, 0); Grid.SetColumn(regionLabel, 0);
-            Grid.SetRow(_bgRegionCombo, 0); Grid.SetColumn(_bgRegionCombo, 1);
-            var streetLabel = new TextBlock { Text = "街道", FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
-            _bgStreetCombo = new ComboBox { FontSize = 11, Height = 26, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
-            _bgStreetCombo.SelectionChanged += (_, _) => { _bgPage = 1; BgApplyFilter(); };
-            Grid.SetRow(streetLabel, 1); Grid.SetColumn(streetLabel, 0);
-            Grid.SetRow(_bgStreetCombo, 1); Grid.SetColumn(_bgStreetCombo, 1);
+            var regionLabel = new TextBlock { Text = "区域", FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 4, 4, 0) };
+            var searchBox = new TextBox
+            {
+                Watermark = "搜索地图，树状过滤…",
+                FontSize = 11,
+                Height = 26,
+                Padding = new Thickness(8, 3),
+                Background = BrushInputBg,
+                BorderBrush = BrushBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5)
+            };
+            _bgRegionTree = new TreeView
+            {
+                FontSize = 11,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                MaxHeight = 380,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            _bgRegionTree.SelectionChanged += (_, e) => BgOnRegionChanged(e.AddedItems.Count > 0 ? e.AddedItems[0] as WorldMapTreeNode : null);
+            // 点击区域行任意位置展开/折叠子节点（箭头除外——箭头走默认 toggle；叶子无子不处理）。胶水规则 2026-08-09。
+            _bgRegionTree.PointerPressed += (_, e) =>
+            {
+                try
+                {
+                    if (e.Source is ToggleButton) return;
+                    if (e.Source is Control c)
+                    {
+                        var tvi = c.FindAncestorOfType<TreeViewItem>();
+                        if (tvi?.Header is WorldMapTreeNode node && node.Children.Count > 0 && !node.IsLeafMap)
+                        {
+                            tvi.IsExpanded = !tvi.IsExpanded;
+                        }
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TreeExpand: {ex.Message}"); }
+            };
+            searchBox.TextChanged += (_, _) =>
+            {
+                try
+                {
+                    RebuildRegionTree(searchBox.Text ?? "");
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TreeSearch: {ex.Message}"); }
+            };
+            Grid.SetRow(regionLabel, 1); Grid.SetColumn(regionLabel, 0);
+            Grid.SetRow(searchBox, 0); Grid.SetColumn(searchBox, 1);
+            Grid.SetRow(_bgRegionTree, 1); Grid.SetColumn(_bgRegionTree, 1);
             cascadePanel.Children.Add(regionLabel);
-            cascadePanel.Children.Add(_bgRegionCombo);
-            cascadePanel.Children.Add(streetLabel);
-            cascadePanel.Children.Add(_bgStreetCombo);
+            cascadePanel.Children.Add(searchBox);
+            cascadePanel.Children.Add(_bgRegionTree);
             Grid.SetRow(cascadePanel, 0);
             left.Children.Add(cascadePanel);
-
-            var searchPanel = new Border { BorderBrush = BrushBorder, BorderThickness = new Thickness(1), Margin = new Thickness(10, 2, 5, 4), CornerRadius = new CornerRadius(5), Background = BrushInputBg };
-            _bgSearchInput = new TextBox { PlaceholderText = "搜索 id 或名称…", FontSize = 12, Foreground = BrushTxtPrimary, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(8, 4), VerticalAlignment = VerticalAlignment.Center };
-            _bgSearchInput.TextChanged += (_, _) => { _bgPage = 1; BgApplyFilter(); };
-            searchPanel.Child = _bgSearchInput;
-            Grid.SetRow(searchPanel, 1);
-            left.Children.Add(searchPanel);
-
-            _bgMapList = new ListBox { Background = BrushBg, BorderThickness = new Thickness(0), Margin = new Thickness(10, 0, 5, 0) };
-            _bgMapList.SelectionChanged += (_, _) => { if (_bgMapList.SelectedItem is MapEntry entry) BgSelectMap(entry.Id, entry.Name); };
-            Grid.SetRow(_bgMapList, 2);
-            left.Children.Add(_bgMapList);
-
-            var pageRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-            var prev = new Button { Content = "◀", Width = 30, Height = 24, Padding = new Thickness(0), FontSize = 11, Background = BrushBg, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1) };
-            prev.Click += (_, _) => { if (_bgPage > 1) { _bgPage--; BgApplyFilter(); } };
-            _bgPageLabel = new TextBlock { Text = "1/1", FontSize = 11, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center };
-            var next = new Button { Content = "▶", Width = 30, Height = 24, Padding = new Thickness(0), FontSize = 11, Background = BrushBg, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1) };
-            next.Click += (_, _) => { if (_bgPage < _bgTotalPages) { _bgPage++; BgApplyFilter(); } };
-            pageRow.Children.Add(prev);
-            pageRow.Children.Add(_bgPageLabel);
-            pageRow.Children.Add(next);
-            Grid.SetRow(pageRow, 3);
-            left.Children.Add(pageRow);
 
             // ── F2 选择历史：点一条直接应用该地图+crop ──
             var historyPanel = new DockPanel { Margin = new Thickness(10, 2, 5, 8), LastChildFill = true };
@@ -99,8 +113,41 @@ public partial class SettingsWindow
             };
             RefreshBgHistoryList();
             historyPanel.Children.Add(_bgHistoryList);
-            Grid.SetRow(historyPanel, 4);
+            Grid.SetRow(historyPanel, 1);
             left.Children.Add(historyPanel);
+
+            // ── 摄像机镜头大小（独立区域，与静态选区尺寸分开；写 PetSettings.ViewportW/H + 事件应用到窗口）──
+            var viewportPanel = new StackPanel { Margin = new Thickness(10, 6, 5, 2), Spacing = 2 };
+            viewportPanel.Children.Add(new TextBlock { Text = "🎥 摄像机镜头大小", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim });
+            var viewportRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            var vpW = new TextBox { Text = _settings.ViewportW.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = BrushInputBg, Foreground = BrushTxtPrimary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+            var vpH = new TextBox { Text = _settings.ViewportH.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = BrushInputBg, Foreground = BrushTxtPrimary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+            var vpBtn = new Button { Content = "应用", FontSize = 9, Padding = new Thickness(8, 2), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3) };
+            vpBtn.Click += (_, _) =>
+            {
+                try
+                {
+                    if (int.TryParse(vpW.Text?.Trim(), out var w) && int.TryParse(vpH.Text?.Trim(), out var h) && w >= 320 && h >= 200)
+                    {
+                        _settings.ViewportW = w;
+                        _settings.ViewportH = h;
+                        _config.SaveSettings(_settings);
+                        OnViewportSizeApplied?.Invoke(w, h);
+                        if (_statusBarText != null) _statusBarText.Text = $"镜头大小已应用: {w}×{h}";
+                    }
+                    else if (_statusBarText != null) _statusBarText.Text = "镜头大小无效（最小 320×200）";
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ViewportApply: {ex.Message}"); }
+            };
+            viewportRow.Children.Add(new TextBlock { Text = "宽", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+            viewportRow.Children.Add(vpW);
+            viewportRow.Children.Add(new TextBlock { Text = "高", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+            viewportRow.Children.Add(vpH);
+            viewportRow.Children.Add(vpBtn);
+            viewportPanel.Children.Add(viewportRow);
+            viewportPanel.Children.Add(new TextBlock { Text = "仅摄像机模式生效（右键菜单 🎨 背景 → 摄像机）", FontSize = 8, Foreground = BrushTxtDim, TextWrapping = TextWrapping.Wrap });
+            Grid.SetRow(viewportPanel, 2);
+            left.Children.Add(viewportPanel);
 
             Grid.SetColumn(left, 0);
             grid.Children.Add(left);
@@ -246,76 +293,217 @@ public partial class SettingsWindow
                 _bgHierarchy = _wzService.GetMapHierarchy();
                 Dispatcher.UIThread.Post(() =>
                 {
-                    // 填充区域下拉（首项「全部」）
-                    if (_bgRegionCombo != null)
+                    // 填充区域树（WorldMap 层级，Java familyMap/mapListCode 逻辑；节点 = 名称 + 地图数；
+                    // 最底层区域挂占位子节点 → 展开时懒加载叶子地图）
+                    if (_bgRegionTree != null)
                     {
-                        var regions = new List<string> { BgAllLabel };
-                        regions.AddRange(_bgHierarchy.Select(r => r.Name));
-                        _bgRegionCombo.ItemsSource = regions;
-                        _bgRegionCombo.SelectedIndex = 0;
+                        _bgRegionTree.ItemTemplate = new FuncTreeDataTemplate<WorldMapTreeNode>(
+                            (node, _) =>
+                            {
+                                var stack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+                                if (node.IsLeafMap)
+                                {
+                                    stack.Children.Add(new TextBlock { Text = "📍", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                    stack.Children.Add(new TextBlock { Text = node.Name, FontSize = 11, Foreground = BrushTxtPrimary, VerticalAlignment = VerticalAlignment.Center });
+                                }
+                                else if (node.IsLeafPlaceholder)
+                                {
+                                    stack.Children.Add(new TextBlock { Text = "…", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                    stack.Children.Add(new TextBlock { Text = node.Name, FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                }
+                                else
+                                {
+                                    stack.Children.Add(new TextBlock { Text = node.Children.Count > 0 ? "▾" : "▪", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                    stack.Children.Add(new TextBlock { Text = node.Name, FontSize = 11, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center });
+                                    stack.Children.Add(new TextBlock { Text = $"[{node.TotalCount}]", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                }
+                                return stack;
+                            },
+                            node => node.Children);
+                        _bgRegionTree.ItemsSource = _wzService.GetWorldMapTree();
+                        // 展开占位子节点 → 后台懒加载叶子（MapList 地图 + portal 传送门关联），完成后 UI 刷新
+                        _bgRegionTree.AddHandler(TreeViewItem.ExpandedEvent, (_, e) =>
+                        {
+                            try
+                            {
+                                if (e.Source is TreeViewItem tvi && tvi.DataContext is WorldMapTreeNode node)
+                                    EnsureNodeLeaves(node);
+                            }
+                            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TreeExpand: {ex.Message}"); }
+                        });
                     }
-                    if (_bgStreetCombo != null && (_bgStreetCombo.ItemsSource == null || ((System.Collections.IList)_bgStreetCombo.ItemsSource).Count == 0))
-                    {
-                        _bgStreetCombo.ItemsSource = new List<string> { BgAllLabel };
-                        _bgStreetCombo.SelectedIndex = 0;
-                    }
-                    _bgPage = 1;
-                    BgApplyFilter();
-                    if (_bgCropInfo != null) _bgCropInfo.Text = $"共 {_bgAllMaps.Count} 张地图，{_bgHierarchy.Count} 个区域；拖出选区或选预设尺寸";
+                    if (_bgCropInfo != null) _bgCropInfo.Text = $"共 {_bgAllMaps.Count} 张地图；区域树选叶子直接预览";
                 });
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgLoadCatalog: {ex.Message}"); }
         });
     }
 
-    private void BgApplyFilter()
+    /// <summary>收集节点及全部子孙的 MapIds（多级动态聚合）。</summary>
+    private static void CollectNodeMapIds(WorldMapTreeNode node, HashSet<string> acc)
     {
-        // F6 级联筛选：区域 → 街道 → 关键字 三级过滤
-        var keyword = (_bgSearchInput?.Text ?? "").Trim();
-        var regionSel = _bgRegionCombo?.SelectedItem as string;
-        var streetSel = _bgStreetCombo?.SelectedItem as string;
-        HashSet<string>? allow = null;
-        if (!string.IsNullOrEmpty(regionSel) && regionSel != BgAllLabel)
-        {
-            var region = _bgHierarchy.FirstOrDefault(r => r.Name == regionSel);
-            if (region != null)
-            {
-                allow = new HashSet<string>();
-                var streets = string.IsNullOrEmpty(streetSel) || streetSel == BgAllLabel ? region.Streets
-                    : region.Streets.Where(s => s.Name == streetSel).ToList();
-                foreach (var s in streets) foreach (var m in s.Maps) allow.Add(m.Id);
-            }
-        }
-        IEnumerable<MapEntry> src = _bgAllMaps;
-        if (allow != null) src = src.Where(m => allow.Contains(m.Id));
-        if (!string.IsNullOrEmpty(keyword)) src = src.Where(m => m.Id.Contains(keyword) || m.Name.Contains(keyword));
-        _bgFiltered = src.ToList();
-        _bgTotalPages = Math.Max(1, (_bgFiltered.Count + BgPageSize - 1) / BgPageSize);
-        if (_bgPage > _bgTotalPages) _bgPage = _bgTotalPages;
-        var pageItems = _bgFiltered.Skip((_bgPage - 1) * BgPageSize).Take(BgPageSize).ToList();
-        if (_bgMapList != null)
-        {
-            _bgMapList.ItemsSource = pageItems;
-            _bgMapList.ItemTemplate = new FuncDataTemplate<MapEntry>((data, _) =>
-                new TextBlock { Text = data?.Display ?? "", FontSize = 11, Foreground = BrushTxtSecondary, Padding = new Thickness(6, 3) });
-        }
-        if (_bgPageLabel != null) _bgPageLabel.Text = $"{_bgPage}/{_bgTotalPages}";
+        if (node == null) return;
+        foreach (var id in node.MapIds) acc.Add(id);
+        foreach (var ch in node.Children) CollectNodeMapIds(ch, acc);
     }
 
-    /// <summary>F6 区域下拉变更：重建街道列表（首项「全部」），重置到第 1 页并刷新地图列表。</summary>
-    private void BgOnRegionChanged()
+    /// <summary>叶子解析：数字 LeafMapId → 单地图；toolTip 名（非数字）→ 树内反查同名区域（含子孙）地图。</summary>
+    private void ResolveLeafMapIds(WorldMapTreeNode leaf, HashSet<string> acc)
     {
-        if (_bgStreetCombo == null) return;
-        var streets = new List<string> { BgAllLabel };
-        if (_bgRegionCombo?.SelectedItem is string regionSel && regionSel != BgAllLabel)
+        if (leaf == null) return;
+        if (int.TryParse(leaf.LeafMapId, out _)) { acc.Add(leaf.LeafMapId); return; }
+        WorldMapTreeNode? found = null;
+        void Find(WorldMapTreeNode n)
         {
-            var region = _bgHierarchy.FirstOrDefault(r => r.Name == regionSel);
-            if (region != null) streets.AddRange(region.Streets.Select(s => s.Name));
+            if (found != null) return;
+            if (n.Name == leaf.LeafMapId) { found = n; return; }
+            foreach (var c in n.Children) Find(c);
         }
-        _bgStreetCombo.ItemsSource = streets;
-        _bgStreetCombo.SelectedIndex = 0;
-        _bgPage = 1;
-        BgApplyFilter();
+        foreach (var r in _wzService.GetWorldMapTree()) Find(r);
+        if (found != null) CollectNodeMapIds(found, acc);
+        else acc.Add(leaf.LeafMapId);
+    }
+
+    /// <summary>
+    /// 展开最底层区域节点 → 懒加载叶子地图（MapList + portal 传送门关联）。
+    /// 胶水规则 2026-08-08：点击才渲染，避免低性能；后台加载完成后 UI 线程替换占位子节点。
+    /// </summary>
+    private void EnsureNodeLeaves(WorldMapTreeNode node)
+    {
+        if (node == null || node.IsLeafMap || node.IsLeafPlaceholder || node.LeafLoaded) return;
+        node.LeafLoaded = true;
+        bool hasChildRegions = node.Children.Any(c => !c.IsLeafPlaceholder);
+        if (!hasChildRegions && node.Children.Count > 0)
+        {
+            // 最底层区域：占位替换（MapList + MapLink toolTip + portal 传送门关联）
+            Console.WriteLine($"[SettingsWindow] 懒加载叶子: {node.Name}");
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var maps = _wzService.LoadLeafMaps(node);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            node.Children.Clear();
+                            foreach (var m in maps) node.Children.Add(m);
+                            Console.WriteLine($"[SettingsWindow] 叶子加载完成: {node.Name} → {maps.Count} 张地图");
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] 叶子刷新: {ex.Message}"); }
+                    });
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] 叶子加载: {ex.Message}"); }
+            });
+        }
+        else if (node.MapIds.Count > 0)
+        {
+            // 有子区域的区域节点：自身 MapList 地图作为叶子追加到子区域之后（子目录在前，胶水规则 2026-08-09）
+            Console.WriteLine($"[SettingsWindow] 懒加载区域自身地图: {node.Name} ({node.MapIds.Count} 张)");
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var maps = _wzService.LoadSelfMaps(node);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            foreach (var m in maps) node.Children.Add(m);
+                            Console.WriteLine($"[SettingsWindow] 区域自身地图追加: {node.Name} → {maps.Count} 张");
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] 区域自身地图刷新: {ex.Message}"); }
+                    });
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] 区域自身地图加载: {ex.Message}"); }
+            });
+        }
+    }
+
+    /// <summary>
+    /// 搜索框 → 逆向过滤区域树：mapInfo 全量匹配地图（id/街道/名称）→ 保留含匹配地图的区域路径并挂匹配叶子；
+    /// 空搜索显示完整树。胶水规则 2026-08-09：搜索整合进区域树，不再单独过滤地图列表。
+    /// </summary>
+    private void RebuildRegionTree(string query)
+    {
+        if (_bgRegionTree == null) return;
+        var q = (query ?? "").Trim();
+        var full = _wzService.GetWorldMapTree();
+        if (q.Length == 0) { _bgRegionTree.ItemsSource = full; return; }
+        var info = _wzService.GetMapStreetInfo();
+        var matchIds = info
+            .Where(kv => kv.Key.Contains(q) || kv.Value.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .Select(kv => kv.Key)
+            .ToHashSet();
+        Console.WriteLine($"[SettingsWindow] TreeSearch: q='{q}' info={info.Count} match={matchIds.Count}");
+        if (matchIds.Count == 0) { _bgRegionTree.ItemsSource = new List<WorldMapTreeNode>(); return; }
+        var filtered = FilterTreeByMaps(full, matchIds, q, info);
+        Console.WriteLine($"[SettingsWindow] TreeSearch: 过滤后根节点 {filtered.Count} 个");
+        _bgRegionTree.ItemsSource = filtered;
+    }
+
+    /// <summary>逆向过滤：保留「自身名匹配 / MapIds 含匹配地图 / 子孙含匹配」的区域路径；匹配地图作为叶子挂到区域下。</summary>
+    private static List<WorldMapTreeNode> FilterTreeByMaps(List<WorldMapTreeNode> nodes, HashSet<string> matchIds, string q, Dictionary<string, string> info)
+    {
+        var result = new List<WorldMapTreeNode>();
+        foreach (var n in nodes)
+        {
+            if (n.IsLeafPlaceholder) continue;
+            if (n.IsLeafMap)
+            {
+                if (matchIds.Contains(n.LeafMapId) || n.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
+                    result.Add(n);
+                continue;
+            }
+            var kids = FilterTreeByMaps(n.Children.ToList(), matchIds, q, info);
+            bool selfMatch = n.Name.Contains(q, StringComparison.OrdinalIgnoreCase);
+            bool mapMatch = n.MapIds.Any(matchIds.Contains);
+            if (mapMatch)
+            {
+                // 区域 MapIds 含匹配地图 → 无条件构建匹配叶子（即使子区域也有匹配，保证 streetName/mapName 任一命中都显示）
+                foreach (var id in n.MapIds.Where(matchIds.Contains).OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    string name;
+                    if (info.TryGetValue(id, out var v))
+                    {
+                        var parts = v.Split('|');
+                        name = parts.Length > 1 && !string.IsNullOrEmpty(parts[0]) && parts[0] != "(未分类街道)"
+                            ? parts[0] + ":" + parts[1] : parts[1];
+                    }
+                    else { name = id; }
+                    kids.Add(new WorldMapTreeNode { IsLeafMap = true, LeafMapId = id, Key = id, Name = name });
+                }
+            }
+            if (kids.Count > 0 || selfMatch || mapMatch)
+            {
+                result.Add(new WorldMapTreeNode
+                {
+                    Key = n.Key,
+                    Name = n.Name,
+                    MapIds = n.MapIds,
+                    TotalCount = n.TotalCount,
+                    Children = new System.Collections.ObjectModel.ObservableCollection<WorldMapTreeNode>(kids)
+                });
+            }
+        }
+        return result;
+    }
+
+    /// <summary>区域树选中：叶子（具体地图）→ 直接预览；区域节点 → 仅选中（无预览）。</summary>
+    private void BgOnRegionChanged(WorldMapTreeNode? node = null)
+    {
+        node ??= _bgRegionTree?.SelectedItem as WorldMapTreeNode;
+        if (node == null) return;
+        if (!node.IsLeafMap) return;
+        var ids = new HashSet<string>();
+        ResolveLeafMapIds(node, ids);
+        var first = ids.OrderBy(x => x, StringComparer.Ordinal).FirstOrDefault();
+        if (!string.IsNullOrEmpty(first))
+        {
+            var info = _wzService.GetMapStreetInfo();
+            var name = info.TryGetValue(first, out var v) ? v.Split('|')[^1] : first;
+            BgSelectMap(first, name);
+        }
     }
 
     /// <summary>F2 刷新选择历史列表（数据源 PetSettings.MapHistory，由 PetWindow.ApplyMapSelection 持久化）。</summary>
@@ -370,33 +558,34 @@ public partial class SettingsWindow
     private void BgRenderPreview(string mapId, Action? onLoaded)
     {
         var gen = ++_bgPreviewGen;
-        System.Threading.Tasks.Task.Run(() =>
+        // 立即反馈：预览区显示加载中（切换地图一次点击即响应，胶水反馈 2026-08-09）
+        if (_bgCropInfo != null) _bgCropInfo.Text = "⏳ 加载中…";
+        // 崩溃修复 2026-08-09：后台线程 Skia 渲染与窗口 Hide 并发 → SIGSEGV（sk_image_new_from_bitmap）。
+        // 预览渲染移 UI 线程（与窗口生命周期同线程，消除跨线程竞争）。
+        Dispatcher.UIThread.Post(() =>
         {
             try
             {
                 var map = _mapSvc.LoadMap(mapId);
                 byte[]? png = map != null ? _mapSvc.CompositeMapThumbnail(map, BgThumbW, BgThumbH) : null;
-                Dispatcher.UIThread.Post(() =>
+                if (gen != _bgPreviewGen) return;
+                _bgCurrentMap = map;
+                if (png == null || map == null)
                 {
-                    if (gen != _bgPreviewGen) return;
-                    _bgCurrentMap = map;
-                    if (png == null || map == null)
-                    {
-                        if (_bgPreviewImage != null) _bgPreviewImage.Source = null;
-                        if (_bgCropInfo != null) _bgCropInfo.Text = "渲染失败";
-                        return;
-                    }
-                    using var ms = new MemoryStream(png);
-                    var bmp = new Bitmap(ms);
-                    if (_bgPreviewImage != null) _bgPreviewImage.Source = bmp;
-                    int worldW = map.MaxX - map.MinX;
-                    int worldH = map.MaxY - map.MinY;
-                    _bgThumbW = (int)bmp.Size.Width;
-                    _bgThumbH = (int)bmp.Size.Height;
-                    _bgThumbScale = _bgThumbW > 0 ? (double)worldW / _bgThumbW : 1;
-                    if (_bgCropInfo != null) _bgCropInfo.Text = $"地图 {worldW}×{worldH}，拖动选 crop（当前：整图）";
-                    onLoaded?.Invoke();
-                });
+                    if (_bgPreviewImage != null) _bgPreviewImage.Source = null;
+                    if (_bgCropInfo != null) _bgCropInfo.Text = "渲染失败";
+                    return;
+                }
+                using var ms = new MemoryStream(png);
+                var bmp = new Bitmap(ms);
+                if (_bgPreviewImage != null) _bgPreviewImage.Source = bmp;
+                int worldW = map.MaxX - map.MinX;
+                int worldH = map.MaxY - map.MinY;
+                _bgThumbW = (int)bmp.Size.Width;
+                _bgThumbH = (int)bmp.Size.Height;
+                _bgThumbScale = _bgThumbW > 0 ? (double)worldW / _bgThumbW : 1;
+                if (_bgCropInfo != null) _bgCropInfo.Text = $"地图 {worldW}×{worldH}，拖动选 crop（当前：整图）";
+                onLoaded?.Invoke();
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgRenderPreview: {ex.Message}"); }
         });
@@ -715,9 +904,9 @@ public partial class SettingsWindow
             panel.Children.Add(mapVisual);
             _mapNameLabel = new TextBlock { Text = name, FontSize = 16, FontWeight = FontWeight.Bold, Foreground = BrushTxtPrimary, HorizontalAlignment = HorizontalAlignment.Center };
 
-            // 后台真实渲染地图预览（320×200），失败则保留占位
+            // 真实渲染地图预览（320×200），失败则保留占位；UI 线程（崩溃修复 2026-08-09：后台 Skia 与窗口 Hide 并发 SIGSEGV）
             var visualRef = mapVisual;
-            System.Threading.Tasks.Task.Run(() =>
+            Dispatcher.UIThread.Post(() =>
             {
                 try
                 {
@@ -726,17 +915,10 @@ public partial class SettingsWindow
                     if (m == null) return;
                     var png = _mapSvc.CompositeMapThumbnail(m, 320, 200);
                     if (png == null) return;
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        try
-                        {
-                            using var ms = new MemoryStream(png);
-                            visualRef.Child = new Image { Source = new Bitmap(ms), Stretch = Stretch.UniformToFill, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                        }
-                        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] MapPreviewImg: {ex.Message}"); }
-                    });
+                    using var ms = new MemoryStream(png);
+                    visualRef.Child = new Image { Source = new Bitmap(ms), Stretch = Stretch.UniformToFill, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 }
-                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] MapPreview: {ex.Message}"); }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] MapPreviewImg: {ex.Message}"); }
             });
             panel.Children.Add(_mapNameLabel);
             panel.Children.Add(new TextBlock { Text = desc, FontSize = 11, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap });

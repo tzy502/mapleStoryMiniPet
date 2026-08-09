@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,6 +37,13 @@ public partial class App : Application
             // 自动加载 WZ
             var wzService = _serviceProvider.GetRequiredService<WzService>();
             var configService = _serviceProvider.GetRequiredService<ConfigService>();
+            // 注入缓存（世界地图树预渲染缓存用；预构建在 WZ 加载成功后触发）
+            try
+            {
+                var cacheManager = _serviceProvider.GetRequiredService<CacheManager>();
+                wzService.SetCacheManager(cacheManager);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[App] 缓存注入: {ex.Message}"); }
             var petWindow = desktop.MainWindow as PetWindow;
             var wzConfig = configService.LoadWzConfig();
             if (!string.IsNullOrEmpty(wzConfig.BaseWzPath))
@@ -46,13 +54,28 @@ public partial class App : Application
                     if (ok)
                     {
                         Console.WriteLine($"[App] WZ 自动加载成功, Mob: {wzService.ListMobIds().Count} 个, Map: {wzService.ListMapIds().Count} 个");
+                        // 后台预构建世界地图树（Java familyMap/mapListCode 逻辑，预渲染到本地缓存）
+                        _ = Task.Run(() =>
+                        {
+                            try { wzService.GetWorldMapTree(); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[App] 世界地图树预构建: {ex.Message}"); }
+                        });
                         if (petWindow != null)
                             petWindow.LoadDefaultPet(wzService);
                     }
                     else
                     {
                         Console.Error.WriteLine($"[App] WZ 自动加载失败: {err}");
-                        // 尝试从缓存加载默认宠物
+                        // 弹窗提示（一次启动只弹一次）
+                        try
+                        {
+                            var failWindow = new WzLoadFailWindow(
+                                WzService.GetErrorText(err ?? WzError.Unknown),
+                                wzService.LastWzLibWarning);
+                            failWindow.Show();
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[App] 失败弹窗: {ex.Message}"); }
+                        // 缓存加载默认宠物（现有逻辑保留）
                         if (petWindow != null)
                         {
                             var spriteService = _serviceProvider.GetRequiredService<SpriteService>();
@@ -63,6 +86,14 @@ public partial class App : Application
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"[App] WZ 加载异常: {ex.Message}");
+                    try
+                    {
+                        var failWindow = new WzLoadFailWindow(
+                            WzService.GetErrorText(WzError.Unknown),
+                            wzService.LastWzLibWarning);
+                        failWindow.Show();
+                    }
+                    catch (Exception ex2) { Console.Error.WriteLine($"[App] 异常弹窗: {ex2.Message}"); }
                     // 异常后也尝试缓存加载
                     if (petWindow != null) petWindow.LoadDefaultPet(null);
                 }

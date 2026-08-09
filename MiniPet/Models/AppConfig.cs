@@ -12,15 +12,20 @@ namespace MiniPet.Models
         public string BaseWzPath { get; set; } = string.Empty;
         public string CurrentMobId { get; set; } = string.Empty;
         public string CurrentEntityType { get; set; } = string.Empty;
-        public string MapId { get; set; } = string.Empty;
+        // 默认地图：射手村（100000000）。crop 全零 → CropFull 归一化为整图。
+        public string MapId { get; set; } = "100000000";
         // 背景模式：1=静态整图（BackgroundWindow），2=摄像机（MapViewportWindow，左键拖动相机 + 滚轮缩放 + back 视差实时）
         public int MapMode { get; set; } = 1;
+        // 摄像机镜头大小（显示窗口尺寸，默认 800×600；设置中心可调）
+        public int ViewportW { get; set; } = 800;
+        public int ViewportH { get; set; } = 600;
         public int CropX { get; set; }
         public int CropY { get; set; }
         public int CropW { get; set; }
         public int CropH { get; set; }
         public List<MapHistoryEntry> MapHistory { get; set; } = new List<MapHistoryEntry>();
         public string BalloonId { get; set; } = string.Empty;
+        public List<string> BalloonHistory { get; set; } = new List<string>();
         public string DefaultAnim { get; set; } = string.Empty;
         public string Theme { get; set; } = string.Empty;
         public string Personality { get; set; } = string.Empty;
@@ -37,6 +42,10 @@ namespace MiniPet.Models
         public bool MapShowLife { get; set; } = true;
         public bool MapShowPortal { get; set; } = true;
         public bool MapShowFoothold { get; set; }
+        // 纸娃娃当前搭配（CurrentMobId == "__paperdoll__" 时启动恢复）
+        public CharacterAppearance? CurrentPaperdoll { get; set; }
+        // 纸娃娃预设（搭配存档：预设名 → 外观）
+        public Dictionary<string, CharacterAppearance> SavedPaperdolls { get; set; } = new Dictionary<string, CharacterAppearance>();
     }
 
     /// <summary>

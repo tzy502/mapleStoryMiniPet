@@ -23,7 +23,7 @@ A composite character built by layering Character equipment parts (Body, Head, H
 A named animation within an entity (e.g. `stand1`, `walk1`, `move`, `fly`, `skill1`). Each action is a sequence of frames with per-frame delay.
 
 ### 精灵图条 (Sprite Strip)
-A horizontal concatenation of all frames of one action into a single PNG, plus per-frame metadata (delay, alpha, origin). The unit the frame loop consumes; switching actions = swapping strips.
+A horizontal concatenation of all frames of one action into a single PNG, plus per-frame metadata (delay, alpha, origin). The unit the frame loop consumes for Mob/NPC entities; switching actions = swapping strips. A 纸娃娃 is rendered via 实时合成 instead of strips (see [ADR-0005](docs/adr/0005-paperdoll-real-time-compositing.md)).
 
 ### 地图背景 (Map Background)
 A MapleStory map rendered as a backdrop, shown in its **own window** layered behind the Pet. Independent of the Pet window; toggleable. Not part of the Pet window.
@@ -38,6 +38,30 @@ A chat-ring-style speech bubble overlay shown above the Pet, composited from 9-s
 
 ### origin (锚点)
 The WZ anchor point of a frame; the pivot used to align frames so animation does not jitter. Frames within one action share a common canvas anchored at origin.
+
+### 部件 (Piece)
+A single layerable frame component that composes into a 纸娃娃 frame — Body, Head, Hair, Face, Cap, Coat, … Each piece carries its map anchor links, origin, and z layer.
+
+### 耳朵类型 (Ear Type)
+The four mutually-exclusive ear appearances of a 纸娃娃, identified by their WZ canvas names: `humanEar` (human), `ear` (elf), `lefEar` (LEF), `highlefEar` (high elf). Ears are the head's own canvases selected at render time by the ear type; a head that lacks the chosen ear type renders no extra ear (the human head carries its own round ears).
+
+### 表情 (Expression)
+A named face animation of a 纸娃娃 (e.g. `default`, `blink`), independent of the body 动作. Expressions cycle via the random blink cycle and can be driven by an external agent state through the expression driver interface.
+
+### 皮肤 (Skin)
+The complexion variant of a 纸娃娃, tied to a body/head pair. Changing skin updates Body and Head together.
+
+### 染发 (Dye)
+An HSV recolor of a dyeable 部件 (typically hair/face), persisted per item.
+
+### 遮挡锁 (Layer Lock)
+The z-map occlusion rule that hides a lower piece when an upper piece occupies the same slot region (e.g. a cap hiding hair). Applied per z-map layer via slot ownership.
+
+### 搭配 (Outfit)
+A complete, persistable appearance — gender, skin, 耳朵类型, hair, face, each equipment slot, dye — that fully determines how a 纸娃娃 is rendered. The most recently used outfit is cached locally for offline display when WZ is unavailable.
+
+### 实时合成 (Real-time Compositing)
+Rendering a 纸娃娃 frame by composing its 部件 per frame on demand, driven by the frame loop — as opposed to pre-baked 精灵图条. The frame loop displays the composited frame bitmap + origin via a writeable-bitmap path.
 
 ### WZ
 The packed MapleStory data files, parsed via the WzComparerR2.WzLib DLL. The source of all sprites, map data, and balloon tiles.

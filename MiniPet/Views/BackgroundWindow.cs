@@ -48,6 +48,9 @@ public class BackgroundWindow : Window
     // 同步调用 SetMap 后渲染仍在后台线程，裁紧值未就绪；落地必须在渲染完成后。
     public event Action? MapRendered;
 
+    // 渲染完成回调（带请求 crop + PNG）：PetWindow 注入实现 SaveMapPng 落盘，无 WZ 时背景可离线显示。
+    public Action<byte[], int, int, int, int>? OnMapRenderCached;
+
     public BackgroundWindow()
     {
         Title = "MiniPet-Background";
@@ -156,6 +159,9 @@ public class BackgroundWindow : Window
                     using var ms = new MemoryStream(result.Png);
                     _image.Source = new Bitmap(ms);
                     MapRendered?.Invoke();
+                    // 落盘缓存（用请求 crop 作 key；PNG 为裁紧后的实际图）
+                    try { OnMapRenderCached?.Invoke(result.Png, cx, cy, cw, ch); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] CacheMap: {ex.Message}"); }
                 });
             }
             catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] Render: {ex.Message}"); }
@@ -167,6 +173,27 @@ public class BackgroundWindow : Window
     {
         if (map == null) { SetMap(null, null, 0, 0, 0, 0); return; }
         SetMap(map, mapService, map.MinX, map.MinY, map.MaxX - map.MinX, map.MaxY - map.MinY);
+    }
+
+    /// <summary>
+    /// 离线模式：直接显示缓存的地图渲染 PNG（无 WZ 时背景可用）。crop 为渲染时的世界坐标窗口。
+    /// </summary>
+    public void ShowCachedMapPng(byte[] pngData, int cropX, int cropY, int cropW, int cropH)
+    {
+        _map = null;
+        _mapService = null;
+        if (pngData == null || pngData.Length == 0) { _image.Source = null; return; }
+        try
+        {
+            using var ms = new MemoryStream(pngData);
+            using var bmp = new Bitmap(ms);
+            Width = bmp.PixelSize.Width;
+            Height = bmp.PixelSize.Height;
+            EffectiveCropX = cropX; EffectiveCropY = cropY; EffectiveCropW = bmp.PixelSize.Width; EffectiveCropH = bmp.PixelSize.Height;
+            _image.Source = new Bitmap(new MemoryStream(pngData));
+            MapRendered?.Invoke();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] ShowCachedMapPng: {ex.Message}"); _image.Source = null; }
     }
 
     public void HideMap()

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -59,13 +60,21 @@ public partial class PetWindow
             {
                 try
                 {
-                    var browser = new MaterialBrowserWindow(_wzService, _configService);
-                    browser.OnMaterialSelected += (id, name) =>
+                    var browser = new MaterialBrowserWindow(_wzService, _configService, _paperdoll);
+                    browser.OnMaterialSelected += (id, name, _) =>
                     {
                         Dispatcher.UIThread.Post(() =>
                         {
                             try { SwitchToPet(id, name, "Mob"); }
                             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BrowserSelect: {ex.Message}"); }
+                        });
+                    };
+                    browser.OnPaperdollDraftApplied += appearance =>
+                    {
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            try { ApplyPaperdoll(appearance); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollDraftApply: {ex.Message}"); }
                         });
                     };
                     browser.Show();
@@ -80,13 +89,21 @@ public partial class PetWindow
             {
                 try
                 {
-                    var browser = new MaterialBrowserWindow(_wzService, _configService);
-                    browser.OnMaterialSelected += (id, name) =>
+                    var browser = new MaterialBrowserWindow(_wzService, _configService, _paperdoll);
+                    browser.OnMaterialSelected += (id, name, _) =>
                     {
                         Dispatcher.UIThread.Post(() =>
                         {
                             try { SwitchToPet(id, name, "Npc"); }
                             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BrowserSelect: {ex.Message}"); }
+                        });
+                    };
+                    browser.OnPaperdollDraftApplied += appearance =>
+                    {
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            try { ApplyPaperdoll(appearance); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollDraftApply: {ex.Message}"); }
                         });
                     };
                     browser.Show();
@@ -229,9 +246,9 @@ public partial class PetWindow
             animationMenu.Items.Clear();
             var mobId = _animService.GetCurrentMobId();
             var isSentinel = mobId == PaperdollService.SentinelMobId;
-            // 哨兵优先走缓存目录枚举；否则 WZ 可用走 WZ，不可用走缓存
+            // 纸娃娃：MapleSalon2 动作集（有效帧，walk/fly 优先 + 简体中文名）；否则 WZ 可用走 WZ，不可用走缓存
             var actions = isSentinel
-                ? GetCachedActionList(mobId)
+                ? OrderPaperdollActions(_paperdoll.GetAvailableActions())
                 : (_wzService.IsLoaded ? _wzService.GetActionList(mobId, _currentEntityType) : GetCachedActionList(mobId));
 
             // 注：不在打开菜单时后台预热所有动作——逐帧 PNG 解码占满 CPU 会拖垮 UI（右键菜单卡顿主因）。
@@ -240,7 +257,8 @@ public partial class PetWindow
             foreach (var action in actions)
             {
                 var capturedAction = action;
-                var item = new MenuItem { Header = capturedAction };
+                var header = isSentinel && PaperdollService.ActionNames.TryGetValue(capturedAction, out var cn) ? cn : capturedAction;
+                var item = new MenuItem { Header = header };
                 item.Click += (_, _) =>
                 {
                     try
@@ -276,9 +294,29 @@ public partial class PetWindow
             {
                 animationMenu.Items.Add(new MenuItem { Header = "无可用动画", IsEnabled = false });
             }
+            if (isSentinel)
+            {
+                // 面向（左/右）：纸娃娃翻转渲染
+                animationMenu.Items.Add(new Separator());
+                var flipItem = new MenuItem { Header = _paperdoll.Flip ? "面向：左" : "面向：右" };
+                flipItem.Click += (_, _) => { try { _paperdoll.Flip = !_paperdoll.Flip; Console.WriteLine($"[PetWindow] 面向: {(_paperdoll.Flip ? "左" : "右")}"); } catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Flip: {ex.Message}"); } };
+                animationMenu.Items.Add(flipItem);
+            }
             // 背景子菜单的勾选态/可用性刷新已并入 RebuildBgMenu（Opening 紧随其后重建全部 item）
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshAnimationMenu: {ex.Message}"); }
+    }
+
+    /// <summary>纸娃娃动作排序：walk/fly 优先（用户要求默认先 walk1/walk2/fly），其余按常用顺序。</summary>
+    private static List<string> OrderPaperdollActions(List<string> actions)
+    {
+        var priority = new[] { "walk1", "walk2", "fly", "stand1", "stand2", "alert", "heal", "jump", "sit", "ladder", "rope", "prone", "proneStab" };
+        var result = new List<string>();
+        foreach (var p in priority)
+            if (actions.Contains(p)) result.Add(p);
+        foreach (var a in actions)
+            if (!result.Contains(a)) result.Add(a);
+        return result;
     }
 
     /// <summary>

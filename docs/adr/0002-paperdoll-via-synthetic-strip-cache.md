@@ -1,6 +1,6 @@
 # ADR-0002: Paperdoll as animated Pet replacement via synthetic strip cache
 
-- **Status**: Accepted
+- **Status**: **Superseded** by [ADR-0005](0005-paperdoll-real-time-compositing.md) (2026-08-09)
 - **Date**: 2026-07-31
 
 ## Context

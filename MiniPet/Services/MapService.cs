@@ -14,7 +14,7 @@ public partial class MapService
 
     // 整图渲染缓存（ADR-0004）：桌面 crop 与设置预览共用一张整图，按 mapId 缓存；切图/退出 Dispose。
     private SKBitmap? _fullRender;
-    private string? _fullRenderMapId;
+    private string? _fullRenderCacheKey;
 
     // 分层显隐（默认与 PetSettings 一致：全开、Foothold 关）。RenderCore 按位掩码跳过对应层。
     // 调用方（PetWindow/Settings）可按需覆盖；不设置时使用默认值。
@@ -38,7 +38,7 @@ public partial class MapService
         // 主动 Dispose 会导致在途 Task 访问已释放的 Skia 句柄（EXC_BAD_ACCESS 崩溃）。
         // 置 null 让 GC 自然回收，代价是内存释放稍延迟，但避免跨线程悬空指针。
         _fullRender = null;
-        _fullRenderMapId = null;
+        _fullRenderCacheKey = null;
     }
 
     // 摄像机模式（模式2）精灵缓存：wzPath → (bmp, originX, originY)。首次懒加载（ExtractPng+Decode+GetOrigin），
@@ -254,6 +254,12 @@ public partial class MapService
                 var l0 = _wz.GetStringProperty($"{objPath}/l0") ?? "";
                 var l1 = _wz.GetStringProperty($"{objPath}/l1") ?? "";
                 var l2 = _wz.GetStringProperty($"{objPath}/l2") ?? "";
+                // 忽略任务指引/教程引导类 obj（对齐 Java MapRenderHandler：effect.img/quest/ 与 guide.img/tutorial/）
+                if (("effect".Equals(oS) && "quest".Equals(l0))
+                    || ("guide".Equals(oS) && "tutorial".Equals(l0)))
+                {
+                    continue;
+                }
                 objs.Add(new MapObj
                 {
                     Id = i, X = x, Y = y, Z = z, FlipX = f != 0,
@@ -532,7 +538,10 @@ public partial class MapService
             int worldW = mapInfo.MaxX - mapInfo.MinX;
             int worldH = mapInfo.MaxY - mapInfo.MinY;
             if (worldW <= 0 || worldH <= 0) return null;
-            if (_fullRender != null && _fullRenderMapId == mapInfo.Id) return _fullRender;
+            // 缓存键 = mapId + 分层 flag（修复：切地图后背景/NPC/传送门重新出现，
+            // 根因是缓存只按 mapId 命中，flag 变化前渲染的旧图被复用，胶水反馈 2026-08-09）
+            string cacheKey = $"{mapInfo.Id}|{MapShowBack}|{MapShowTile}|{MapShowObj}|{MapShowLife}|{MapShowPortal}|{MapShowFoothold}";
+            if (_fullRender != null && _fullRenderCacheKey == cacheKey) return _fullRender;
             var (ccx, ccy) = GetMapCenter(mapInfo);
             var bmp = RenderViewport(mapInfo, ccx, ccy, 1f, 0, worldW, worldH);
             if (bmp == null) return null;
@@ -540,7 +549,7 @@ public partial class MapService
             // 置 null 让 GC 回收（与 InvalidateFullRenderCache 一致的策略）。
             _fullRender = null;
             _fullRender = bmp;
-            _fullRenderMapId = mapInfo.Id;
+            _fullRenderCacheKey = cacheKey;
             return _fullRender;
         });
     }

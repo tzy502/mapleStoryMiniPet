@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using MiniPet.Models;
 using MiniPet.Services;
 
@@ -69,11 +70,15 @@ public partial class SettingsWindow : Window
     private List<string> _previewActions = new();
 
     // ── 事件 ──
-    public event Action<string, string>? OnPetApplied;
+    public event Action<string, string, string>? OnPetApplied; // (id, name, type: Mob/Npc)
     public event Action<CharacterAppearance>? OnPaperdollApplied;
+    /// <summary>摄像机镜头大小应用（宽, 高）→ PetWindow 调整 MapViewportWindow 尺寸。</summary>
+    public event Action<int, int>? OnViewportSizeApplied;
     public event Action<MapSelection>? OnBackgroundMapApplied;
     /// <summary>分层显隐 toggle（背景/地面/物件/NPC/传送门/地面线）变化后触发，PetWindow 据此重渲染桌面背景窗口。</summary>
     public event Action? OnLayerTogglesChanged;
+    /// <summary>WZ 素材刷新成功（含保存后自动刷新）后触发，PetWindow 据此重载当前宠物。</summary>
+    public event Action? OnWzRefreshed;
 
     // ── 素材桌宠 UI 引用 ──
     private TextBlock? _petNameLabel;
@@ -81,6 +86,11 @@ public partial class SettingsWindow : Window
     private ListBox? _favoriteList;
     private ListBox? _recentList;
     private TextBlock? _statusBarText;
+    private Border? _cacheToast;
+    private TextBlock? _cacheToastText;
+    private ProgressBar? _cacheToastProgress;
+    // 列表缩略图缓存（id|type → stand 首帧；胶水规则 2026-08-09：最近/收藏用真实预览图）
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Bitmap> _listThumbs = new();
     private Border? _previewCanvas;
     private Slider? _zoomSlider;
     private TextBlock? _zoomLabel;
@@ -91,6 +101,8 @@ public partial class SettingsWindow : Window
     private Border? _wzOverlay;
     private TextBox? _wzLibInput;
     private TextBox? _baseWzInput;
+    private Button? _wzRefreshBtn;
+    private TextBlock? _wzOverlayToast;
 
     // ── 主 Tab 头部 ──
     private List<TextBlock> _mainTabHeaders = new();
@@ -105,10 +117,10 @@ public partial class SettingsWindow : Window
     private Border? _paperdollPreviewCanvas;
     private ComboBox? _genderCombo;
     private ComboBox? _earCombo;
-    private TextBox? _hairIdInput, _faceIdInput;
-    private TextBox? _capIdInput, _capeIdInput, _coatIdInput, _pantsIdInput;
-    private TextBox? _shoesIdInput, _weaponIdInput, _shieldIdInput, _gloveIdInput;
-    private TextBox? _mountIdInput, _chairIdInput;
+    private Button? _hairIdInput, _faceIdInput;
+    private Button? _capIdInput, _capeIdInput, _coatIdInput, _pantsIdInput, _overallIdInput, _earringIdInput;
+    private Button? _shoesIdInput, _weaponIdInput, _shieldIdInput, _gloveIdInput;
+    private Button? _mountIdInput, _chairIdInput;
 
     // ── 背景状态 ──
     private MapSelection? _pendingMapSelection;
@@ -116,15 +128,8 @@ public partial class SettingsWindow : Window
     private TextBlock? _mapNameLabel;
     private Border? _mapPreviewCanvas;
 
-    // ── 背景选图器（并入设置中心，端口自 MapBrowserWindow：搜索/列表/分页/大预览/拖 crop）──
+    // ── 背景选图器（并入设置中心：区域树选叶子直接预览 / 大预览 / 拖 crop）──
     private readonly List<MapEntry> _bgAllMaps = new();
-    private List<MapEntry> _bgFiltered = new();
-    private int _bgPage = 1;
-    private const int BgPageSize = 10;
-    private int _bgTotalPages = 1;
-    private TextBox? _bgSearchInput;
-    private ListBox? _bgMapList;
-    private TextBlock? _bgPageLabel;
     private Canvas? _bgPreviewCanvas;
     private Image? _bgPreviewImage;
     private Rectangle? _bgCropRect;
@@ -141,8 +146,7 @@ public partial class SettingsWindow : Window
     // ── F2 选择历史：点一条直接应用该地图+crop（数据源 PetSettings.MapHistory，PetWindow.ApplyMapSelection 持久化）──
     private ListBox? _bgHistoryList;
     // ── F6 级联筛选：区域 → 街道 → 地图（WzService.GetMapHierarchy）──
-    private ComboBox? _bgRegionCombo;
-    private ComboBox? _bgStreetCombo;
+    private TreeView? _bgRegionTree;
     private List<MapRegionNode> _bgHierarchy = new();
     private const string BgAllLabel = "全部";
     // ── F3 crop 交互：选区框 + 8 个手柄 + 移动/缩放模式 ──
@@ -155,27 +159,19 @@ public partial class SettingsWindow : Window
     private Point _bgCropOrigin;                  // 拖拽起点（用于 move 的 delta）
     private double _bgCropStartX, _bgCropStartY, _bgCropStartW, _bgCropStartH; // 拖拽开始时的选区几何
 
-    // ── 气泡状态 ──
-    private readonly List<(int Id, string Name, Color Color, Color BgColor)> _balloonPresets = new()
-    {
-        (1, "经典白", Color.FromArgb(255, 255, 255, 255), Color.FromArgb(220, 50, 50, 60)),
-        (2, "樱花粉", Color.FromArgb(255, 255, 200, 210), Color.FromArgb(220, 80, 50, 60)),
-        (3, "阳光黄", Color.FromArgb(255, 255, 245, 180), Color.FromArgb(220, 90, 80, 40)),
-        (4, "天空蓝", Color.FromArgb(255, 180, 220, 255), Color.FromArgb(220, 40, 60, 100)),
-        (5, "薄荷绿", Color.FromArgb(255, 200, 240, 220), Color.FromArgb(220, 40, 80, 60)),
-        (6, "薰衣紫", Color.FromArgb(255, 220, 200, 240), Color.FromArgb(220, 70, 50, 90)),
-    };
-    private int _selectedBalloonId = 1;
-    private TextBlock? _balloonPreviewText;
+    // ── 气泡状态（可视化加载：真实 WZ ChatBalloon 列表 + 真实渲染预览）──
+    private readonly BalloonService _balloonService;
+    private List<(int Id, string Name)> _realBalloonList = new();
     private Border? _balloonPreviewCanvas;
 
 
-    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc)
+    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc, BalloonService balloonSvc)
     {
         _config = config;
         _wzService = wzService;
         _paperdollSvc = paperdollSvc;
         _mapSvc = mapSvc;
+        _balloonService = balloonSvc;
         _settings = _config.LoadSettings();
         _wzConfig = _config.LoadWzConfig();
         _isDarkMode = _settings.Theme != "light";
@@ -205,6 +201,28 @@ public partial class SettingsWindow : Window
 
         root.Children.Add(BuildWzOverlay());
         Grid.SetRowSpan(root.Children[^1], 3);
+
+        // 缓存提示 Toast（右上角浮动，非模态；应用桌宠缓存中/完成提示，胶水规则 2026-08-09）
+        _cacheToast = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Background = new SolidColorBrush(Color.FromArgb(235, 42, 42, 50)),
+            BorderBrush = new SolidColorBrush(InputBorder),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(14, 10),
+            IsVisible = false,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 10, 10, 0),
+            ZIndex = 200
+        };
+        var toastStack = new StackPanel { Spacing = 6 };
+        _cacheToastText = new TextBlock { Text = "正在缓存…", FontSize = 12, Foreground = BrushTxtPrimary };
+        _cacheToastProgress = new ProgressBar { IsIndeterminate = true, Width = 180, Height = 4 };
+        toastStack.Children.Add(_cacheToastText);
+        toastStack.Children.Add(_cacheToastProgress);
+        _cacheToast.Child = toastStack;
+        root.Children.Add(_cacheToast);
 
         Content = root;
 
@@ -371,19 +389,6 @@ public partial class SettingsWindow : Window
         searchPanel.Child = searchGrid;
         sidebarContent.Children.Add(searchPanel);
 
-        var segment = new Border { CornerRadius = new CornerRadius(5), BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), Height = 28 };
-        var segGrid = new Grid();
-        segGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        segGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        var mobBtn = MakeSegmentButton("怪物", true, 0);
-        var npcBtn = MakeSegmentButton("NPC", false, 1);
-        Grid.SetColumn(mobBtn, 0);
-        Grid.SetColumn(npcBtn, 1);
-        segGrid.Children.Add(mobBtn);
-        segGrid.Children.Add(npcBtn);
-        segment.Child = segGrid;
-        sidebarContent.Children.Add(segment);
-
         var browseBtn = new Button { Content = "🔍 浏览素材库", FontSize = 11, Padding = new Thickness(0, 6), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
         browseBtn.Click += (_, _) => OpenMaterialBrowser();
         sidebarContent.Children.Add(browseBtn);
@@ -410,7 +415,7 @@ public partial class SettingsWindow : Window
         sidebarContent.Children.Add(new TextBlock { Text = "★ 收藏", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
         _favoriteList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshFavoriteList();
-        _favoriteList.SelectionChanged += (_, _) => { if (_favoriteList.SelectedItem is FavoriteItem fi) SelectPet(fi.Name, fi.Id); };
+        _favoriteList.SelectionChanged += (_, _) => { if (_favoriteList.SelectedItem is FavoriteItem fi) SelectPet(fi.Name, fi.Id, fi.Type); };
         _favoriteList.ContextMenu = new ContextMenu
         {
             Items =
@@ -441,7 +446,7 @@ public partial class SettingsWindow : Window
         sidebarContent.Children.Add(new TextBlock { Text = "🕐 最近使用", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
         _recentList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshRecentList();
-        _recentList.SelectionChanged += (_, _) => { if (_recentList.SelectedItem is RecentItem ri) SelectPet(ri.Name, ri.Id); };
+        _recentList.SelectionChanged += (_, _) => { if (_recentList.SelectedItem is RecentItem ri) SelectPet(ri.Name, ri.Id, ri.Type); };
         _recentList.ContextMenu = new ContextMenu
         {
             Items =
@@ -481,7 +486,12 @@ public partial class SettingsWindow : Window
         _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinHeight = 400, MinWidth = 320, VerticalAlignment = VerticalAlignment.Stretch };
         var defaultMobId = _config.LoadSettings().CurrentMobId;
         var defaultName = !string.IsNullOrEmpty(defaultMobId) ? _wzService.GetMobName(defaultMobId) : "";
-        if (string.IsNullOrEmpty(defaultName)) defaultName = !string.IsNullOrEmpty(defaultMobId) ? $"怪物_{defaultMobId}" : "";
+        if (string.IsNullOrEmpty(defaultName))
+        {
+            // 类型标注：NPC 素材显示「NPC_{id}」而非「怪物_{id}」（胶水反馈 2026-08-09）
+            var det = _wzService.IsLoaded ? _wzService.DetectEntityType(defaultMobId ?? "") : "";
+            defaultName = !string.IsNullOrEmpty(defaultMobId) ? $"{(det == "Npc" ? "NPC" : "怪物")}_{defaultMobId}" : "";
+        }
         UpdatePreviewContent(defaultName, defaultMobId ?? "");
         preview.Children.Add(_previewCanvas);
 
@@ -499,50 +509,13 @@ public partial class SettingsWindow : Window
         paramBar.Children.Add(favBtn);
 
         var applyBtn = new Button { Content = "确定应用", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(14, 3), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
-        applyBtn.Click += (_, _) => ApplyCurrentPet();
+        applyBtn.Click += (_, _) => ApplyCurrentPet(applyBtn);
         paramBar.Children.Add(applyBtn);
         preview.Children.Add(paramBar);
-
-        var zoomRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        zoomRow.Children.Add(new TextBlock { Text = "缩放", FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center });
-        var initScale = _settings.WindowScale > 0 ? _settings.WindowScale : 1.0;
-        if (initScale < 0.3) initScale = 0.3; else if (initScale > 2.0) initScale = 2.0;
-        _zoomSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        _zoomSaveTimer.Tick += (_, _) => { _zoomSaveTimer!.Stop(); try { _config.SaveSettings(_settings); } catch { } };
-        _zoomSlider = new Slider { Minimum = 0.3, Maximum = 2.0, Value = initScale, Width = 120, Height = 36 };
-        _zoomSlider.PropertyChanged += (_, e) =>
-        {
-            if (e.Property != Slider.ValueProperty) return;
-            var v = _zoomSlider.Value;
-            if (_zoomLabel != null) _zoomLabel.Text = $"{(int)(v * 100)}%";
-            _settings.WindowScale = v;
-            _zoomSaveTimer.Stop();
-            _zoomSaveTimer.Start();
-        };
-        zoomRow.Children.Add(_zoomSlider);
-        _zoomLabel = new TextBlock { Text = $"{(int)(initScale * 100)}%", FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center, Width = 30 };
-        zoomRow.Children.Add(_zoomLabel);
-        preview.Children.Add(zoomRow);
-
-        var bgRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3, Margin = new Thickness(0, 4, 0, 0) };
-        bgRow.Children.Add(new TextBlock { Text = "背景设置", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
-        var bgModes = new[] { ("透明", "tp", GetTransparentSwatch()), ("网格", "gr", GetGridSwatch()), ("弓箭手村", "hn", GetHenesysSwatch()), ("市场", "mk", GetMarketSwatch()), ("森林", "ft", GetForestSwatch()) };
-        foreach (var (label, mode, swatchBrush) in bgModes)
-        {
-            var swatch = MakeBgSwatch(label, mode, swatchBrush);
-            _bgSwatches.Add(swatch);
-            bgRow.Children.Add(swatch);
-        }
-        preview.Children.Add(bgRow);
 
         Grid.SetColumn(preview, 2);
         grid.Children.Add(preview);
         return new Border { Child = grid };
-    }
-
-    private Button MakeSegmentButton(string text, bool active, int index)
-    {
-        return new Button { Content = text, FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 3), Background = active ? new SolidColorBrush(Color.FromArgb(38, 94, 156, 255)) : Brushes.Transparent, Foreground = active ? BrushAccent : new SolidColorBrush(Color.FromArgb(77, 255, 255, 255)), BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
     }
 
     private Border MakeBgSwatch(string label, string mode, IBrush swatch)
@@ -641,6 +614,9 @@ public partial class SettingsWindow : Window
         form.Children.Add(baseWzRow);
 
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0) };
+        _wzRefreshBtn = new Button { Content = "刷新当前素材", FontSize = 11, Padding = new Thickness(20, 8), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        _wzRefreshBtn.Click += async (_, _) => await RefreshWzMaterialAsync();
+        btnRow.Children.Add(_wzRefreshBtn);
         var cancelBtn = new Button { Content = "取消", FontSize = 11, Padding = new Thickness(20, 8), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
         cancelBtn.Click += (_, _) => HideWzOverlay();
         btnRow.Children.Add(cancelBtn);
@@ -649,6 +625,9 @@ public partial class SettingsWindow : Window
         btnRow.Children.Add(saveBtn);
         form.Children.Add(btnRow);
         dialogStack.Children.Add(form);
+
+        _wzOverlayToast = new TextBlock { FontSize = 10, Foreground = new SolidColorBrush(Color.FromArgb(255, 230, 196, 106)), TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(24, 0, 24, 0) };
+        dialogStack.Children.Add(_wzOverlayToast);
 
         var footer = new Border
         {
@@ -730,29 +709,95 @@ public partial class SettingsWindow : Window
             _config.SaveWzConfig(_wzConfig);
             HideWzOverlay();
 
-            // 尝试加载 WZ 文件
             if (!string.IsNullOrEmpty(_wzConfig.BaseWzPath))
             {
-                var (success, error) = _wzService.LoadWz(_wzConfig.WzLibPath, _wzConfig.BaseWzPath);
-                if (success)
-                {
-                    Console.WriteLine($"[SettingsWindow] WZ 加载成功");
-                    if (_statusBarText != null) _statusBarText.Text = "WZ 加载完成";
-                    // 刷新宠物列表
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        try { LoadPetListFromWz(); }
-                        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPetListFromWz: {ex.Message}"); }
-                    });
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[SettingsWindow] WZ 加载失败: {error}");
-                    if (_statusBarText != null) _statusBarText.Text = $"WZ 加载失败: {error}";
-                }
+                // 保存后自动刷新（异步，走同一路径），内部已 try-catch
+                _ = RefreshWzMaterialAsync();
+            }
+            else
+            {
+                if (_statusBarText != null) { _statusBarText.Text = "未配置 BaseWZ 路径"; }
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SaveWzConfig: {ex.Message}"); }
+    }
+
+    /// <summary>异步刷新 WZ 素材（防 UI 冻结）：Task.Run 加载，回主线程更新 UI + 通知。</summary>
+    private async Task RefreshWzMaterialAsync()
+    {
+        try
+        {
+            if (_wzRefreshBtn == null) { return; }
+            _wzRefreshBtn.IsEnabled = false;
+            _wzRefreshBtn.Content = "刷新中…";
+
+            var libPath = _wzLibInput?.Text ?? string.Empty;
+            var basePath = _baseWzInput?.Text ?? string.Empty;
+
+            // 异步加载 WZ（目录加载耗时，不能卡 UI 线程）
+            var (success, error) = await Task.Run(() => _wzService.LoadWz(libPath, basePath));
+
+            // 回主线程更新 UI
+            if (success)
+            {
+                var mobCount = _wzService.ListMobIds().Count;
+                var mapCount = _wzService.ListMapIds().Count;
+                if (_statusBarText != null) { _statusBarText.Text = $"素材刷新完成：Mob {mobCount} 个 / Map {mapCount} 个"; }
+                // 刷新宠物列表
+                try { LoadPetListFromWz(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPetListFromWz: {ex.Message}"); }
+                // 通知 PetWindow 重载当前宠物
+                OnWzRefreshed?.Invoke();
+            }
+            else
+            {
+                var errText = WzService.GetErrorText(error ?? WzError.Unknown);
+                if (_statusBarText != null) { _statusBarText.Text = $"素材刷新失败：{errText}"; }
+                // 弹窗内提示，不关闭弹窗（用户可改路径重试）
+                ShowWzOverlayToast($"素材刷新失败：{errText}" + (_wzService.LastWzLibWarning != null ? $"\n{_wzService.LastWzLibWarning}" : ""));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SettingsWindow] RefreshWzMaterialAsync: {ex.Message}");
+            if (_statusBarText != null) { _statusBarText.Text = $"素材刷新失败：{ex.Message}"; }
+        }
+        finally
+        {
+            if (_wzRefreshBtn != null)
+            {
+                _wzRefreshBtn.IsEnabled = true;
+                _wzRefreshBtn.Content = "刷新当前素材";
+            }
+        }
+    }
+
+    /// <summary>WZ overlay 内的临时提示（2 秒后自动隐藏），保证弹窗打开时可见。</summary>
+    private void ShowWzOverlayToast(string msg)
+    {
+        try
+        {
+            if (_wzOverlayToast == null) { return; }
+            _wzOverlayToast.Text = msg;
+            _wzOverlayToast.IsVisible = true;
+            DispatcherTimer? timer = null;
+            timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            timer.Tick += (_, _) =>
+            {
+                try
+                {
+                    timer?.Stop();
+                    if (_wzOverlayToast != null)
+                    {
+                        _wzOverlayToast.IsVisible = false;
+                        _wzOverlayToast.Text = string.Empty;
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ShowWzOverlayToast tick: {ex.Message}"); }
+            };
+            timer.Start();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ShowWzOverlayToast: {ex.Message}"); }
     }
 
     private void SwitchMainTab(int index)
@@ -774,12 +819,21 @@ public partial class SettingsWindow : Window
             if (_favoriteList == null) return;
             var items = _settings.Favorites;
             _favoriteList.ItemsSource = items;
-            _favoriteList.ItemTemplate = new FuncDataTemplate<FavoriteItem>((_, _) =>
-                new StackPanel
+            _favoriteList.ItemTemplate = new FuncDataTemplate<FavoriteItem>((data, _) =>
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 3) };
+                var iconBox = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), ClipToBounds = true, Child = new TextBlock { Text = "👾", FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+                row.Children.Add(iconBox);
+                if (data != null)
                 {
-                    Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 3),
-                    Children = { new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), Child = new TextBlock { Text = "👾", FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } }, new StackPanel { Spacing = 1, Children = { new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)) }, new TextBlock { [!TextBlock.TextProperty] = new Binding("Id"), FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(64, 255, 255, 255)), FontFamily = new FontFamily("SF Mono, monospace") } } }, new TextBlock { Text = "★", FontSize = 10, Foreground = new SolidColorBrush(Colors.Gold), VerticalAlignment = VerticalAlignment.Center } }
-                });
+                    var key = data.Id + "|" + data.Type;
+                    if (_listThumbs.TryGetValue(key, out var tb)) { iconBox.Child = MakeThumbImage(tb); }
+                    else LoadListThumbAsync(key, data.Id, data.Type, iconBox);
+                }
+                row.Children.Add(new StackPanel { Spacing = 1, Children = { new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)) }, new TextBlock { [!TextBlock.TextProperty] = new Binding("Id"), FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(64, 255, 255, 255)), FontFamily = new FontFamily("SF Mono, monospace") } } });
+                row.Children.Add(new TextBlock { Text = "★", FontSize = 10, Foreground = new SolidColorBrush(Colors.Gold), VerticalAlignment = VerticalAlignment.Center });
+                return row;
+            });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RefreshFavoriteList: {ex.Message}"); }
     }
@@ -790,13 +844,32 @@ public partial class SettingsWindow : Window
         {
             if (_recentList == null) return;
             var items = _settings.RecentItems;
-            _recentList.ItemsSource = items;
-            _recentList.ItemTemplate = new FuncDataTemplate<RecentItem>((_, _) =>
-                new StackPanel
+            // 名字修正：旧数据可能存「怪物_{id}」（NPC 被误标），刷新时用 WZ 权威名覆盖（胶水反馈 2026-08-09）
+            foreach (var ri in items)
+            {
+                if (string.IsNullOrEmpty(ri.Name) || ri.Name.StartsWith("怪物_") || ri.Name.StartsWith("NPC_"))
                 {
-                    Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 3),
-                    Children = { new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), Child = new TextBlock { Text = "🦊", FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } }, new StackPanel { Spacing = 1, Children = { new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)) }, new TextBlock { [!TextBlock.TextProperty] = new Binding("Id"), FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(64, 255, 255, 255)), FontFamily = new FontFamily("SF Mono, monospace") } } }, new TextBlock { Text = "☆", FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center } }
-                });
+                    var n = _wzService.GetMobName(ri.Id);
+                    if (string.IsNullOrEmpty(n)) n = _wzService.GetNpcName(ri.Id);
+                    if (!string.IsNullOrEmpty(n)) ri.Name = n;
+                }
+            }
+            _recentList.ItemsSource = items;
+            _recentList.ItemTemplate = new FuncDataTemplate<RecentItem>((data, _) =>
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 3) };
+                var iconBox = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), ClipToBounds = true, Child = new TextBlock { Text = "🦊", FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+                row.Children.Add(iconBox);
+                if (data != null)
+                {
+                    var key = data.Id + "|" + data.Type;
+                    if (_listThumbs.TryGetValue(key, out var tb)) { iconBox.Child = MakeThumbImage(tb); }
+                    else LoadListThumbAsync(key, data.Id, data.Type, iconBox);
+                }
+                row.Children.Add(new StackPanel { Spacing = 1, Children = { new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(191, 255, 255, 255)) }, new TextBlock { [!TextBlock.TextProperty] = new Binding("Id"), FontSize = 9, Foreground = new SolidColorBrush(Color.FromArgb(64, 255, 255, 255)), FontFamily = new FontFamily("SF Mono, monospace") } } });
+                row.Children.Add(new TextBlock { Text = "☆", FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                return row;
+            });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RefreshRecentList: {ex.Message}"); }
     }
@@ -806,13 +879,85 @@ public partial class SettingsWindow : Window
         try { RefreshFavoriteList(); RefreshRecentList(); RefreshBgHistoryList(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RefreshFromSettings: {ex.Message}"); }
     }
 
-    private void SelectPet(string name, string id)
+    private static Image MakeThumbImage(Bitmap bmp) => new Image { Source = bmp, Width = 26, Height = 26, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
+    /// <summary>列表条目缩略图后台加载（默认动画 stand 首帧；窗口可见才更新，防 Skia 与关闭并发）。</summary>
+    private void LoadListThumbAsync(string key, string id, string type, Border iconBox)
+    {
+        if (_wzService == null || !_wzService.IsLoaded) return;
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            Bitmap? bmp = null;
+            try
+            {
+                var t = type switch { "mob" => "Mob", "npc" => "Npc", _ => "" };
+                if (string.IsNullOrEmpty(t)) { t = _wzService.DetectEntityType(id ?? ""); }
+                if (string.IsNullOrEmpty(t)) return;
+                var actions = _wzService.GetActionList(id, t);
+                if (actions.Count == 0) return;
+                var action = actions.Contains("stand") ? "stand" : actions[0];
+                var (pngData, strip, _) = _wzService.BuildSpriteStrip(id, action, t);
+                if (pngData == null || strip == null || strip.FrameWidth <= 0 || strip.FrameHeight <= 0) return;
+                using var src = SkiaSharp.SKBitmap.Decode(pngData);
+                if (src == null) return;
+                int fw = Math.Min(strip.FrameWidth, src.Width);
+                int fh = Math.Min(strip.FrameHeight, src.Height);
+                using var crop = new SkiaSharp.SKBitmap(fw, fh);
+                using (var canvas = new SkiaSharp.SKCanvas(crop))
+                {
+                    canvas.Clear(SkiaSharp.SKColors.Transparent);
+                    canvas.DrawBitmap(src, new SkiaSharp.SKRect(0, 0, fw, fh), new SkiaSharp.SKRect(0, 0, fw, fh));
+                }
+                using var img = SkiaSharp.SKImage.FromBitmap(crop);
+                var png = img.Encode(SkiaSharp.SKEncodedImageFormat.Png, 90).ToArray();
+                using var ms = new System.IO.MemoryStream(png);
+                bmp = new Bitmap(ms);
+            }
+            catch { bmp = null; }
+            if (bmp == null) return;
+            var captured = bmp;
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    _listThumbs[key] = captured;
+                    if (iconBox.IsLoaded && iconBox.IsVisible && iconBox.Child is TextBlock)
+                    {
+                        iconBox.Child = MakeThumbImage(captured);
+                    }
+                }
+                catch { captured.Dispose(); }
+            });
+        });
+    }
+
+    /// <summary>缓存完成 Toast 延迟隐藏（非模态弹窗提示）。</summary>
+    private async System.Threading.Tasks.Task HideCacheToastAfter(int ms)
+    {
+        await System.Threading.Tasks.Task.Delay(ms);
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_cacheToast != null) _cacheToast.IsVisible = false;
+        });
+    }
+
+    private void SelectPet(string name, string id, string type = "")
     {
         try
         {
             _petNameLabel!.Text = name; _petIdInput!.Text = id;
             _previewMobId = id ?? string.Empty;
-            _previewIsMob = true;
+            // 类型：WZ 检测权威（覆盖收藏/最近显式 Type——1540421/1012000 曾被误记 "mob"，胶水反馈 2026-08-09）
+            if (_wzService.IsLoaded)
+            {
+                var det = _wzService.DetectEntityType(id ?? "");
+                if (!string.IsNullOrEmpty(det)) type = det;
+            }
+            else if (string.IsNullOrEmpty(type))
+            {
+                type = "Mob";
+            }
+            _previewIsMob = !type.Equals("Npc", StringComparison.OrdinalIgnoreCase);
             UpdatePreviewContent(name, id);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SelectPet: {ex.Message}"); }
@@ -832,7 +977,7 @@ public partial class SettingsWindow : Window
             {
                 var mobId = string.IsNullOrEmpty(id) ? _previewMobId : id;
 
-                _previewActions = _wzService.GetActionList(mobId);
+                _previewActions = _wzService.GetActionList(mobId, _previewIsMob ? "Mob" : "Npc");
                 if (_previewActions.Count > 0)
                 {
                     if (!_previewActions.Contains(_previewAction))
@@ -925,7 +1070,7 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            _previewPngData = _wzService.BuildSpriteStripPng(mobId, action);
+            _previewPngData = _wzService.BuildSpriteStripPng(mobId, action, _previewIsMob ? "Mob" : "Npc");
             var (strip, _) = _wzService.ExportSpriteStrip(mobId, action);
             _previewStrip = strip;
             _previewAction = action;
@@ -966,8 +1111,9 @@ public partial class SettingsWindow : Window
             SpriteStrip? strip = null;
             try
             {
-                png = _wzService.BuildSpriteStripPng(mobId, action);
-                var (s, _) = _wzService.ExportSpriteStrip(mobId, action);
+                png = _wzService.BuildSpriteStripPng(mobId, action, _previewIsMob ? "Mob" : "Npc");
+                // 修复：ExportSpriteStrip 必须带 type（否则默认 Mob——NPC 预览 strip 为 null，预览空白，胶水反馈 2026-08-09）
+                var (s, _) = _wzService.ExportSpriteStrip(mobId, action, _previewIsMob ? "Mob" : "Npc");
                 strip = s;
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPreviewActionAsync: {ex.Message}"); }
@@ -988,23 +1134,45 @@ public partial class SettingsWindow : Window
         try
         {
             var idText = _petIdInput!.Text; var id = idText?.Trim() ?? ""; if (string.IsNullOrEmpty(id)) return; var name = _petNameLabel!.Text ?? "";
-            var existing = _settings.Favorites.FirstOrDefault(f => f.Id == id && f.Type == "mob");
+            // Type 按实际类型记录（修复：NPC 被误记 mob，胶水反馈 2026-08-09）
+            var type = _previewIsMob ? "mob" : "npc";
+            var existing = _settings.Favorites.FirstOrDefault(f => f.Id == id && f.Type == type);
             if (existing != null) _settings.Favorites.Remove(existing);
-            else _settings.Favorites.Insert(0, new FavoriteItem { Type = "mob", Id = id, Name = name, AddedAt = DateTime.Now });
+            else _settings.Favorites.Insert(0, new FavoriteItem { Type = type, Id = id, Name = name, AddedAt = DateTime.Now });
             _config.SaveSettings(_settings);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ToggleFavorite: {ex.Message}"); }
     }
 
-    private void ApplyCurrentPet()
+    private void ApplyCurrentPet(Button? applyBtn = null)
     {
         try
         {
             var idText = _petIdInput!.Text; var id = idText?.Trim() ?? ""; if (string.IsNullOrEmpty(id)) return;
             var name = _petNameLabel!.Text ?? "";
 
-            // ── 显示 loading ──
-            if (_statusBarText != null) _statusBarText.Text = "⏳ 正在预加载素材到本地缓存...";
+            // 手动输入 id：自动检测类型（Npc/Mob），覆盖 _previewIsMob（1540802 NPC 修复，胶水反馈 2026-08-09）
+            if (_wzService.IsLoaded)
+            {
+                var det = _wzService.DetectEntityType(id);
+                if (!string.IsNullOrEmpty(det)) _previewIsMob = !det.Equals("Npc", StringComparison.OrdinalIgnoreCase);
+            }
+
+            // ── 立即反馈（胶水规则 2026-08-09）：按钮禁用变灰 + 状态栏明确「正在缓存」──
+            if (applyBtn != null)
+            {
+                applyBtn.IsEnabled = false;
+                applyBtn.Content = "⏳ 缓存中…";
+                applyBtn.Opacity = 0.55;
+            }
+            if (_statusBarText != null) _statusBarText.Text = $"⏳ 正在缓存素材: {name}（{id}），首次加载较慢，请稍候…";
+            // 弹窗 Toast 提示（右上角浮动，非模态）
+            if (_cacheToast != null)
+            {
+                if (_cacheToastText != null) _cacheToastText.Text = $"⏳ 正在缓存素材: {name}（{id}）\n首次加载较慢，请稍候…";
+                if (_cacheToastProgress != null) _cacheToastProgress.IsVisible = true;
+                _cacheToast.IsVisible = true;
+            }
 
             // ── 后台线程预加载所有动作到磁盘缓存 ──
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -1013,7 +1181,7 @@ public partial class SettingsWindow : Window
                 {
                     if (_wzService.IsLoaded)
                     {
-                        var actions = _wzService.GetActionList(id);
+                        var actions = _wzService.GetActionList(id, _previewIsMob ? "Mob" : "Npc");
                         var preloadOrder = new[] { "stand", "move", "fly", "walk", "jump" };
                         var ordered = preloadOrder.Where(actions.Contains).Concat(actions.Except(preloadOrder)).ToList();
 
@@ -1024,7 +1192,7 @@ public partial class SettingsWindow : Window
                             // 用 CacheManager 检查
                             // 直接调用 SpriteService 的缓存逻辑
                             // 先构建并保存到磁盘
-                            var pngData = _wzService.BuildSpriteStripPng(id, action);
+                            var pngData = _wzService.BuildSpriteStripPng(id, action, _previewIsMob ? "Mob" : "Npc");
                             if (pngData == null) continue;
                             var (strip, config) = _wzService.ExportSpriteStrip(id, action);
                             if (strip == null || config == null) continue;
@@ -1049,21 +1217,34 @@ public partial class SettingsWindow : Window
                     try
                     {
                         _settings.CurrentMobId = id;
-                        _settings.CurrentEntityType = "mob";
+                        _settings.CurrentEntityType = _previewIsMob ? "mob" : "npc";
                         var existing = _settings.RecentItems.FirstOrDefault(r => r.Id == id);
                         if (existing != null) existing.LastUsedAt = DateTime.Now;
                         else
                         {
-                            _settings.RecentItems.Insert(0, new RecentItem { Type = "mob", Id = id, Name = name, LastUsedAt = DateTime.Now });
+                            _settings.RecentItems.Insert(0, new RecentItem { Type = _previewIsMob ? "mob" : "npc", Id = id, Name = name, LastUsedAt = DateTime.Now });
                             if (_settings.RecentItems.Count > 20)
                                 _settings.RecentItems = _settings.RecentItems.Take(20).ToList();
                         }
                         _config.SaveSettings(_settings);
                         _previewAnimTimer.Stop();
 
+                        if (applyBtn != null)
+                        {
+                            applyBtn.IsEnabled = true;
+                            applyBtn.Content = "确定应用";
+                            applyBtn.Opacity = 1;
+                        }
                         if (_statusBarText != null) _statusBarText.Text = $"✅ 预加载完成，应用 {name}";
+                        // 弹窗 Toast 完成态：进度条隐藏 + 文案 ✅，1.5s 后关闭（窗口即将 Hide）
+                        if (_cacheToast != null)
+                        {
+                            if (_cacheToastText != null) _cacheToastText.Text = $"✅ 缓存完成，应用 {name}";
+                            if (_cacheToastProgress != null) _cacheToastProgress.IsVisible = false;
+                            _ = HideCacheToastAfter(1500);
+                        }
 
-                        OnPetApplied?.Invoke(id, name);
+                        OnPetApplied?.Invoke(id, name, _previewIsMob ? "Mob" : "Npc");
                         Hide();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPost: {ex.Message}"); }

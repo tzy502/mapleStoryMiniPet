@@ -220,6 +220,9 @@ namespace MiniPet.Services
                             File.WriteAllBytes(Path.Combine(dir, fileName), data);
                         }
                     }
+
+                    // 持久化切片 origin（MapleSalon2 拼装依赖；无此文件 → 读缓存时 origin 全 0 → 拼装错位）
+                    SaveTileOrigins(dir, tiles);
                 }
                 catch (IOException)
                 {
@@ -253,7 +256,7 @@ namespace MiniPet.Services
                         SE = ReadTileFile(dir, "se.png"),
                         Arrow = ReadTileFile(dir, "arrow.png"),
                         Head = ReadTileFile(dir, "head.png")
-                    };
+                    }.WithOrigins(LoadTileOrigins(dir));
                 }
                 catch (IOException)
                 {
@@ -300,6 +303,69 @@ namespace MiniPet.Services
                 }
             }
         }
+
+        /// <summary>
+        /// 保存地图渲染 PNG 缓存（无 WZ 时背景可离线显示）。key = mapId + crop 组合。
+        /// </summary>
+        /// <summary>保存世界地图层级树缓存（预渲染：Java familyMap/mapListCode 逻辑构建的 JSON，启动后台构建）。</summary>
+        public void SaveMapHierarchy(string json)
+        {
+            try
+            {
+                var dir = Path.Combine(_cacheDir, "mapHierarchy");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "mapHierarchy.json"), json);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] SaveMapHierarchy: {ex.Message}"); }
+        }
+
+        /// <summary>读取世界地图层级树缓存；无缓存/损坏返回 null。</summary>
+        public string? LoadMapHierarchy()
+        {
+            try
+            {
+                var p = Path.Combine(_cacheDir, "mapHierarchy", "mapHierarchy.json");
+                if (!File.Exists(p)) return null;
+                return File.ReadAllText(p);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] LoadMapHierarchy: {ex.Message}"); return null; }
+        }
+
+        public void SaveMapPng(string mapId, int cropX, int cropY, int cropW, int cropH, byte[] pngData)
+        {
+            if (string.IsNullOrEmpty(mapId) || pngData == null || pngData.Length == 0) return;
+            lock (_lock)
+            {
+                try
+                {
+                    var path = GetMapPngPath(mapId, cropX, cropY, cropW, cropH);
+                    var dir = Path.GetDirectoryName(path);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllBytes(path, pngData);
+                }
+                catch (IOException) { }
+            }
+        }
+
+        /// <summary>
+        /// 加载地图渲染 PNG 缓存；不存在返回 null。
+        /// </summary>
+        public byte[]? LoadMapPng(string mapId, int cropX, int cropY, int cropW, int cropH)
+        {
+            if (string.IsNullOrEmpty(mapId)) return null;
+            lock (_lock)
+            {
+                try
+                {
+                    var path = GetMapPngPath(mapId, cropX, cropY, cropW, cropH);
+                    return File.Exists(path) ? File.ReadAllBytes(path) : null;
+                }
+                catch (IOException) { return null; }
+            }
+        }
+
+        private string GetMapPngPath(string mapId, int cropX, int cropY, int cropW, int cropH) =>
+            Path.Combine(_cacheDir, "maps", $"{mapId}_{cropX}_{cropY}_{cropW}_{cropH}.png");
 
         /// <summary>
         /// 获取缓存目录
@@ -404,6 +470,52 @@ namespace MiniPet.Services
                     }
                 }
             }
+        }
+
+        // ── 气泡切片 origin 持久化（MapleSalon2 拼装依赖）──
+
+        /// <summary>气泡切片名（与 BalloonTiles 属性一一对应）</summary>
+        private static readonly string[] TileNames = { "nw", "n", "ne", "w", "c", "e", "sw", "s", "se", "arrow", "head" };
+
+        private static void SaveTileOrigins(string dir, BalloonTiles tiles)
+        {
+            try
+            {
+                var origins = new Dictionary<string, int[]>
+                {
+                    { "nw", new[] { tiles.NWOrigin.X, tiles.NWOrigin.Y } },
+                    { "n", new[] { tiles.NOrigin.X, tiles.NOrigin.Y } },
+                    { "ne", new[] { tiles.NEOrigin.X, tiles.NEOrigin.Y } },
+                    { "w", new[] { tiles.WOrigin.X, tiles.WOrigin.Y } },
+                    { "c", new[] { tiles.COrigin.X, tiles.COrigin.Y } },
+                    { "e", new[] { tiles.EOrigin.X, tiles.EOrigin.Y } },
+                    { "sw", new[] { tiles.SWOrigin.X, tiles.SWOrigin.Y } },
+                    { "s", new[] { tiles.SOrigin.X, tiles.SOrigin.Y } },
+                    { "se", new[] { tiles.SEOrigin.X, tiles.SEOrigin.Y } },
+                    { "arrow", new[] { tiles.ArrowOrigin.X, tiles.ArrowOrigin.Y } },
+                    { "head", new[] { tiles.HeadOrigin.X, tiles.HeadOrigin.Y } }
+                };
+                File.WriteAllText(Path.Combine(dir, "origin.json"), System.Text.Json.JsonSerializer.Serialize(origins));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] SaveTileOrigins: {ex.Message}"); }
+        }
+
+        private static Dictionary<string, (int X, int Y)>? LoadTileOrigins(string dir)
+        {
+            try
+            {
+                var path = Path.Combine(dir, "origin.json");
+                if (!File.Exists(path)) return null;
+                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int[]>>(File.ReadAllText(path));
+                if (map == null) return null;
+                var result = new Dictionary<string, (int X, int Y)>();
+                foreach (var (k, v) in map)
+                {
+                    if (v != null && v.Length >= 2) result[k] = (v[0], v[1]);
+                }
+                return result;
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] LoadTileOrigins: {ex.Message}"); return null; }
         }
     }
 }

@@ -17,7 +17,11 @@ namespace MiniPet.Services
         private Wz_Structure? _wzs;
         private bool _wzLoaded;
         private string _baseWzPath = string.Empty;
+        // Mob 完整信息源：Data/Mob/Mob.wz 文件模式加载（Mob/{id}.img 含动作/origin/PNG-outlink；_Canvas 只是 PNG 仓库，不直接找）
+        private Wz_Node? _mobFullRoot;
         private WzError? _lastError;
+        private static bool _stringDiagShown;
+        private static bool _eqpDiagShown;
         // Wz_Image.TryExtract 非线程安全：所有 img 提取串行化，避免并发损坏节点树
         private readonly object _wzLock = new();
         // 地图目录服务（God Class 拆分：地图 id 枚举/名称缓存/三级层级 独立成类）
@@ -33,6 +37,18 @@ namespace MiniPet.Services
 
         public bool IsLoaded => _wzLoaded;
         public WzError? LastError => _lastError;
+        public string? LastWzLibWarning { get; private set; }
+
+        /// <summary>WzError → 中文文案映射，供失败弹窗/状态栏使用。</summary>
+        public static string GetErrorText(WzError err) => err switch
+        {
+            WzError.DllNotFound => "wzlib DLL 文件不存在",
+            WzError.DllLoadFailed => "wzlib DLL 加载失败",
+            WzError.WzPathInvalid => "BaseWZ 路径无效",
+            WzError.WzFileCorrupted => "WZ 文件损坏",
+            WzError.VersionMismatch => "WZ 版本不兼容",
+            _ => "未知错误"
+        };
 
         // MapCatalogService 内部访问器（组合服务需要访问 WZ 根节点与加载态）
         internal bool IsWzLoaded => _wzLoaded;
@@ -50,7 +66,38 @@ namespace MiniPet.Services
             {
                 _wzLoaded = false;
                 _lastError = null;
+                LastWzLibWarning = null;
                 _mapCatalog.Reset();
+
+                // wzlib 路径校验（仅校验与提示，运行时仍用编译期内置 DLL）
+                try
+                {
+                    if (string.IsNullOrEmpty(wzLibPath))
+                    {
+                        LastWzLibWarning = null;
+                    }
+                    else if (File.Exists(wzLibPath))
+                    {
+                        LastWzLibWarning = null;
+                    }
+                    else if (Directory.Exists(wzLibPath))
+                    {
+                        if (File.Exists(Path.Combine(wzLibPath, "Lib", "WzComparerR2.WzLib.dll"))
+                            || File.Exists(Path.Combine(wzLibPath, "WzComparerR2.WzLib.dll")))
+                        {
+                            LastWzLibWarning = null;
+                        }
+                        else
+                        {
+                            LastWzLibWarning = "用户配置的 wzlib 无效，已回退默认";
+                        }
+                    }
+                    else
+                    {
+                        LastWzLibWarning = "用户配置的 wzlib 无效，已回退默认";
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[WzService] wzlib 校验: {ex.Message}"); LastWzLibWarning = null; }
 
             if (string.IsNullOrEmpty(baseWzPath) || !Directory.Exists(baseWzPath))
             {
@@ -74,6 +121,24 @@ namespace MiniPet.Services
                 _wzs.LoadWzFolder(wzFolder, ref _wzs.WzNode, true);
                 _wzLoaded = true;
                 Console.WriteLine($"[WzService] Base 加载成功, imgs: {_wzs.img_number}");
+
+                // Mob 完整信息源：Data/Mob/Mob.wz 文件模式（loadWzAsFolder=false——完整 img：Mob/{id}.img 含动作/origin/PNG-outlink）
+                _mobFullRoot = null;
+                var mobDir = Path.Combine(baseWzPath, "Mob");
+                if (Directory.Exists(mobDir) && File.Exists(Path.Combine(mobDir, "Mob.wz")))
+                {
+                    try
+                    {
+                        var mobWzs = new Wz_Structure();
+                        Wz_Structure.DefaultAutoDetectExtFiles = true;
+                        Wz_Structure.DefaultImgCheckDisabled = true;
+                        var mobRoot = new Wz_Node("Mob");
+                        mobWzs.LoadFile(Path.Combine(mobDir, "Mob.wz"), mobRoot, false, false);
+                        _mobFullRoot = mobRoot;
+                        Console.WriteLine($"[WzService] Mob.wz 文件模式加载成功, 根节点: {mobRoot.Nodes.Count}");
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[WzService] Mob.wz 文件模式失败: {ex.Message}"); _mobFullRoot = null; }
+                }
 
                 // 加载 Packs/*.ms — meta 数据（origin/delay/a0/a1）
                 var packsDir = Path.Combine(baseWzPath, "Packs");
@@ -304,7 +369,7 @@ namespace MiniPet.Services
             {
                 var node = FindNodeByPath(wzPath);
                 if (node == null) return 100;
-                return node.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
+                return node.FindNodeByPath("delay")?.GetValueEx<int>(120) ?? 120;
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetDelay: {ex.Message}"); return 100; }
         }
@@ -408,16 +473,30 @@ namespace MiniPet.Services
             try
             {
                 if (!_wzLoaded || _wzs?.WzNode == null) return result;
-                foreach (var top in new[] { "Base/zmap.img/zmap", "zmap.img/zmap", "Base/zmap.img" })
+                // 桌宠 WZ：顶层独立 zmap.img / zmap_cn.img（Wz_Image 需 TryExtract），无 Base/zmap.img
+                foreach (var top in new[] { "Base/zmap.img", "zmap.img", "zmap_cn.img" })
                 {
-                    var node = FindNodeByPath(top);
-                    if (node == null) continue;
-                    foreach (Wz_Node child in node.Nodes)
+                    var imgNode = FindNodeByPath(top);
+                    Console.WriteLine($"[WzService] GetZmapOrder: top={top} node={(imgNode == null ? "NULL" : imgNode.Text)}");
+                    if (imgNode == null) continue;
+                    var img = imgNode.GetValue<Wz_Image>();
+                    if (img == null || !img.TryExtract())
                     {
-                        var name = child.GetValueEx<string>(null) ?? child.Value?.ToString();
+                        Console.WriteLine($"[WzService] GetZmapOrder: {top} 提取失败/非 img");
+                        continue;
+                    }
+                    Console.WriteLine($"[WzService] GetZmapOrder: {top} 顶层子节点前30=[{string.Join(",", img.Node.Nodes.Take(30).Select(x => x.Text))}]");
+                    // 层名 = zmap.img 顶层子节点的 Text（mobEquipFront→…→accessoryEyeOverCap，底→顶）
+                    foreach (Wz_Node child in img.Node.Nodes)
+                    {
+                        var name = child.Text;
                         if (!string.IsNullOrEmpty(name)) result.Add(name);
                     }
-                    if (result.Count > 0) break;
+                    if (result.Count > 0)
+                    {
+                        Console.WriteLine($"[WzService] GetZmapOrder: 从 {top} 读到 {result.Count} 层, 前5=[{string.Join(",", result.Take(5))}] 后5=[{string.Join(",", result.Skip(Math.Max(0, result.Count - 5)))}]");
+                        break;
+                    }
                 }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetZmapOrder: {ex.Message}"); }
@@ -454,6 +533,77 @@ namespace MiniPet.Services
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetNpcName: {ex.Message}"); return string.Empty; }
         }
 
+        /// <summary>
+        /// 从 String.wz 获取纸娃娃部件中文名（发型/脸型/装备/坐骑/皮肤）。
+        /// 桌宠 WZ 探针：戒指名在 String/Eqp.img/Eqp/Ring/{code}/name（Wz_Image 需 TryExtract）。
+        /// 多路径探测：Item.img/{cat}/{key}、Item.img/{cat}/{8位}、Eqp.img 各种层级 + TryExtract 回退；失败打印 String 结构诊断。
+        /// </summary>
+        public string GetItemName(string category, string id)
+        {
+            try
+            {
+                var key = id.TrimStart('0');
+                if (string.IsNullOrEmpty(key)) key = "0";
+                var pad = PadId(id, 8);
+                var candidates = new[]
+                {
+                    $"String/Item.img/{category}/{key}",
+                    $"String/Item.img/{category}/{pad}",
+                    $"String/Eqp.img/Eqp/{category}/{key}",
+                    $"String/Eqp.img/{category}/{key}",
+                    $"String/Eqp.img/Eqp/{key}",
+                    $"String/Eqp.img/{key}",
+                    $"String/Etc.img/{key}",
+                    $"String/Etc.img/{category}/{key}",
+                    $"String/Consume.img/{key}",
+                };
+                foreach (var p in candidates)
+                {
+                    var n = FindNodeByPath($"{p}/name")?.GetValueEx<string>(null);
+                    if (!string.IsNullOrEmpty(n)) return n;
+                }
+                // Eqp.img 是 Wz_Image：TryExtract 后走内部节点
+                var eqpImg = FindNodeByPath("String/Eqp.img");
+                var img = eqpImg?.GetValue<Wz_Image>();
+                if (img != null && img.TryExtract())
+                {
+                    foreach (var p in new[] { $"Eqp/{category}/{key}", $"{category}/{key}", $"Eqp/{key}", $"{key}" })
+                    {
+                        var n = img.Node.FindNodeByPath($"{p}/name")?.GetValueEx<string>(null);
+                        if (!string.IsNullOrEmpty(n)) return n;
+                    }
+                    // 诊断：Eqp.img 内部结构（只打一次，帮定位皮肤/坐骑名路径）
+                    if (!_eqpDiagShown)
+                    {
+                        _eqpDiagShown = true;
+                        try
+                        {
+                            var eqpNode = img.Node.FindNodeByPath("Eqp");
+                            if (eqpNode != null)
+                                Console.WriteLine($"[WzService] GetItemName 诊断: Eqp 子节点前40=[{string.Join(",", eqpNode.Nodes.Take(40).Select(x => x.Text))}]");
+                            else
+                                Console.WriteLine($"[WzService] GetItemName 诊断: Eqp.img 顶层节点前40=[{string.Join(",", img.Node.Nodes.Take(40).Select(x => x.Text))}]");
+                        }
+                        catch { }
+                    }
+                }
+                // 诊断：String 结构（只打一次，帮定位真实路径；避免素材库枚举刷屏）
+                if (!_stringDiagShown)
+                {
+                    _stringDiagShown = true;
+                    try
+                    {
+                        var stringNode = FindNodeByPath("String");
+                        if (stringNode != null)
+                            Console.WriteLine($"[WzService] GetItemName 诊断({category}/{id}): String 子节点=[{string.Join(",", stringNode.Nodes.Take(30).Select(x => x.Text))}]");
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetItemName({category}/{id}): {ex.Message}"); }
+            return string.Empty;
+        }
+
         /// <summary>把数字 id 字符串补零到指定位数（等价于 int 的 D7/D8 格式）</summary>
         private static string PadId(string id, int width) => (id ?? string.Empty).PadLeft(width, '0');
 
@@ -475,6 +625,25 @@ namespace MiniPet.Services
             return pngData;
         }
 
+        /// <summary>实体精灵 img 节点：信息全在 {type}/{id}.img（动作/origin/delay/PNG-outlink）；_Canvas 只是 PNG 仓库（经 outlink 跳转，不直接找）。</summary>
+        private Wz_Node? FindEntityImg(string type, string id)
+        {
+            if (!_wzLoaded || _wzs?.WzNode == null || string.IsNullOrEmpty(type) || string.IsNullOrEmpty(id)) return null;
+            string pad = PadId(id, 7);
+            if (type == "Mob")
+            {
+                // 文件模式完整 Mob.wz（Mob/{id}.img 有全部信息）；主树目录模式只有 _Canvas 壳（兜底）
+                if (_mobFullRoot != null)
+                {
+                    var n = _mobFullRoot.FindNodeByPath(true, $"Mob/{pad}.img".Split('/'));
+                    if (n != null) return n;
+                }
+                return _wzs.WzNode.FindNodeByPath(true, $"Mob/{pad}.img".Split('/'))
+                    ?? _wzs.WzNode.FindNodeByPath(true, $"Mob/_Canvas/{pad}.img".Split('/'));
+            }
+            return _wzs.WzNode.FindNodeByPath(true, $"{type}/{pad}.img".Split('/'));
+        }
+
         /// <summary>
         /// 单次遍历同时产出 PNG 条带 + strip 元数据 + config（合并原 ExportSpriteStrip / BuildSpriteStripPng 的重复遍历）。
         /// 支持 Mob/NPC 类型。帧来源：{type}/{id}.img 的 action 节点（origin/delay/a0/a1 在 child，PNG 经 outlink 取）。
@@ -486,7 +655,7 @@ namespace MiniPet.Services
             try
             {
                 // Meta: {type}/{id}.img — origin 在 child 上，PNG 通过 child outlink 取
-                var metaImgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{PadId(id, 7)}.img".Split('/'));
+                var metaImgNode = FindEntityImg(type, id);
                 if (metaImgNode == null) return (null, null, null);
                 var metaImg = metaImgNode.GetValue<Wz_Image>();
                 if (metaImg == null || !metaImg.TryExtract()) return (null, null, null);
@@ -501,12 +670,12 @@ namespace MiniPet.Services
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
                     var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
-                    int delay = child.FindNodeByPath("delay")?.GetValueEx<int>(100) ?? 100;
+                    int delay = child.FindNodeByPath("delay")?.GetValueEx<int>(120) ?? 120;
                     int a0 = child.FindNodeByPath("a0")?.GetValueEx<int>(255) ?? 255;
                     int a1 = child.FindNodeByPath("a1")?.GetValueEx<int>(255) ?? 255;
 
                     var pngNode = child.ResolveUol() ?? child;
-                    var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
+                    var linkNode = GetLinkedSourceNode(pngNode, _mobFullRoot) ?? pngNode;
                     var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
                     // 跳过无效帧：null 或 1×1 退化占位（WZ 里部分空动作帧无有效画面），避免合成出空白条带
                     if (png == null || png.Width <= 1 || png.Height <= 1) continue;
@@ -552,7 +721,7 @@ namespace MiniPet.Services
                     OriginX = finalOx,
                     OriginY = finalOy,
                     FrameData = frameDataList,
-                    DefaultDelay = 100
+                    DefaultDelay = 120
                 };
 
                 var config = new PetConfig
@@ -590,7 +759,7 @@ namespace MiniPet.Services
             {
                 if (!_wzLoaded || _wzs?.WzNode == null) return result;
 
-                var imgNode = _wzs.WzNode.FindNodeByPath(true, $"{type}/{PadId(id, 7)}.img".Split('/'));
+                var imgNode = FindEntityImg(type, id);
                 if (imgNode == null) return result;
                 var img = imgNode.GetValue<Wz_Image>();
                 if (img == null || !img.TryExtract()) return result;
@@ -637,7 +806,7 @@ namespace MiniPet.Services
             {
                 result[action] = new List<string>();
 
-                var node = FindNodeByPath($"Mob/_Canvas/{PadId(mobId, 7)}.img/{action}");
+                var node = FindNodeByPath($"Mob/{PadId(mobId, 7)}.img/{action}");
                 if (node == null) continue;
                 for (int f = 0; ; f++)
                 {
@@ -668,17 +837,71 @@ namespace MiniPet.Services
             return $"Map/Map/Map{prefix}/{mapId}.img";
         }
 
+        // 信息源路径（origin/delay/动作结构全在 {type}/{id}.img；_Canvas 只是 PNG 仓库，经 outlink 跳转）
         public string GetMobWzPath(string mobId, string action, int frame) =>
-            $"Mob/_Canvas/{PadId(mobId, 7)}.img/{action}/{frame}";
+            $"Mob/{PadId(mobId, 7)}.img/{action}/{frame}";
 
         public string GetNpcWzPath(string npcId, string action, int frame) =>
-            $"Npc/_Canvas/{PadId(npcId, 7)}.img/{action}/{frame}";
+            $"Npc/{PadId(npcId, 7)}.img/{action}/{frame}";
 
         public string GetBalloonTilePath(string balloonId, string tileName) =>
             $"UI/ChatBalloon.img/{balloonId}/{tileName}";
 
         /// <summary>
-        /// 取 UI/ChatBalloon.img/{id} 节点（提取后），用于读 9-slice 切片和 clr
+        /// 枚举全部**有效**气泡（胶水规则 2026-08-08：气泡是戒指装备的附属属性）：
+        /// 遍历 Character/Ring/{code}.img 的 info/chatBalloon 字段 → 气泡 id；
+        /// 名字取 String/Eqp.img/Eqp/Ring/{code去前导零}/name 的中文名（气泡名 = 关联装备名）。
+        /// 探针实证：Character/Ring 1794 个戒指，01112200.img → chatBalloon=1；String 1112001 → 恋人戒指。
+        /// </summary>
+        public List<(int Id, string Name)> GetBalloonList()
+        {
+            var result = new List<(int Id, string Name)>();
+            if (!_wzLoaded || _wzs?.WzNode == null) return result;
+            lock (_wzLock)
+            try
+            {
+                var ringDir = _wzs.WzNode.FindNodeByPath("Character", true)?.Nodes.FirstOrDefault(n => n.Text == "Ring");
+                if (ringDir == null) return result;
+                var seen = new HashSet<int>();
+                foreach (Wz_Node n in ringDir.Nodes)
+                {
+                    if (!n.Text.EndsWith(".img")) continue;
+                    try
+                    {
+                        var img = n.GetValue<Wz_Image>();
+                        if (img == null || !img.TryExtract()) continue;
+                        var cb = img.Node.FindNodeByPath("info")?.FindNodeByPath("chatBalloon")?.GetValueEx<int>(0);
+                        if (cb == null || cb.Value <= 0) continue;
+                        if (!seen.Add(cb.Value)) continue; // 多戒指共用同一气泡 → 取第一个名字
+                        var strCode = n.Text[..^4].TrimStart('0');
+                        var name = strCode.Length > 0 ? GetRingName(strCode) : null;
+                        result.Add((cb.Value, string.IsNullOrEmpty(name) ? $"气泡 {cb.Value}" : name));
+                    }
+                    catch { /* 单个戒指解析失败跳过 */ }
+                }
+                result.Sort((a, b) => a.Id.CompareTo(b.Id));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetBalloonList: {ex.Message}"); }
+            return result;
+        }
+
+        /// <summary>取戒指中文名：String/Eqp.img/Eqp/Ring/{code}/name（code 为去前导零的 7 位短码）。</summary>
+        private string? GetRingName(string strCode)
+        {
+            try
+            {
+                var imgNode = FindNodeByPath("String/Eqp.img");
+                var img = imgNode?.GetValue<Wz_Image>();
+                if (img == null || !img.TryExtract()) return null;
+                var node = img.Node.FindNodeByPath("Eqp")?.FindNodeByPath("Ring")?.FindNodeByPath(strCode);
+                return node?.FindNodeByPath("name")?.GetValueEx<string>(null);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// 取 ChatBalloon.img/{id} 节点（提取后），用于读 9-slice 切片和 clr。
+        /// 新版客户端 UI.wz 是空壳（79B），真实素材在 UI/_Canvas.wz → 优先 _Canvas 路径，回退旧路径。
         /// </summary>
         public Wz_Node? GetBalloonIdNode(string id)
         {
@@ -686,10 +909,15 @@ namespace MiniPet.Services
             lock (_wzLock)
             try
             {
-                var imgNode = _wzs.WzNode.FindNodeByPath(true, "UI/ChatBalloon.img".Split('/'));
-                var img = imgNode?.GetValue<Wz_Image>();
-                if (img == null || !img.TryExtract()) return null;
-                return img.Node.FindNodeByPath(id);
+                foreach (var imgPath in new[] { "UI/_Canvas/ChatBalloon.img", "UI/ChatBalloon.img" })
+                {
+                    var imgNode = _wzs.WzNode.FindNodeByPath(true, imgPath.Split('/'));
+                    var img = imgNode?.GetValue<Wz_Image>();
+                    if (img == null || !img.TryExtract()) continue;
+                    var node = img.Node.FindNodeByPath(id);
+                    if (node != null) return node;
+                }
+                return null;
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetBalloonIdNode({id}): {ex.Message}"); return null; }
         }
@@ -705,17 +933,17 @@ namespace MiniPet.Services
                 if (node == null) return null;
                 return new BalloonTiles
                 {
-                    NW = ExtractTilePng(node, "nw"),
-                    N = ExtractTilePng(node, "n"),
-                    NE = ExtractTilePng(node, "ne"),
-                    W = ExtractTilePng(node, "w"),
-                    C = ExtractTilePng(node, "c"),
-                    E = ExtractTilePng(node, "e"),
-                    SW = ExtractTilePng(node, "sw"),
-                    S = ExtractTilePng(node, "s"),
-                    SE = ExtractTilePng(node, "se"),
-                    Arrow = ExtractTilePng(node, "arrow"),
-                    Head = ExtractTilePng(node, "head")
+                    NW = ExtractTilePng(node, "nw"), NWOrigin = ExtractTileOrigin(id, node, "nw"),
+                    N = ExtractTilePng(node, "n"), NOrigin = ExtractTileOrigin(id, node, "n"),
+                    NE = ExtractTilePng(node, "ne"), NEOrigin = ExtractTileOrigin(id, node, "ne"),
+                    W = ExtractTilePng(node, "w"), WOrigin = ExtractTileOrigin(id, node, "w"),
+                    C = ExtractTilePng(node, "c"), COrigin = ExtractTileOrigin(id, node, "c"),
+                    E = ExtractTilePng(node, "e"), EOrigin = ExtractTileOrigin(id, node, "e"),
+                    SW = ExtractTilePng(node, "sw"), SWOrigin = ExtractTileOrigin(id, node, "sw"),
+                    S = ExtractTilePng(node, "s"), SOrigin = ExtractTileOrigin(id, node, "s"),
+                    SE = ExtractTilePng(node, "se"), SEOrigin = ExtractTileOrigin(id, node, "se"),
+                    Arrow = ExtractTilePng(node, "arrow"), ArrowOrigin = ExtractTileOrigin(id, node, "arrow"),
+                    Head = ExtractTilePng(node, "head"), HeadOrigin = ExtractTileOrigin(id, node, "head")
                 };
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] ExtractBalloonTiles({id}): {ex.Message}"); return null; }
@@ -739,11 +967,36 @@ namespace MiniPet.Services
             try
             {
                 var n = parent.FindNodeByPath(name);
-                var png = n?.GetValue<Wz_Png>();
-                if (png == null) return Array.Empty<byte>();
+                if (n == null) return Array.Empty<byte>();
+                // ChatBalloon 旧路径切片节点全是 outlink（direct 拿到 1×1 退化占位），
+                // 必须解析链接链取真实 PNG（参考 Java WzCanvasProperty.pngBytes 递归）。
+                var pngNode = n.ResolveUol() ?? n;
+                var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
+                var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
+                if (png == null || png.Width <= 1 || png.Height <= 1) return Array.Empty<byte>();
                 return PngEncoder.Encode(PngEncoder.DecodePixels(png), png.Width, png.Height);
             }
             catch { return Array.Empty<byte>(); }
+        }
+
+        /// <summary>
+        /// 取切片节点 origin。新版 UI/_Canvas 切片节点没有 origin（origin 在旧路径源节点上），
+        /// 先查 _Canvas 节点自身，没有再回退旧路径 `UI/ChatBalloon.img/{id}/{tile}` 取源节点 origin
+        /// （参考 MapleSalon2 ChatBalloonPiece：origin = info.origin，从源节点取）。
+        /// </summary>
+        private (int X, int Y) ExtractTileOrigin(string balloonId, Wz_Node parent, string name)
+        {
+            try
+            {
+                var n = parent.FindNodeByPath(name);
+                var origin = n?.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
+                if (origin != null) return (origin.X, origin.Y);
+                // 回退旧路径源节点（_Canvas 切片无 origin）
+                var src = FindNodeByPath(GetBalloonTilePath(balloonId, name));
+                origin = src?.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
+                return origin != null ? (origin.X, origin.Y) : (0, 0);
+            }
+            catch { return (0, 0); }
         }
 
         public List<(string Id, string Name)> GetDirectoryChildren(string wzDirectory)
@@ -813,6 +1066,39 @@ namespace MiniPet.Services
         /// </summary>
         public List<MapRegionNode> GetMapHierarchy() => _mapCatalog.GetMapHierarchy();
 
+        /// <summary>世界地图树（树状选择器；Java familyMap/mapListCode 逻辑，预渲染本地缓存）。</summary>
+        public List<WorldMapTreeNode> GetWorldMapTree() => _mapCatalog.GetWorldMapTree();
+
+        /// <summary>mapId → "街道|地图名"。</summary>
+        public Dictionary<string, string> GetMapStreetInfo() => _mapCatalog.GetMapStreetInfo();
+
+        /// <summary>自动检测素材类型（Npc/Mob）：Npc.wz 有 → Npc，否则 Mob（_Canvas）有 → Mob，都没有 → 空。</summary>
+        public string DetectEntityType(string id)
+        {
+            if (!_wzLoaded || _wzs?.WzNode == null || string.IsNullOrEmpty(id)) return "";
+            lock (_wzLock)
+            {
+                try
+                {
+                    string pad = PadId(id, 7);
+                    if (_wzs.WzNode.FindNodeByPath(true, $"Npc/{pad}.img".Split('/')) != null) return "Npc";
+                    if (_wzs.WzNode.FindNodeByPath(true, $"Mob/_Canvas/{pad}.img".Split('/')) != null) return "Mob";
+                    if (_wzs.WzNode.FindNodeByPath(true, $"Mob/{pad}.img".Split('/')) != null) return "Mob";
+                }
+                catch { }
+            }
+            return "";
+        }
+
+        /// <summary>懒加载最底层区域的叶子地图（MapList + portal 传送门关联，点击展开时调用）。</summary>
+        public List<WorldMapTreeNode> LoadLeafMaps(WorldMapTreeNode node) => _mapCatalog.LoadLeafMaps(node);
+
+        /// <summary>区域节点自身地图叶子（仅 MapList；有子区域的区域展开时调用）。</summary>
+        public List<WorldMapTreeNode> LoadSelfMaps(WorldMapTreeNode node) => _mapCatalog.LoadSelfMaps(node);
+
+        /// <summary>启动后注入缓存（世界地图树预渲染缓存用）。</summary>
+        public void SetCacheManager(CacheManager cache) => _mapCatalog.SetCache(cache);
+
         /// <summary>
         /// 节点解析：UOL → source/_inlink/_outlink → PNG
         /// 参考 mapRender/backend/Program.cs GetLinkedSourceNode
@@ -835,30 +1121,54 @@ namespace MiniPet.Services
             }
         }
 
-        private static Wz_Node? GetLinkedSourceNode(Wz_Node node)
+        private static Wz_Node? GetLinkedSourceNode(Wz_Node node, Wz_Node? mobFullFallback = null)
         {
             try
             {
-                var sourceAc = node.Nodes["source"].GetValueEx<string>(null);
-                if (!string.IsNullOrEmpty(sourceAc))
+                // 循环解析链接链：source/_inlink/_outlink 的目标本身可能还是 UOL/链接，
+                // 一路解到真实 canvas（参考 Java WzCanvasProperty.pngBytes 递归 + WzSpriteHandler 的 Map2 兜底）。
+                // 限深 8 防环（WZ 链接不会形成环，但防御性上限避免异常数据死循环）。
+                for (int depth = 0; depth < 8; depth++)
                 {
-                    var wzFile = node.GetNodeWzFile();
-                    return wzFile?.WzStructure?.WzNode.FindNodeByPath(true, sourceAc.Split('/'));
-                }
+                    node = node.ResolveUol() ?? node;
 
-                var inlink = node.Nodes["_inlink"].GetValueEx<string>(null);
-                if (!string.IsNullOrEmpty(inlink))
-                {
-                    var img = node.GetNodeWzImage();
-                    return img?.Node.FindNodeByPath(true, inlink.Split('/'));
-                }
+                    var sourceAc = node.Nodes["source"].GetValueEx<string>(null);
+                    if (!string.IsNullOrEmpty(sourceAc))
+                    {
+                        var wzFile = node.GetNodeWzFile();
+                        var target = wzFile?.WzStructure?.WzNode.FindNodeByPath(true, sourceAc.Split('/'));
+                        if (target != null) { node = target; continue; }
+                    }
 
-                var outlink = node.Nodes["_outlink"].GetValueEx<string>(null);
-                if (!string.IsNullOrEmpty(outlink))
-                {
-                    var wzFile = node.GetNodeWzFile();
-                    return wzFile?.WzStructure?.WzNode.FindNodeByPath(true, outlink.Split('/'));
+                    var inlink = node.Nodes["_inlink"].GetValueEx<string>(null);
+                    if (!string.IsNullOrEmpty(inlink))
+                    {
+                        var img = node.GetNodeWzImage();
+                        var target = img?.Node.FindNodeByPath(true, inlink.Split('/'));
+                        if (target != null) { node = target; continue; }
+                    }
+
+                    var outlink = node.Nodes["_outlink"].GetValueEx<string>(null);
+                    if (!string.IsNullOrEmpty(outlink))
+                    {
+                        var wzFile = node.GetNodeWzFile();
+                        var target = wzFile?.WzStructure?.WzNode.FindNodeByPath(true, outlink.Split('/'));
+                        if (target == null && outlink.StartsWith("Map/"))
+                        {
+                            // Java WzSpriteHandler 兜底：outlink 指向 Map/ 但实际在 Map2/（老地图资源目录）
+                            target = wzFile?.WzStructure?.WzNode.FindNodeByPath(true, ("Map2/" + outlink.Substring(4)).Split('/'));
+                        }
+                        if (target == null && mobFullFallback != null && outlink.StartsWith("Mob/"))
+                        {
+                            // 文件模式 Mob.wz：outlink 指向 Mob/_Canvas/...（PNG 仓库），在完整树里取
+                            target = mobFullFallback.FindNodeByPath(true, outlink.Split('/'));
+                        }
+                        if (target != null) { node = target; continue; }
+                    }
+
+                    return node;
                 }
+                return node;
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetLinkedSourceNode: {ex.Message}"); }
             return null;
@@ -877,5 +1187,26 @@ namespace MiniPet.Services
     {
         public string Name { get; set; } = string.Empty;
         public List<MapEntry> Maps { get; set; } = new();
+    }
+
+    /// <summary>
+    /// 世界地图树节点（Map/WorldMap 层级：顶级区域 → 子区域 → …，参考 Java familyMap/mapListCode 逻辑）。
+    /// 供背景设置 tab 的树状选择器；MapIds = 本节点 MapList 地图代码；TotalCount = 本节点+子孙地图总数。
+    /// 最底层区域（无子区域）挂一个 LeafPlaceholder 占位子节点，展开时懒加载叶子地图
+    /// （MapList 地图 + portal 传送门关联地图；胶水规则 2026-08-08，点击才渲染避免低性能）。
+    /// </summary>
+    public sealed class WorldMapTreeNode
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public List<string> MapIds { get; set; } = new();
+        public int TotalCount { get; set; }
+        public System.Collections.ObjectModel.ObservableCollection<WorldMapTreeNode> Children { get; set; } = new();
+        // 懒加载叶子标记
+        public bool IsLeafPlaceholder { get; set; }   // 占位（未加载叶子，点击展开时加载）
+        public bool LeafLoaded { get; set; }          // 叶子已加载
+        public bool IsLeafMap { get; set; }           // 叶子地图节点
+        public string LeafMapId { get; set; } = string.Empty;  // 叶子地图 id
+        public bool IsTown { get; set; }              // 城镇地图（Map.wz info/town==1）——展开分组：子目录→城镇→非城镇
     }
 }

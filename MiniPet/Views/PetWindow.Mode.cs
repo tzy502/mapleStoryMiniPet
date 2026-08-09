@@ -94,9 +94,15 @@ public partial class PetWindow
                 return;
             }
             var s = _configService.LoadSettings();
-            if (string.IsNullOrEmpty(s.MapId) || !_wzService.IsLoaded)
+            if (string.IsNullOrEmpty(s.MapId))
             {
                 OpenBackgroundTab();
+                return;
+            }
+            // 无 WZ：尝试读地图 PNG 缓存（离线显示背景）；无缓存则进设置中心
+            if (!_wzService.IsLoaded)
+            {
+                TryShowCachedMapBackground(s);
                 return;
             }
             System.Threading.Tasks.Task.Run(() =>
@@ -137,6 +143,29 @@ public partial class PetWindow
             });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ToggleBackground: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 无 WZ 时尝试从 PNG 缓存显示背景（静态图分类；摄像机模式无缓存则进设置中心）。
+    /// 缓存 key = mapId + 请求 crop；命中则 BackgroundWindow 直接显示缓存图。
+    /// </summary>
+    private void TryShowCachedMapBackground(PetSettings s)
+    {
+        try
+        {
+            var cached = _cacheManager.LoadMapPng(s.MapId, s.CropX, s.CropY, s.CropW, s.CropH);
+            if (cached == null || cached.Length == 0)
+            {
+                OpenBackgroundTab();
+                return;
+            }
+            _mapViewportWindow.Stop();
+            _mapViewportWindow.Hide();
+            _backgroundWindow.ShowCachedMapPng(cached, s.CropX, s.CropY, s.CropW, s.CropH);
+            _backgroundWindow.Show();
+            RaisePet();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] TryShowCachedMapBackground: {ex.Message}"); OpenBackgroundTab(); }
     }
 
     /// <summary>
