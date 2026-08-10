@@ -27,9 +27,15 @@ namespace MiniPet.Services
     }
 
     /// <summary>
-    /// 动画服务 - 动画状态机、帧循环、动作切换
+    /// 动画服务 - 动画状态机、帧循环、动作切换。
+    ///
+    /// 实现 <see cref="IActionDriver"/>：Agent Run（<see cref="AgentState.Run"/>）时
+    /// <see cref="EffectLayerService"/> 经 <see cref="PlayAction"/> 切忙碌动作，
+    /// Run 退出经 <see cref="RestoreDefault"/> 回 stand。语义动作名在内部按当前实体类型路由：
+    /// 纸娃娃（哨兵 + provider）走 <see cref="ResolveActionForProvider"/> 别名（move→walk1），
+    /// Mob/NPC 透传动作名走精灵图条 fallback 链。
     /// </summary>
-    public class AnimService
+    public class AnimService : IActionDriver
     {
         private readonly SpriteService _spriteService;
         private readonly Dictionary<string, AnimationDef> _animDefs;
@@ -512,6 +518,55 @@ namespace MiniPet.Services
         public void SetCurrentMobId(string mobId)
         {
             _currentMobId = mobId ?? string.Empty;
+        }
+
+        // ─── IActionDriver（Agent Run 实体忙碌动作驱动；PLAN-agent-integration.md §2）───
+        // PlayAction / RestoreDefault 复用 SwitchTo：它已处理
+        //   1) provider 别名（纸娃娃 move→walk1，stand→stand1，由 ResolveActionForProvider）；
+        //   2) Loop/OneShot 自动判定；
+        //   3) 当前正在播 OneShot（非 stand/fly/move）时把 move/fly 缓存为 pending，不打断表情动画。
+        // 调用方（EffectLayerService）只传语义动作名，实体类型差异在此处内部消化。
+
+        /// <summary>
+        /// IActionDriver.PlayAction：切到忙碌动作（Run 态）。
+        /// Run 映射由 <see cref="EffectLayerService"/> 决定：
+        /// 纸娃娃传 "walk1"（SwitchTo→provider 别名解析），
+        /// Mob 传 "move"（或 "fly"，按 Mob 类型；透传到精灵图条），
+        /// NPC 传其现有移动动作（无则回退 stand，由 SwitchTo fallback 链兜底）。
+        /// </summary>
+        void IActionDriver.PlayAction(string action)
+        {
+            if (string.IsNullOrEmpty(action))
+            {
+                return;
+            }
+            try
+            {
+                SwitchTo(action);
+                Console.WriteLine($"[Anim] IActionDriver.PlayAction: {action} (实体={(IsProviderActive ? "paperdoll" : _currentMobId)}) → 当前={_currentAction}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[Anim] IActionDriver.PlayAction({action}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// IActionDriver.RestoreDefault：回 stand（Run→Idle 时调）。
+        /// 纸娃娃经 SwitchTo→ResolveActionForProvider 解析为 stand1/stand2（武器变体由 provider 决定）；
+        /// Mob/NPC 走精灵图条 stand（fallback 链兜底）。
+        /// </summary>
+        void IActionDriver.RestoreDefault()
+        {
+            try
+            {
+                SwitchTo("stand");
+                Console.WriteLine($"[Anim] IActionDriver.RestoreDefault → stand (实体={(IsProviderActive ? "paperdoll" : _currentMobId)}) → 当前={_currentAction}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[Anim] IActionDriver.RestoreDefault: {ex.Message}");
+            }
         }
 
         /// <summary>注册帧提供者（纸娃娃实时合成）。Mob/NPC 不注册。</summary>

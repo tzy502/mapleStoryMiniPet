@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Avalonia.Threading;
 
 namespace MiniPet.Services;
 
@@ -12,7 +13,11 @@ public enum EventType
     ConfigChanged,
     PetChanged,
     OpenSettings,
-    AppExit
+    AppExit,
+    // adapter 发布的 Agent 状态变化（经 PublishOnUIThread marshal 到 UI 线程）
+    AgentStateChanged,
+    // AgentStateAggregator 计算后的桌宠反映态（已在 UI 线程，直接 Publish）
+    PetReflectStateChanged
 }
 
 public class EventBus
@@ -72,6 +77,22 @@ public class EventBus
             {
                 Console.Error.WriteLine($"[EventBus] Publish {eventType}: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// 在 UI 线程发布事件：已在 UI 线程则同步调 Publish（保持现有同步语义，无重排/double-queue）；
+    /// 否则 Post 到 UI 线程后再 Publish。仅 adapter（AgentStateChanged）使用——不破坏现有 8 个 EventType 的同步 Publish。
+    /// </summary>
+    public void PublishOnUIThread(EventType eventType, object? data = null)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Publish(eventType, data);
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(() => Publish(eventType, data));
         }
     }
 }

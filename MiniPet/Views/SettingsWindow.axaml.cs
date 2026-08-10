@@ -334,7 +334,7 @@ public partial class SettingsWindow : Window
     {
         var container = new DockPanel();
         var subTabBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 4, 14, 0) };
-        var subTabs = new[] { "素材桌宠设置", "纸娃娃桌宠设置", "背景设置", "聊天气泡设置" };
+        var subTabs = new[] { "素材桌宠设置", "纸娃娃桌宠设置", "背景设置", "聊天气泡设置", "Agent 接入" };
         for (int i = 0; i < subTabs.Length; i++)
         {
             var idx = i;
@@ -364,6 +364,11 @@ public partial class SettingsWindow : Window
         sub3.IsVisible = false;
         _subPanes.Add(sub3);
         body.Children.Add(sub3);
+
+        var sub4 = BuildAgentTab();
+        sub4.IsVisible = false;
+        _subPanes.Add(sub4);
+        body.Children.Add(sub4);
 
         container.Children.Add(subTabBar);
         container.Children.Add(body);

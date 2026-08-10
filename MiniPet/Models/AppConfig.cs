@@ -46,6 +46,35 @@ namespace MiniPet.Models
         public CharacterAppearance? CurrentPaperdoll { get; set; }
         // 纸娃娃预设（搭配存档：预设名 → 外观）
         public Dictionary<string, CharacterAppearance> SavedPaperdolls { get; set; } = new Dictionary<string, CharacterAppearance>();
+        // Agent 接入（Hermes / Claude Code / Codex 状态订阅 + 通用特效层）
+        public AgentIntegrationConfig AgentIntegration { get; set; } = new AgentIntegrationConfig();
+    }
+
+    /// <summary>
+    /// Agent 接入配置（PLAN-agent-integration §7）：
+    /// 各 adapter 开关、轮询/静默/staleness 阈值、特效开关、WZ 庆祝节点路径（可手填覆盖）。
+    /// 序列化沿用 PetSettings 的 CamelCase 策略（JsonNamingPolicy.CamelCase）。
+    /// </summary>
+    public class AgentIntegrationConfig
+    {
+        // adapter 开关（默认仅 Hermes 开）
+        public bool HermesEnabled { get; set; } = true;
+        public bool CCEnabled { get; set; }
+        public bool CodexEnabled { get; set; }
+        // 通用特效层（Jump 庆祝 / Failed 弹窗）
+        public bool EffectEnabled { get; set; }
+
+        // Hermes state.db 只读轮询周期（秒）
+        public int HermesPollIntervalSeconds { get; set; } = 5;
+        // Claude Code 完成态静默窗（秒，append debounce-reset）
+        public int CCSilenceSeconds { get; set; } = 20;
+        // Jump 一次性庆祝时长（秒）
+        public int JumpDisplaySeconds { get; set; } = 3;
+        // 源超此秒数无事件 → 降 Idle 并清 Failed/Run/Review
+        public int StalenessSeconds { get; set; } = 30;
+
+        // WZ 庆祝动画节点路径（手填覆盖；null/空 → 自动探测 Effect/、UI/Basic emotion、Item/）
+        public string? WzCelebrationNodePath { get; set; }
     }
 
     /// <summary>

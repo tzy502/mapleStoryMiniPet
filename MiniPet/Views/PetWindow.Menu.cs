@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
@@ -144,9 +146,22 @@ public partial class PetWindow
 
             cm.Items.Add(new Separator());
 
-            // ── Hermes 终端 ──
+            // ── Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态） ──
             var terminalItem = new MenuItem { Header = "Hermes 终端" };
-            terminalItem.Items.Add(new MenuItem { Header = "待实现" });
+            var launchItem = new MenuItem { Header = "🚀 启动 hermes" };
+            launchItem.Click += (_, _) =>
+            {
+                try { LaunchHermesCli(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LaunchHermes: {ex.Message}"); }
+            };
+            terminalItem.Items.Add(launchItem);
+            var statusItem = new MenuItem { Header = "📊 显示状态" };
+            statusItem.Click += (_, _) =>
+            {
+                try { ShowAgentStatusPopup(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AgentStatus: {ex.Message}"); }
+            };
+            terminalItem.Items.Add(statusItem);
             cm.Items.Add(terminalItem);
 
             // ── 设置中心 ──
@@ -224,6 +239,102 @@ public partial class PetWindow
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BuildMenu: {ex.Message}"); }
         return cm;
+    }
+
+    /// <summary>
+    /// 快速唤起 hermes CLI（UseShellExecute=true，让系统按 PATH 解析并独立窗口运行）。
+    /// 失败（未安装/不在 PATH）→ 提示用户。
+    /// </summary>
+    private void LaunchHermesCli()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("hermes")
+            {
+                UseShellExecute = true,
+            };
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PetWindow] LaunchHermesCli: {ex.Message}");
+            ShowInfoPopup("Hermes 终端", "未找到 hermes 命令。\n请先安装 Hermes CLI 并确认其在系统 PATH 中。");
+        }
+    }
+
+    /// <summary>
+    /// Agent 状态弹窗：当前 Aggregator 反映态 + 各 adapter 开关。
+    /// 注：Aggregator 尚未注入 PetWindow（PLAN 阶段2 接线），此处读 AgentIntegration 配置展示当前接入态，
+    /// 反映态字段留接口，后续接 EffectLayerService / AgentStateAggregator.CurrentReflect。
+    /// </summary>
+    private void ShowAgentStatusPopup()
+    {
+        var settings = _configService.LoadSettings();
+        var ai = settings.AgentIntegration ?? new AgentIntegrationConfig();
+
+        var lines = new List<string>
+        {
+            "🤖 Agent 接入状态",
+            string.Empty,
+            $"  Hermes   : {(ai.HermesEnabled ? "开" : "关")}",
+            $"  Claude Code : {(ai.CCEnabled ? "开" : "关")}",
+            $"  Codex    : {(ai.CodexEnabled ? "开" : "关")}",
+            $"  特效层   : {(ai.EffectEnabled ? "开" : "关")}",
+            string.Empty,
+            $"  轮询周期 : {ai.HermesPollIntervalSeconds}s",
+            $"  静默窗   : {ai.CCSilenceSeconds}s",
+            $"  Staleness: {ai.StalenessSeconds}s",
+            string.Empty,
+            "  反映态   : Idle（待 Aggregator 接线）",
+        };
+        ShowInfoPopup("Agent 状态", string.Join("\n", lines));
+    }
+
+    /// <summary>简单的信息弹窗（自包含，无第三方依赖）：标题 + 多行文本 + 关闭按钮。</summary>
+    private void ShowInfoPopup(string title, string body)
+    {
+        try
+        {
+            var win = new Window
+            {
+                Title = title,
+                Width = 360,
+                Height = 260,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
+                CanResize = false,
+            };
+            var stack = new StackPanel
+            {
+                Margin = new Thickness(18),
+                Spacing = 12,
+            };
+            stack.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 14,
+                FontWeight = FontWeight.Bold,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 240, 244)),
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = body,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 200, 200, 210)),
+            });
+            var closeBtn = new Button
+            {
+                Content = "关闭",
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                Padding = new Thickness(20, 6),
+            };
+            closeBtn.Click += (_, _) => win.Close();
+            stack.Children.Add(closeBtn);
+            win.Content = stack;
+            win.Show();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowInfoPopup: {ex.Message}"); }
     }
 
     private void RefreshAnimationMenu()
