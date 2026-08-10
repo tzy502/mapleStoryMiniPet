@@ -1,93 +1,58 @@
-# MapleStory MiniPet
+# MapleStory MiniPet 🐱
 
-冒险岛桌面悬浮宠物，基于 .NET 9 + Avalonia UI 实现。
+冒险岛桌面悬浮宠物 —— 透明置顶的迷你伙伴，可以换装、说话，还能把冒险岛的地图挂在桌面上。
 
-## 功能
+数据直接读取本地 WZ 客户端文件，离线可用。
 
-- 透明无边框悬浮窗，桌面置顶
-- 精灵图动画播放：stand / move / fly / attack / skill / say / mouse / hand / laugh / eye / die
-- 左键拖拽移动，右键菜单切换动画 / 怪物 / 背景 / 气泡
-- 纸娃娃系统：装备渲染、z-order 排序
-- 聊天气泡：9-slice 渲染、淡入淡出
-- 地图背景：图层合成、视差偏移
-- 设置中心：WZ 路径配置、主题切换、素材浏览
-- Hermes 内嵌终端（可选）
-- macOS / Windows 双平台
+## ✨ 功能简介
 
-## 快速启动
+### 桌宠
+- 透明无边框置顶悬浮窗，鼠标左键拖拽移动
+- 多种动作动画：站立 / 移动 / 飞行 / 攻击 / 技能 / 说话 / 摸头 / 大笑 / 眨眼 / 死亡
+- 纸娃娃换装：身体 / 头发 / 脸 / 耳朵分层拼装，装备任意搭配
+
+### 聊天气泡
+- 角色头顶随机冒出对话气泡（9-slice 样式），淡入淡出
+- 纸娃娃 / 怪物 / NPC 三种锚定规则，长文本自动适配
+
+### 地图背景（两种模式）
+- **静态地图**：整张地图作为桌面背景（裁紧透明边距、落地对齐、点击穿透，不挡操作）
+- **摄像机模式**：可拖动、缩放（0.25~4 倍）的地图窗口，背景自动视差滚动
+- 背景区域树选择器：世界 → 区域 → 地图 一键切换
+- 图层开关（背景 / 生物 / 传送门）与裁切设置
+
+### 素材浏览
+- 人物 / 怪物 / NPC 检索浏览，类型自动识别
+
+## 🚀 快速开始
 
 ```bash
 # 编译
 dotnet build MiniPet/MiniPet.csproj
 
-# 运行
+# 运行（macOS 桌面需保持显示器唤醒）
 dotnet run --project MiniPet/MiniPet.csproj
 ```
 
-## 项目结构
+### 首次配置
 
-```
-mapleStoryMiniPet/
-├── MiniPet/                     # 主项目
-│   ├── Models/                  # 数据模型
-│   │   ├── AppConfig.cs         # 应用配置
-│   │   ├── BalloonData.cs       # 聊天气泡数据
-│   │   ├── CharacterAppearance.cs # 纸娃娃装备模型
-│   │   ├── MapData.cs           # 地图数据
-│   │   ├── SpriteSheet.cs       # 精灵图配置
-│   │   └── SpriteStrip.cs       # 精灵图条 + 帧数据
-│   ├── Services/                # 服务层
-│   │   ├── AnimService.cs       # 动画状态机、帧循环
-│   │   ├── BalloonService.cs    # 气泡 9-slice 渲染
-│   │   ├── CacheManager.cs      # 缓存管理
-│   │   ├── ConfigService.cs     # 设置持久化
-│   │   ├── EventBus.cs          # 事件总线
-│   │   ├── MapService.cs        # 地图加载、图层合成
-│   │   ├── PaperdollService.cs  # 角色合成、z-order
-│   │   ├── SpriteService.cs     # 精灵图管理、帧缓存
-│   │   ├── TrayService.cs       # 托盘图标（macOS 静默降级）
-│   │   ├── WzError.cs           # WZ 错误定义
-│   │   └── WzService.cs         # WZ 加载、节点查询、PNG 提取
-│   ├── Views/                   # 视图层
-│   │   ├── PetWindow.axaml.cs   # 主窗口
-│   │   ├── SettingsWindow.axaml.cs # 设置面板
-│   │   ├── MaterialBrowserWindow.cs # 素材浏览
-│   │   └── Controls/            # UI 控件
-│   │       ├── SpriteCanvas.cs  # 精灵渲染画布
-│   │       ├── BalloonControl.cs # 聊天气泡
-│   │       └── BackgroundControl.cs # 地图背景
-│   ├── App.axaml(.cs)           # 应用定义
-│   ├── Program.cs               # 启动入口
-│   └── MiniPet.csproj           # 项目文件
-├── MiniPet.Tests/               # 测试项目
-│   ├── ConfigServiceTests.cs
-│   ├── EventBusTests.cs
-│   ├── WzServiceTests.cs
-│   ├── SpriteServiceTests.cs
-│   ├── AnimServiceTests.cs
-│   ├── BalloonServiceTests.cs
-│   ├── MapServiceTests.cs
-│   └── PaperdollServiceTests.cs
-├── sprites/                     # 精灵图
-├── fetch_and_generate.py        # API 帧下载 + 精灵图生成
-├── regenerate_sprites.py        # WZ origin / 接地锚点精灵图生成
-├── refix_strip.py               # 精灵图重新对齐
-├── README.md
-└── CLAUDE.md                    # Claude Code 上下文
-```
+1. 启动后右键桌宠 → 设置中心
+2. 配置 **WZ 数据目录**（客户端 Base 目录，含 `Character.wz` / `Mob.wz` / `Map.wz` 等拆包文件）
+3. 配置 **WzComparerR2.WzLib.dll** 路径
+4. 完成，开始使用
 
-## 技术栈
+地图会缓存到本地（`~/Library/Caches/MiniPet`），二次加载秒开。
 
-- .NET 9
-- Avalonia UI（跨平台 UI 框架）
-- SkiaSharp（2D 渲染）
-- WzComparerR2.WzLib（WZ 文件解析）
-- xUnit（单元测试）
+## 💡 操作提示
 
-## 编码约定
+- **左键拖拽**：移动桌宠
+- **右键**：打开菜单（切换动画 / 人物 / 背景模式 / 气泡 / Hermes / 设置）
+- 地图摄像机模式：左键拖相机、滚轮缩放、右键拖窗口位置
 
-- Services 所有方法与事件处理使用 try-catch 包裹
-- 禁止使用 `System.Drawing`（macOS 不支持）
-- 禁止使用 `System.Windows.Forms`
-- 窗口透明属性：`Background = Brushes.Transparent` / `TransparencyLevelHint = Transparent` / `SystemDecorations = None`
-- 动画顺序：stand → say → mouse → move → hand → laugh → eye → fly → die，缺失 fallback 到 stand
+## 🖥 支持平台
+
+- macOS / Windows
+
+## ⚠️ 版权声明
+
+本项目仅用于学习与研究。所有游戏素材（角色、地图、WZ 数据）版权归 Nexon 及冒险岛官方所有，请勿用于商业用途。
