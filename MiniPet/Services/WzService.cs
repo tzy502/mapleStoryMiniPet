@@ -451,6 +451,25 @@ namespace MiniPet.Services
             return result;
         }
 
+        /// <summary>读取纸娃娃 body 帧的 navel 绝对位置（MapleSalon2 容器原点 = body/origin + body/map/navel；stand1 首帧固定基准）。</summary>
+        public (int x, int y)? GetPaperdollNavel(string bodyImg = "00002000.img")
+        {
+            try
+            {
+                return WithWzLock<(int, int)?>(() =>
+                {
+                    var img = FindNodeByPath($"Character/{bodyImg}")?.GetValue<Wz_Image>();
+                    img?.TryExtract();
+                    var body = img?.Node.FindNodeByPath(true, "stand1", "0", "body");
+                    var origin = body?.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
+                    var navel = body?.FindNodeByPath("map")?.FindNodeByPath("navel")?.GetValueEx<Wz_Vector>(null);
+                    if (origin == null || navel == null) return null;
+                    return (origin.X + navel.X, origin.Y + navel.Y);
+                });
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetPaperdollNavel: {ex.Message}"); return null; }
+        }
+
         /// <summary>读取 piece 的 z 字段（层名字符串，可能为 null/数字）。</summary>
         public string? GetZField(string piecePath)
         {

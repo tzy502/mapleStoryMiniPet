@@ -127,10 +127,11 @@ public class PaperdollService : IEntityFrameProvider
 
     public List<string> GetAvailableActions()
     {
-        // 只返回合成成功的动作（排除僵尸技能动作如 ShamanTigerRiot：帧数>0 但 bounds=0 → 空闲随机显示空白）
+        // 只加载 MapleSalon2 定义的动作集（actions.ts 的 26 个），不遍历 body 全部动作
+        // （避免几百个无用/技能节点被加载；有帧的才加入）
         if (_validActionsCache != null) return _validActionsCache;
         var valid = new List<string>();
-        foreach (var a in GetActionList())
+        foreach (var a in ActionNames.Keys)
         {
             bool ok;
             if (!_actionValidCache.TryGetValue(a, out ok)) { ok = IsActionValid(a); _actionValidCache[a] = ok; }

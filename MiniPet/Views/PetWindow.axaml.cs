@@ -80,6 +80,8 @@ public partial class PetWindow : Window
     private string? _anchorMobId;        // 锚点对应的 mobId（变了才重算）
     private double _anchorFrameW;        // 基准动作帧宽（物理像素，未乘 scale）
     private double _anchorFrameH;        // 基准动作帧高（物理像素，未乘 scale）
+    private double _anchorOriginX;       // 纸娃娃基准动作画布 origin（角色最高点相对锚点，气泡定位用）
+    private double _anchorOriginY;
     private string? _lastLogAction;      // 诊断日志：上次打印的动作名
     private double _balloonAnchorX;      // 气泡锚点基准 X（屏幕像素，拖拽结束更新 → 动画切换气泡不动）
     private double _balloonAnchorY;      // 气泡锚点基准 Y（屏幕像素）
@@ -226,9 +228,9 @@ public partial class PetWindow : Window
                     var mobId = _animService.GetCurrentMobId();
                     if (mobId == PaperdollService.SentinelMobId)
                     {
-                        // 拖拽默认 walk1/walk2/fly（用户要求；只选有帧的动作，避免渲染失败）
-                        var pa = _paperdoll.GetActionList();
-                        var candidates = pa.Where(a => (a.StartsWith("walk") || a.StartsWith("fly")) && _paperdoll.GetFrameCount(a) > 0).ToList();
+                        // 拖拽默认 walk1/walk2/fly（用户要求；只从 MapleSalon2 动作集里选）
+                        var pa = _paperdoll.GetAvailableActions();
+                        var candidates = pa.Where(a => a.StartsWith("walk") || a.StartsWith("fly")).ToList();
                         var pdAction = candidates.Count > 0 ? candidates[_rng.Next(candidates.Count)] : (pa.Contains("walk1") ? "walk1" : "stand1");
                         _animService.Play(pdAction, PlayMode.Loop);
                         return;
@@ -668,26 +670,31 @@ public partial class PetWindow : Window
                 // mob/npc = 居中于锚点（原逻辑，胶水规则 2026-08-08：arrow 修复不改动其他类型）
                 if (_balloonWindow.IsVisible)
                 {
-                    // 动态 headMargin：按锚点帧长宽比（高/宽）调整——超长帧（chibi 大透明）系数缩小，
-                    // 气泡贴角色不被推远；正常比例（≤1.8）维持 0.75（胶水需求 2026-08-09）
-                    // 2026-08-09 胶水：「最高 -0.5 看看」——超长帧系数 -0.5（气泡底在锚点下方 0.5×帧高，深入角色区域/透明区）
                     double aw = _anchorFrameW > 0 ? _anchorFrameW : fw;
                     double ah = _anchorFrameH > 0 ? _anchorFrameH : fh;
                     double ratio = aw > 0 ? ah / aw : 1.5;
-                    // 纸娃娃 = MapleSalon2 character.ts L136 原样：chatBalloon.position.set(-10, -60) 固定偏移（不做动态——胶水钦定 2026-08-09）；
-                    // Mob/NPC 锚点=脚底，正常 0.75/超长 -0.5
-                    double headMargin = IsSentinelActive() ? 60 * _scale : ah * (ratio <= 1.8 ? 0.75 : -0.5) * _scale;
                     int bw = Math.Max(1, (int)_balloonWindow.Width);
                     int bh = Math.Max(1, (int)_balloonWindow.Height);
-                    // 水平：纸娃娃 = MapleSalon2 character.ts L136 固定 x=-10（arrow 在气泡左下 ≈ origin x 同一竖线）；
-                    // NPC 学习纸娃娃同样 -10（arrow 对齐角色 origin x）；mob 保持居中（胶水规则 2026-08-09）
-                    double bx = (IsSentinelActive() || _currentEntityType == "Npc")
-                        ? _balloonAnchorX - 10 * _scale
-                        : _balloonAnchorX - bw / 2.0;
+                    double bx, by;
+                    if (IsSentinelActive())
+                    {
+                        // 纸娃娃 = MapleSalon2 原样：navel 是容器原点（画布 0,0），气泡 position(-10,-60) 相对容器
+                        // 气泡左 = 窗口内 −10（navel 锚定）；气泡底 = 角色头顶（用户实证 y 可用，上移 2px 微调）
+                        // 水平不再减 ox（navel 画布锚定为 0，不是 navel 帧内 − minX）——胶水纠正 2026-08-09：水平严重不对
+                        bx = Position.X - 10 * _scale;
+                        by = Position.Y - bh - 2 * _scale;
+                    }
+                    else
+                    {
+                        // Mob/NPC 原逻辑：锚点=脚底，正常 0.75/超长 -0.5；NPC 水平 -10（arrow 对齐 origin x），mob 居中
+                        double headMargin = ah * (ratio <= 1.8 ? 0.75 : -0.5) * _scale;
+                        bx = _currentEntityType == "Npc" ? _balloonAnchorX - 10 * _scale : _balloonAnchorX - bw / 2.0;
+                        by = _balloonAnchorY - headMargin - bh;
+                    }
                     _balloonWindow.Position = new PixelPoint(
                         (int)bx,
-                        (int)(_balloonAnchorY - headMargin - bh));
-                    Console.WriteLine($"[PetWindow] Bubble: anchor=({_balloonAnchorX},{_balloonAnchorY}) win={Position} oy={oyScaled} bub={_balloonWindow.Position} hm={(int)headMargin}");
+                        (int)by);
+                    Console.WriteLine($"[PetWindow] Bubble: anchor=({_balloonAnchorX},{_balloonAnchorY}) win={Position} oy={oyScaled} bub={_balloonWindow.Position} hm={(IsSentinelActive() ? 60 : (int)(ah * (ratio <= 1.8 ? 0.75 : -0.5)))}");
                 }
             }
             var action = _animService.GetCurrentAction();
@@ -729,9 +736,11 @@ public partial class PetWindow : Window
                 if (_anchorMobId == mobId && _anchorActionName != null) return;
                 _anchorActionName = "stand1";
                 _anchorMobId = mobId;
-                var (aw, ah, _, _) = _paperdoll.GetActionBounds("stand1");
+                var (aw, ah, ax, ay) = _paperdoll.GetActionBounds("stand1");
                 _anchorFrameW = aw;
                 _anchorFrameH = ah;
+                _anchorOriginX = ax;
+                _anchorOriginY = ay;
                 Console.WriteLine($"[PetWindow] EnsureBalloonAnchor: 纸娃娃 anchor=stand1 frame={_anchorFrameW}x{_anchorFrameH}");
                 return;
             }
