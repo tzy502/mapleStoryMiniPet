@@ -1,5 +1,5 @@
 # Plan: 纸娃娃模块重新设计（实时合成 + 统一素材选择库 + 完整外观）
-_Locked via grill-with-docs — by Claude + 唐子煜. Terms per CONTEXT.md._
+_Locked via grill-with-docs — by Claude + 胶水. Terms per CONTEXT.md._
 _Rev 1 — Act 2 Codex Round 1 意见 9/9 采纳（F1–F9；其中 F5 修正采纳）。_
 
 ## Goal

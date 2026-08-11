@@ -8,6 +8,7 @@ using MiniPet.Models;
 using MiniPet.Services;
 using MiniPet.Services.Adapters;
 using MiniPet.Views;
+using Avalonia.Themes.Fluent;
 
 namespace MiniPet;
 
@@ -19,6 +20,12 @@ public partial class App : Application
     private AgentStateAggregator? _agentAggregator;
     private EffectLayerService? _effectLayer;
     private readonly List<IAgentStateAdapter> _agentAdapters = new();
+
+    public App()
+    {
+        // App.axaml 已删（纯代码模式），FluentTheme 在这里注册，替代 <Application.Styles>
+        Styles.Add(new FluentTheme());
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {
