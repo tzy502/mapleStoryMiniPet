@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using MiniPet.Models;
 
 namespace MiniPet.Services
@@ -307,31 +308,42 @@ namespace MiniPet.Services
         /// <summary>
         /// 保存地图渲染 PNG 缓存（无 WZ 时背景可离线显示）。key = mapId + crop 组合。
         /// </summary>
-        /// <summary>保存世界地图层级树缓存（预渲染：Java familyMap/mapListCode 逻辑构建的 JSON，启动后台构建）。</summary>
-        public void SaveMapHierarchy(string json)
+        /// <summary>保存世界地图层级树缓存（预渲染：Java familyMap/mapListCode 逻辑构建的 JSON，启动后台构建）。
+        /// M8：文件名带 cacheKey（WZ 路径指纹）——换 WZ 后指纹变化不命中旧缓存；顺带清理无指纹旧格式残留。</summary>
+        public void SaveMapHierarchy(string cacheKey, string json)
         {
             try
             {
                 var dir = Path.Combine(_cacheDir, "mapHierarchy");
                 Directory.CreateDirectory(dir);
-                File.WriteAllText(Path.Combine(dir, "mapHierarchy.json"), json);
+                File.WriteAllText(Path.Combine(dir, $"mapHierarchy_{SanitizeCacheKey(cacheKey)}.json"), json);
+                var legacy = Path.Combine(dir, "mapHierarchy.json");
+                if (File.Exists(legacy)) { try { File.Delete(legacy); } catch { } }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] SaveMapHierarchy: {ex.Message}"); }
         }
 
-        /// <summary>读取世界地图层级树缓存；无缓存/损坏返回 null。</summary>
-        public string? LoadMapHierarchy()
+        /// <summary>读取世界地图层级树缓存；无缓存/损坏返回 null。cacheKey = WZ 路径指纹（M8）。</summary>
+        public string? LoadMapHierarchy(string cacheKey)
         {
             try
             {
-                var p = Path.Combine(_cacheDir, "mapHierarchy", "mapHierarchy.json");
+                var p = Path.Combine(_cacheDir, "mapHierarchy", $"mapHierarchy_{SanitizeCacheKey(cacheKey)}.json");
                 if (!File.Exists(p)) return null;
                 return File.ReadAllText(p);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[CacheManager] LoadMapHierarchy: {ex.Message}"); return null; }
         }
 
-        public void SaveMapPng(string mapId, int cropX, int cropY, int cropW, int cropH, byte[] pngData)
+        private static string SanitizeCacheKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) { return "default"; }
+            var invalid = Path.GetInvalidFileNameChars();
+            var chars = key.Select(c => invalid.Contains(c) ? '_' : c).ToArray();
+            return new string(chars);
+        }
+
+        public void SaveMapPng(string mapId, int cropX, int cropY, int cropW, int cropH, byte[] pngData, int trimWorldX, int trimWorldY)
         {
             if (string.IsNullOrEmpty(mapId) || pngData == null || pngData.Length == 0) return;
             lock (_lock)
@@ -342,6 +354,10 @@ namespace MiniPet.Services
                     var dir = Path.GetDirectoryName(path);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     File.WriteAllBytes(path, pngData);
+                    // M6：持久化裁紧原点（世界坐标）——PNG 是裁紧透明 padding 后的实际图，
+                    // 离线恢复时 EffectiveCrop 必须用裁紧后的原点，否则宠物落地（PlacePetOnMapGround）世界坐标错位。
+                    var metaPath = Path.ChangeExtension(path, ".json");
+                    File.WriteAllText(metaPath, System.Text.Json.JsonSerializer.Serialize(new { WorldX = trimWorldX, WorldY = trimWorldY }));
                 }
                 catch (IOException) { }
             }
@@ -361,6 +377,35 @@ namespace MiniPet.Services
                     return File.Exists(path) ? File.ReadAllBytes(path) : null;
                 }
                 catch (IOException) { return null; }
+            }
+        }
+
+        /// <summary>
+        /// M6：读取 PNG 缓存旁路保存的「裁紧后世界原点」（sidecar .json）；无 sidecar 时返回 false 并回退请求 crop。
+        /// </summary>
+        public bool TryLoadMapPngTrim(string mapId, int cropX, int cropY, int cropW, int cropH, out int worldX, out int worldY)
+        {
+            worldX = cropX; worldY = cropY;
+            if (string.IsNullOrEmpty(mapId)) { return false; }
+            lock (_lock)
+            {
+                try
+                {
+                    var path = GetMapPngPath(mapId, cropX, cropY, cropW, cropH);
+                    var metaPath = Path.ChangeExtension(path, ".json");
+                    if (!File.Exists(metaPath)) { return false; }
+                    var json = File.ReadAllText(metaPath);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("WorldX", out var wx) && root.TryGetProperty("WorldY", out var wy))
+                    {
+                        worldX = wx.GetInt32();
+                        worldY = wy.GetInt32();
+                        return true;
+                    }
+                    return false;
+                }
+                catch { return false; }
             }
         }
 

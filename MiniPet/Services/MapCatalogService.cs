@@ -43,6 +43,9 @@ namespace MiniPet.Services
             {
                 _mapNameCache = null;
                 _mapHierarchy = null;
+                // M8：Reset 全清——原实现漏清 _worldMapTree/_mapStreetInfo，换 WZ 后树选择器/街道信息仍显示旧数据。
+                _worldMapTree = null;
+                _mapStreetInfo = null;
                 _mapCatalogTask = null;
                 _mapCatalogGen = 0;
             }
@@ -317,47 +320,78 @@ namespace MiniPet.Services
         /// 世界地图树（Java familyMap/mapListCode 逻辑）：Map/WorldMap/{key}.img 的 parentMap 建树 +
         /// MapList/mapNo/0 地图归属 + String/WorldMap.img 名称。构建后写本地缓存（mapHierarchy.json），
         /// 下次启动直接读缓存（免实时 WZ 解析，胶水规则 2026-08-08）。
+        /// M16/D2：磁盘缓存读取移入 _mapCatalogLock 内 + 二次检查——原实现锁外读盘 + 锁内构建，
+        /// 双线程可重复读盘/重复构建（各持锁数秒）。
+        /// M8：缓存文件名带 WZ 路径指纹——换 WZ（不同目录/版本）后指纹变化 → 不命中旧缓存，自动重建。
         /// </summary>
         public List<WorldMapTreeNode> GetWorldMapTree()
         {
             var cached = _worldMapTree;
             if (cached != null) return cached;
-            if (_cache != null)
-            {
-                var json = _cache.LoadMapHierarchy();
-                if (!string.IsNullOrEmpty(json))
-                {
-                    try
-                    {
-                        var loaded = System.Text.Json.JsonSerializer.Deserialize<List<WorldMapTreeNode>>(json);
-                        if (loaded != null && loaded.Count > 0)
-                        {
-                            _worldMapTree = loaded;
-                            Console.WriteLine($"[MapCatalogService] 世界地图树从缓存加载: {loaded.Count} 顶级区域");
-                            return loaded;
-                        }
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"[MapCatalogService] 树缓存反序列化失败: {ex.Message}"); }
-                }
-            }
             lock (_mapCatalogLock)
             {
-                if (_worldMapTree != null) return _worldMapTree;
+                // M16/D2：锁内二次检查（首次检查后到加锁期间其他线程可能已构建完成）
+                if (_worldMapTree != null) { return _worldMapTree; }
+                var fp = GetWzCacheFingerprint();
+                if (_cache != null && fp != null)
+                {
+                    var json = _cache.LoadMapHierarchy(fp);
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        try
+                        {
+                            var loaded = System.Text.Json.JsonSerializer.Deserialize<List<WorldMapTreeNode>>(json);
+                            if (loaded != null && loaded.Count > 0)
+                            {
+                                _worldMapTree = loaded;
+                                Console.WriteLine($"[MapCatalogService] 世界地图树从缓存加载: {loaded.Count} 顶级区域 (fp={fp})");
+                                return loaded;
+                            }
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[MapCatalogService] 树缓存反序列化失败: {ex.Message}"); }
+                    }
+                }
                 var built = BuildWorldMapTree();
                 if (built.Count == 0) return built;
                 _worldMapTree = built;
-                if (_cache != null)
+                if (_cache != null && fp != null)
                 {
                     try
                     {
                         var json = System.Text.Json.JsonSerializer.Serialize(built);
-                        _cache.SaveMapHierarchy(json);
+                        _cache.SaveMapHierarchy(fp, json);
                         Console.WriteLine($"[MapCatalogService] 世界地图树构建完成并缓存: {built.Count} 顶级区域");
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[MapCatalogService] 树缓存写入失败: {ex.Message}"); }
                 }
                 return _worldMapTree;
             }
+        }
+
+        /// <summary>
+        /// WZ 指纹：已加载 WZ 文件的路径集合（排序后哈希）——换 WZ 目录/版本 → 指纹变化 → 磁盘缓存失效（M8）。
+        /// 取不到结构时返回 null（调用方跳过磁盘缓存，安全降级为每次重建）。
+        /// </summary>
+        private string? GetWzCacheFingerprint()
+        {
+            try
+            {
+                var root = _wz.WzRoot;
+                if (root == null) { return null; }
+                var entry = root.GetValue<Wz_File>();
+                var structure = entry?.WzStructure;
+                if (structure == null) { return null; }
+                var names = structure.wz_files
+                    .Select(f => { try { return f.FileStream?.Name; } catch { return null; } })
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+                if (names.Count == 0) { return null; }
+                var joined = string.Join("|", names);
+                var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(joined));
+                return Convert.ToHexString(hash).Substring(0, 16);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[MapCatalogService] GetWzCacheFingerprint: {ex.Message}"); return null; }
         }
 
         /// <summary>mapId → "街道|地图名"（树选中节点 → 街道/地图列表）。构建失败返回空字典。</summary>

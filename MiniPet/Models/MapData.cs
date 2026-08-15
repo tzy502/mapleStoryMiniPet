@@ -90,10 +90,13 @@ namespace MiniPet.Models
 
     /// <summary>
     /// 地面/平台线段（foothold）— y1/y2 为平台顶面世界 y
+    /// Layer：foothold 树第一层索引（WZ foothold/{l0}/{l1}/{l2} 的 l0；0=地面层，1+ = 平台/屋顶），
+    /// 供 GetGroundY 按地面层取落地 y（M7）。
     /// </summary>
     public class MapFoothold
     {
         public int Id { get; set; }
+        public int Layer { get; set; }
         public int X1 { get; set; }
         public int Y1 { get; set; }
         public int X2 { get; set; }
