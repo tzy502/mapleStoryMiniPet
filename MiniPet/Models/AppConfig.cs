@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MiniPet.Services;
 
 namespace MiniPet.Models
 {
@@ -64,6 +65,9 @@ namespace MiniPet.Models
         // 通用特效层（Jump 庆祝 / Failed 弹窗）
         public bool EffectEnabled { get; set; }
 
+        // Hermes 接入 profile（默认空=默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析，根尊重 HERMES_HOME）
+        public string? HermesProfile { get; set; }
+
         // Hermes state.db 只读轮询周期（秒）
         public int HermesPollIntervalSeconds { get; set; } = 5;
         // Claude Code 完成态静默窗（秒，append debounce-reset）
@@ -75,6 +79,44 @@ namespace MiniPet.Models
 
         // WZ 庆祝动画节点路径（手填覆盖；null/空 → 自动探测 Effect/、UI/Basic emotion、Item/）
         public string? WzCelebrationNodePath { get; set; }
+
+        // ── Hermes api_server 连接（PLAN Rev3：MiniPet = Hermes 客户端 surface）──
+
+        /// <summary>Hermes gateway/api_server 端口。0 = 自动发现（默认 8642）。</summary>
+        public int HermesPort { get; set; }
+
+        /// <summary>api_server 鉴权 API_SERVER_KEY（Bearer）。= 本地凭证，仅本机。</summary>
+        public string HermesApiServerKey { get; set; } = string.Empty;
+
+        /// <summary>AgentState → 动画反馈映射（用户可在设置页自定义）。null/缺省 → 用默认（见 <see cref="DefaultAgentStateFeedback"/>）。</summary>
+        public Dictionary<AgentState, AgentStateFeedback>? AgentStateFeedback { get; set; }
+
+        /// <summary>默认 7 态映射（对齐原 EffectLayerService switch）。</summary>
+        public static Dictionary<AgentState, AgentStateFeedback> DefaultAgentStateFeedback()
+        {
+            return new Dictionary<AgentState, AgentStateFeedback>
+            {
+                [AgentState.Run] = new AgentStateFeedback { Action = "move" },
+                [AgentState.Review] = new AgentStateFeedback { Balloon = "思考中…" },
+                [AgentState.Wave] = new AgentStateFeedback { Balloon = "做完了 撒花 🎉" },
+                [AgentState.Jump] = new AgentStateFeedback { Balloon = "搞定!" },
+                [AgentState.Failed] = new AgentStateFeedback { Balloon = "出错了…" },
+                [AgentState.Waiting] = new AgentStateFeedback { Balloon = "等你?" },
+                [AgentState.Idle] = new AgentStateFeedback(),
+            };
+        }
+    }
+
+    /// <summary>
+    /// 单个 AgentState 的反馈配置：Action（实体动作名，经 IActionDriver 播放）+ Balloon（气泡文本，可选）。
+    /// </summary>
+    public class AgentStateFeedback
+    {
+        /// <summary>实体动作名（如 "move" / "skill1"）；空 → 不切实体动作。</summary>
+        public string? Action { get; set; }
+
+        /// <summary>气泡文本；空 → 不弹气泡。</summary>
+        public string? Balloon { get; set; }
     }
 
     /// <summary>

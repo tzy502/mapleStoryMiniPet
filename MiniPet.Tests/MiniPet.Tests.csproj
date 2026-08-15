@@ -18,4 +18,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 白盒单测 HermesAdapter internal（MapState / BuildDefaultConnStr） -->
+    <ProjectReference Include="..\MiniPet\MiniPet.csproj" />
+  </ItemGroup>
+
 </Project>

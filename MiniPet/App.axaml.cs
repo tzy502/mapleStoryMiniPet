@@ -90,7 +90,8 @@ public partial class App : Application
                 var ai = LoadAgentIntegration(configService);
                 if (ai.HermesEnabled)
                 {
-                    var hermes = new HermesAdapter(eventBus);
+                    // HermesAdapter 传 ai（HermesProfile 生效；profile 空 = 默认 state.db）。
+                    var hermes = new HermesAdapter(eventBus, ai);
                     _agentAdapters.Add(hermes);
                     hermes.Start();
                 }

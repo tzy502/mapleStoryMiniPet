@@ -91,74 +91,39 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 状态→反馈映射（PLAN §2 表）。每分支独立 try/catch，单态失败不影响其它态。
+        /// 状态→反馈映射（PLAN.md §4：读 AgentIntegrationConfig.AgentStateFeedback 配置，非硬编码 switch）。
+        /// 每态：Action 非空 → PlayAction(fb.Action)；Balloon 非空 → ShowBalloon(fb.Balloon)；都空 → 不反馈。
+        /// Idle 特例：映射 Action 空时 RestoreDefault() 回 stand（Run→Idle 语义，对任何前置态安全）。
+        /// 同态去重（_currentReflect）由 OnReflect 处理。
         /// </summary>
         private void ApplyEffect(AgentState state, AgentState prev)
         {
             try
             {
-                switch (state)
+                var settings = _configService.LoadSettings();
+                var feedbackMap = settings.AgentIntegration?.AgentStateFeedback ?? AgentIntegrationConfig.DefaultAgentStateFeedback();
+                feedbackMap.TryGetValue(state, out var fb);
+
+                // Idle：映射 Action 空 → RestoreDefault() 回 stand（Run→Idle 实体动作回 stand；
+                // RestoreDefault 只切 stand，对任何前置态都安全，OneShot 播完本就回 stand）
+                if (state == AgentState.Idle && prev == AgentState.Run && ActionDriver != null && string.IsNullOrEmpty(fb?.Action))
                 {
-                    case AgentState.Jump:
-                        // TODO(WZ 庆祝动画)：用户确认 WZ 内有现成「庆祝成功」动画。
-                        // 实现时用 WzService 定位候选节点：
-                        //   Effect/、UI/Basic（emotion/符号）、Item/ 等，FindNodeByPath 后 ExtractPng 取帧序列。
-                        // 找不到则降级 UI/Basic emotion + 气泡。当前先用占位：显「搞定!」气泡。
-                        ShowBalloon("搞定!");
-                        break;
+                    ActionDriver.RestoreDefault();
+                }
 
-                    case AgentState.Failed:
-                        // TODO(WZ emoji 弹窗)：复用 UI/Basic 符号（冒汗/晕/流泪）做 emoji 弹窗。
-                        // 路径同 Jump 待确认（UI/Basic/...）。当前先用占位：显「出错了…」气泡。
-                        ShowBalloon("出错了…");
-                        break;
+                // Action 非空 → 切实体动作（Run 默认 "move"：纸娃娃→walk1，Mob→move，NPC→fallback stand）。
+                // 实体差异在 driver 内消化；未注入 ActionDriver 时静默跳过。
+                if (!string.IsNullOrEmpty(fb?.Action))
+                {
+                    ActionDriver?.PlayAction(fb.Action);
+                }
 
-                    case AgentState.Wave:
-                        ShowBalloon("完成");
-                        break;
-
-                    case AgentState.Review:
-                        ShowBalloon("思考中…");
-                        break;
-
-                    case AgentState.Waiting:
-                        // + 问号：当前用文本「等你?」承载；完整问号 emoji 待 UI/Basic 符号落地。
-                        ShowBalloon("等你?");
-                        break;
-
-                    case AgentState.Run:
-                        // Run → 实体切忙碌动作（PLAN §2）+「干活中」气泡。
-                        // 退化兜底（极端：实体只有一个动作）：NPC/Mob 仅 stand 无 move/walk1 时，
-                        //   PlayAction 经 AnimService fallback 链回 stand（动作不变）→ 气泡「干活中」是唯一可视反馈。
-                        //   原则：动作是增强、气泡是兜底，任何情况都至少有气泡反馈（零动画也不丢状态提示）。
-                        // IActionDriver.PlayAction 内部按当前实体类型路由：
-                        //   纸娃娃 → walk1（AnimService 别名 move→walk1）；Mob → move；NPC → move 或 fallback stand。
-                        // 统一传语义动作 "move"，实体差异在 driver 内消化。
-                        // TODO(飞行怪): Mob 仅有 fly 无 move 时应 PlayAction("fly")（AnimService fallback 链待加 move→fly）。
-                        if (ActionDriver != null)
-                        {
-                            ActionDriver.PlayAction("move");
-                        }
-                        else
-                        {
-                            Console.WriteLine("[EffectLayerService] Run → ActionDriver 未注入，实体动作未切");
-                        }
-                        // 气泡兜底：无论实体动作是否切成功，Run 都显一次「干活中」
-                        // （同态去重 _currentReflect，持续期间只触发一次；气泡自带淡出）
-                        ShowBalloon("干活中");
-                        TryDriveBusyExpression();
-                        break;
-
-                    case AgentState.Idle:
-                        // Run→Idle：实体动作回 stand（纸娃娃解析为 stand1，Mob/NPC 回 stand 图条）。
-                        // 仅当上一态是 Run 才需要 RestoreDefault（避免从 Jump/Wave 回 Idle 误切走 say 等表情）
-                        // —— 实际上 RestoreDefault 只切 stand，对任何前置态都安全（OneShot 播完本就回 stand）。
-                        if (ActionDriver != null && prev == AgentState.Run)
-                        {
-                            ActionDriver.RestoreDefault();
-                        }
-                        // 不主动清气泡（BalloonService 自带淡出计时）。
-                        break;
+                // Balloon 非空 → 气泡；都空 → 不反馈
+                // Wave（做完了 撒花 🎉）显示 5s 后自动关闭；其余状态气泡常驻等替换。
+                if (!string.IsNullOrEmpty(fb?.Balloon))
+                {
+                    int? durationMs = state == AgentState.Wave ? 5000 : (int?)null;
+                    ShowBalloon(fb.Balloon, durationMs);
                 }
             }
             catch (Exception ex)
@@ -172,7 +137,7 @@ namespace MiniPet.Services
         /// balloonId 取用户配置，缺省回退 "560"（与 PetWindow.ShowBalloonNow 一致）。
         /// BalloonService.Show 内部后台渲染 → OnBalloonReady 回调由上层（PetWindow）在 UI 线程显示。
         /// </summary>
-        private void ShowBalloon(string text)
+        private void ShowBalloon(string text, int? durationMs = null)
         {
             try
             {
@@ -189,7 +154,7 @@ namespace MiniPet.Services
                     return;
                 }
                 // fire-and-forget：Show 内部已切后台线程渲染，OnBalloonReady 回调到 UI 线程
-                _ = _balloonService.Show(text, data);
+                _ = _balloonService.Show(text, data, durationMs);
             }
             catch (Exception ex)
             {

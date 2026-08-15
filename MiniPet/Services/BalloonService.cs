@@ -20,7 +20,7 @@ namespace MiniPet.Services
         private readonly HashSet<string> _seeding = new();
 
         /// <summary>气泡渲染完成回调：(text, data, pngBytes) — 由上层在 UI 线程显示</summary>
-        public event Action<string, BalloonData, byte[]>? OnBalloonReady;
+        public event Action<string, BalloonData, byte[], int?>? OnBalloonReady;
 
         public BalloonService(CacheManager cache, WzService wz)
         {
@@ -325,7 +325,7 @@ namespace MiniPet.Services
                 }, token);
 
                 if (rendered != null)
-                    OnBalloonReady?.Invoke(text, data, rendered);
+                    OnBalloonReady?.Invoke(text, data, rendered, durationMs);
             }
             catch (TaskCanceledException) { }
             catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Show: {ex.Message}"); }

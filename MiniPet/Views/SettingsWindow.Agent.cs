@@ -1,10 +1,14 @@
 using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using MiniPet.Models;
+using MiniPet.Services;
+using MiniPet.Services.Adapters;
 
 namespace MiniPet.Views;
 
@@ -25,6 +29,12 @@ public partial class SettingsWindow
     private NumericUpDown? _agentJumpDisplay;
     private NumericUpDown? _agentStaleness;
     private TextBox? _agentWzNodeInput;
+    private TextBox? _agentHermesProfileInput;
+    private TextBlock? _agentHermesStatusText;
+    private NumericUpDown? _agentHermesPort;
+    private TextBox? _agentHermesApiKey;
+    private readonly Dictionary<AgentState, TextBox> _agentStateActionInputs = new();
+    private readonly Dictionary<AgentState, TextBox> _agentStateBalloonInputs = new();
 
     private Border BuildAgentTab()
     {
@@ -72,8 +82,8 @@ public partial class SettingsWindow
             root.Children.Add(BuildAgentSectionHeader("Adapter 开关"));
             var switchPanel = new StackPanel { Spacing = 8 };
             _agentHermesCheck = MakeAgentToggle("Hermes（state.db 只读轮询）", ai.HermesEnabled);
-            _agentCCCheck = MakeAgentToggle("Claude Code（FSW + 静默推断）", ai.CCEnabled);
-            _agentCodexCheck = MakeAgentToggle("Codex（task_complete 精确事件）", ai.CodexEnabled);
+            _agentCCCheck = MakeAgentToggle("Claude Code（开发中）", ai.CCEnabled);
+            _agentCodexCheck = MakeAgentToggle("Codex（开发中）", ai.CodexEnabled);
             _agentEffectCheck = MakeAgentToggle("通用特效层（Jump 庆祝 / Failed 弹窗）", ai.EffectEnabled);
             switchPanel.Children.Add(_agentHermesCheck);
             switchPanel.Children.Add(_agentCCCheck);
@@ -105,6 +115,110 @@ public partial class SettingsWindow
             threshGrid.Children.Add(c2);
             threshGrid.Children.Add(c3);
             root.Children.Add(threshGrid);
+
+            // ── Hermes 连接（api_server） ──
+            root.Children.Add(BuildAgentSectionHeader("Hermes 连接（api_server）"));
+            var connPanel = new StackPanel { Spacing = 10 };
+            _agentHermesPort = new NumericUpDown();
+            connPanel.Children.Add(MakeAgentNumericBox("端口（0 = 自动发现，默认 8642）", ai.HermesPort, 0, 65535, _agentHermesPort));
+            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            keyWrap.Children.Add(new TextBlock { Text = "API Server Key（api_server Bearer 本地凭证，仅本机勿备份同步）", FontSize = 10, Foreground = BrushTxtDim });
+            _agentHermesApiKey = new TextBox
+            {
+                Watermark = "Hermes config.yaml 的 api_server key",
+                FontSize = 12,
+                Text = ai.HermesApiServerKey ?? string.Empty,
+                Background = BrushInputBg,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+                Width = 320,
+            };
+            keyWrap.Children.Add(_agentHermesApiKey);
+            connPanel.Children.Add(keyWrap);
+            root.Children.Add(connPanel);
+
+            // ── Hermes Profile（profile 名 + 同步状态显示） ──
+            root.Children.Add(BuildAgentSectionHeader("Hermes Profile"));
+            var profileRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            _agentHermesProfileInput = new TextBox
+            {
+                Watermark = "默认空 = 默认 profile",
+                FontSize = 12,
+                Text = ai.HermesProfile ?? string.Empty,
+                Background = BrushInputBg,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+                Width = 240,
+            };
+            _agentHermesStatusText = new TextBlock
+            {
+                Text = "⚪ 未同步",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            profileRow.Children.Add(_agentHermesProfileInput);
+            profileRow.Children.Add(_agentHermesStatusText);
+            root.Children.Add(profileRow);
+
+            // 挂 HermesAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
+            if (HermesAdapter.Current is { } hermesAdapter)
+            {
+                hermesAdapter.ConnStatusCallback += UpdateHermesConnStatus;
+            }
+            root.Children.Add(new TextBlock
+            {
+                Text = "默认空 = 默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析（根尊重 HERMES_HOME）。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // ── 7 态映射配置区 ──
+            root.Children.Add(BuildAgentSectionHeader("7 态 状态→反馈 映射"));
+            root.Children.Add(new TextBlock
+            {
+                Text = "每态可配 Action（实体动作名，空=不切动作）+ Balloon（气泡文本，空=不弹）。默认对齐原 EffectLayerService。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            var feedbackMap = ai.AgentStateFeedback ?? AgentIntegrationConfig.DefaultAgentStateFeedback();
+            foreach (var st in new[] { AgentState.Run, AgentState.Review, AgentState.Wave, AgentState.Jump, AgentState.Failed, AgentState.Waiting, AgentState.Idle })
+            {
+                feedbackMap.TryGetValue(st, out var fb);
+                var actionTb = MakeAgentStateTextBox("动作名，空=不切", fb?.Action ?? string.Empty);
+                var balloonTb = MakeAgentStateTextBox("气泡文本，空=不弹", fb?.Balloon ?? string.Empty);
+                _agentStateActionInputs[st] = actionTb;
+                _agentStateBalloonInputs[st] = balloonTb;
+
+                var row = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                };
+                row.Children.Add(new TextBlock
+                {
+                    Text = StateDisplayName(st),
+                    FontSize = 12,
+                    Width = 110,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = BrushTxtPrimary,
+                });
+                row.Children.Add(actionTb);
+                row.Children.Add(balloonTb);
+                root.Children.Add(row);
+            }
 
             // ── WZ 庆祝节点路径 ──
             root.Children.Add(BuildAgentSectionHeader("WZ 庆祝节点路径（可选）"));
@@ -193,6 +307,39 @@ public partial class SettingsWindow
         return wrap;
     }
 
+    /// <summary>构造一个 7 态映射用的输入框（Action / Balloon 共用）。</summary>
+    private static TextBox MakeAgentStateTextBox(string watermark, string text)
+    {
+        return new TextBox
+        {
+            Watermark = watermark,
+            FontSize = 12,
+            Text = text,
+            Background = BrushInputBg,
+            BorderBrush = new SolidColorBrush(InputBorder),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
+            Width = 220,
+        };
+    }
+
+    /// <summary>AgentState 显示名（英文枚举 + 中文说明）。</summary>
+    private static string StateDisplayName(AgentState state)
+    {
+        switch (state)
+        {
+            case AgentState.Run: return "Run 干活";
+            case AgentState.Review: return "Review 思考";
+            case AgentState.Wave: return "Wave 完成";
+            case AgentState.Jump: return "Jump 庆祝";
+            case AgentState.Failed: return "Failed 失败";
+            case AgentState.Waiting: return "Waiting 等待";
+            case AgentState.Idle: return "Idle 空闲";
+            default: return state.ToString();
+        }
+    }
+
     private void SaveAgentIntegration()
     {
         try
@@ -211,10 +358,54 @@ public partial class SettingsWindow
                 var p = _agentWzNodeInput.Text?.Trim();
                 ai.WzCelebrationNodePath = string.IsNullOrEmpty(p) ? null : p;
             }
+            if (_agentHermesProfileInput != null)
+            {
+                var p = _agentHermesProfileInput.Text?.Trim();
+                ai.HermesProfile = string.IsNullOrEmpty(p) ? null : p;
+            }
+            if (_agentHermesPort != null && _agentHermesPort.Value.HasValue)
+            {
+                ai.HermesPort = (int)Math.Max(0, _agentHermesPort.Value.Value);
+            }
+            if (_agentHermesApiKey != null)
+            {
+                var k = _agentHermesApiKey.Text?.Trim();
+                ai.HermesApiServerKey = k ?? string.Empty;
+            }
+            // 7 态映射：读现有 AgentStateFeedback 或默认，改后存回
+            var map = ai.AgentStateFeedback ?? AgentIntegrationConfig.DefaultAgentStateFeedback();
+            foreach (var kv in _agentStateActionInputs)
+            {
+                var st = kv.Key;
+                var actionText = kv.Value.Text?.Trim();
+                var balloonText = _agentStateBalloonInputs.TryGetValue(st, out var balloonTb) ? balloonTb.Text?.Trim() : null;
+                if (!map.TryGetValue(st, out var fb))
+                {
+                    fb = new AgentStateFeedback();
+                    map[st] = fb;
+                }
+                fb.Action = string.IsNullOrEmpty(actionText) ? null : actionText;
+                fb.Balloon = string.IsNullOrEmpty(balloonText) ? null : balloonText;
+            }
+            ai.AgentStateFeedback = map;
             _settings.AgentIntegration = ai;
             _config.SaveSettings(_settings);
             if (_statusBarText != null) { _statusBarText.Text = "Agent 接入设置已保存"; }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SaveAgentIntegration: {ex.Message}"); }
+    }
+
+    /// <summary>更新 Hermes 同步状态显示（HermesAdapter 回调）。UI 线程安全。</summary>
+    public void UpdateHermesConnStatus(string text, bool connected)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => UpdateHermesConnStatus(text, connected));
+            return;
+        }
+        if (_agentHermesStatusText != null)
+        {
+            _agentHermesStatusText.Text = (connected ? "🟢 " : "🔴 ") + text;
+        }
     }
 }

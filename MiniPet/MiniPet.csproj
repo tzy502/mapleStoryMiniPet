@@ -29,6 +29,14 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 项目文档随编译产物分发：MiniPet/docs/** 复制到输出目录 -->
+    <Content Include="docs/**/*.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>docs/%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
   <Target Name="RemoveDuplicateAssemblyInfo" BeforeTargets="CoreCompile">
     <ItemGroup>
       <Compile Remove="obj/**/*AssemblyInfo.cs" />

@@ -30,8 +30,9 @@ public partial class BalloonControl : UserControl
 
     /// <summary>
     /// 显示气泡（常驻：淡入 0.2s 后保持显示，不自动隐藏；新气泡到来时替换内容）。
+    /// autoHideAfter 非空 → 显示该时长后自动淡出隐藏（用于「做完了 撒花 🎉」等一次性状态气泡）。
     /// </summary>
-    public async Task ShowBalloon(string text, BalloonData balloonData, Bitmap? renderedBitmap = null)
+    public async Task ShowBalloon(string text, BalloonData balloonData, Bitmap? renderedBitmap = null, TimeSpan? autoHideAfter = null)
     {
         try
         {
@@ -66,6 +67,23 @@ public partial class BalloonControl : UserControl
 
             // 淡入 0.2s，然后常驻（不自动隐藏，等待下一条替换）
             await FadeTo(1, TimeSpan.FromSeconds(0.2), cts.Token);
+
+            // 一次性气泡：autoHideAfter 非空 → 到期自动淡出隐藏
+            if (autoHideAfter.HasValue)
+            {
+                _autoHideCts?.Cancel();
+                _autoHideCts = new CancellationTokenSource();
+                var hideCts = _autoHideCts;
+                try
+                {
+                    await Task.Delay(autoHideAfter.Value, hideCts.Token);
+                    if (!hideCts.Token.IsCancellationRequested)
+                    {
+                        await HideBalloon();
+                    }
+                }
+                catch (TaskCanceledException) { }
+            }
         }
         catch (Exception ex)
         {

@@ -35,6 +35,7 @@ public partial class PetWindow : Window
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
     private readonly Random _rng = new();
+    private AgentState _agentReflect = AgentState.Idle;   // 最近一次 Agent 反映态（PetReflectStateChanged 订阅，随机气泡仅在 Idle 触发）
     private int _paperdollGen;
     private int _petSwitchGen;
     private PixelPoint _lastDiagPos;
@@ -393,12 +394,22 @@ public partial class PetWindow : Window
     {
         try
         {
-            // debug：固定 10s 间隔触发（气泡常驻，每次触发替换文本）
-            _balloonTimer.Interval = TimeSpan.FromSeconds(10);
+            // 随机气泡（2026-08-15 恢复）：仅 Agent 空闲（Idle）时触发，随机 3~8s 间隔；
+            // Agent 执行任务时（Run/Review/Wave 等）状态气泡优先，不打扰。
             _balloonTimer.Tick += (_, _) => TryShowRandomBalloon();
             _balloonTimer.Start();
+            ScheduleRandomBalloon();
 
-            _balloonService.OnBalloonReady += (text, data, png) =>
+            // Agent 反映态订阅：非 Idle 时抑制随机气泡（状态气泡为主）
+            _eventBus.Subscribe(EventType.PetReflectStateChanged, data =>
+            {
+                if (data is AgentState s)
+                {
+                    _agentReflect = s;
+                }
+            });
+
+            _balloonService.OnBalloonReady += (text, data, png, durationMs) =>
             {
                 Dispatcher.UIThread.Post(async () =>
                 {
@@ -407,7 +418,8 @@ public partial class PetWindow : Window
                         if (png == null) return;
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
-                        await _balloonWindow.BalloonControl.ShowBalloon(text, data, bmp);
+                        TimeSpan? autoHide = durationMs.HasValue ? TimeSpan.FromMilliseconds(durationMs.Value) : null;
+                        await _balloonWindow.BalloonControl.ShowBalloon(text, data, bmp, autoHide);
                         _balloonWindow.Width = bmp.PixelSize.Width;
                         _balloonWindow.Height = bmp.PixelSize.Height;
                         // 锚点基准 = 当前角色锚点（拖拽结束会更新）
@@ -427,7 +439,13 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonTimer.Interval = TimeSpan.FromSeconds(10);
+            // Agent 非空闲（干活中）：状态气泡优先，不发随机气泡。
+            if (_agentReflect != AgentState.Idle)
+            {
+                ScheduleRandomBalloon();
+                return;
+            }
+
             // 常驻模式：不限制动画动作，每次定时器触发都换气泡文本
             var balloonId = _configService.LoadSettings().BalloonId;
             if (string.IsNullOrEmpty(balloonId)) balloonId = "560";
@@ -439,6 +457,22 @@ public partial class PetWindow : Window
             await _balloonService.Show(line, data);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
+        finally
+        {
+            ScheduleRandomBalloon();
+        }
+    }
+
+    /// <summary>调度下一次随机气泡：随机 3~8 秒后触发（Agent 空闲时）。</summary>
+    private void ScheduleRandomBalloon()
+    {
+        try
+        {
+            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(3, 9));
+            _balloonTimer.Stop();
+            _balloonTimer.Start();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ScheduleRandomBalloon: {ex.Message}"); }
     }
 
     public async Task ShowBalloonNow(string text)

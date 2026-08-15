@@ -459,14 +459,14 @@ namespace MiniPet.Services.Adapters
             for (int i = 0; i < entries.Count; i++)
             {
                 var el = entries[i];
-                var role = TryGetString(el, "role");
-                var isError = TryGetBool(el, "is_error");
+                // CC 行结构：顶层 { type, message:{ role, content:[ blocks ] } }。
+                // role 在 message.role（回退顶层 type）；is_error 在 message.content[] 的 tool_result block。
+                var role = GetRole(el);
 
-                // content 可能是数组（content blocks）或字符串。
                 if (role == "user")
                 {
                     // user 行通常含 tool_result
-                    if (isError == true) { anyError = true; }
+                    if (UserHasError(el)) { anyError = true; }
                     lastToolUseId = null; // 配平
                     tailIsToolUse = false;
                     tailIsUser = true;
@@ -525,7 +525,8 @@ namespace MiniPet.Services.Adapters
 
         private static (bool hasToolUse, bool isReadLike) InspectAssistantContent(JsonElement el)
         {
-            if (!el.TryGetProperty("content", out var content)) { return (false, false); }
+            // content 在 message.content（非顶层）
+            if (!TryGetMessageContent(el, out var content)) { return (false, false); }
 
             bool hasToolUse = false;
             bool isReadLike = false;
@@ -558,8 +559,8 @@ namespace MiniPet.Services.Adapters
 
         private static bool LastUserIsAwaiting(JsonElement userEl)
         {
-            // 末尾 user 行：若 content 不含 tool_result block（如纯文本 awaiting input）→ Waiting
-            if (!userEl.TryGetProperty("content", out var content)) { return true; }
+            // 末尾 user 行：若 message.content 不含 tool_result block（如纯文本 awaiting input）→ Waiting
+            if (!TryGetMessageContent(userEl, out var content)) { return true; }
 
             if (content.ValueKind == JsonValueKind.String) { return true; }
 
@@ -585,6 +586,49 @@ namespace MiniPet.Services.Adapters
                     or "search" or "find" => true,
                 _ => false
             };
+        }
+
+        // CC jsonl 行结构：顶层 { type, message:{ role, content:[ blocks ] } }。
+        // role / is_error / content / name 均在 message 子对象内，不在顶层。
+        private static bool TryGetMessage(JsonElement el, out JsonElement message)
+        {
+            message = default;
+            return el.ValueKind == JsonValueKind.Object
+                && el.TryGetProperty("message", out message)
+                && message.ValueKind == JsonValueKind.Object;
+        }
+
+        // role：优先 message.role，回退顶层 type（user/assistant）。
+        private static string? GetRole(JsonElement el)
+        {
+            if (TryGetMessage(el, out var msg))
+            {
+                var r = TryGetString(msg, "role");
+                if (!string.IsNullOrEmpty(r)) { return r; }
+            }
+            return TryGetString(el, "type");
+        }
+
+        // message.content（数组或字符串）。
+        private static bool TryGetMessageContent(JsonElement el, out JsonElement content)
+        {
+            content = default;
+            return TryGetMessage(el, out var msg) && msg.TryGetProperty("content", out content);
+        }
+
+        // user 行：遍历 message.content[] 找 tool_result block 的 is_error。
+        private static bool UserHasError(JsonElement el)
+        {
+            if (!TryGetMessageContent(el, out var content)) { return false; }
+            if (content.ValueKind != JsonValueKind.Array) { return false; }
+            foreach (var block in content.EnumerateArray())
+            {
+                if (TryGetString(block, "type") == "tool_result")
+                {
+                    if (TryGetBool(block, "is_error") == true) { return true; }
+                }
+            }
+            return false;
         }
 
         private static string? TryGetString(JsonElement el, string name)

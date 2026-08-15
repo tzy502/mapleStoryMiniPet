@@ -1,5 +1,150 @@
 # Plan Review Log
 
+## Iteration 5 — Hermes 客户端 surface（api_server SSE 发起式，桌宠即入口）
+Act 1 (grill-with-docs) complete — plan locked，ADR-0006 改名 `0006-hermes-api-server-client-surface.md`。基于 `claude-prompt-20260810-05.md`（04 作废）。MAX_ROUNDS=5。
+
+Act 1 决策轨迹（7 项）：
+1. **MiniPet = Hermes 客户端 surface（发起者）**，非旁观者。用户拍板「跟官方桌宠一样走」：要 session 归属→要 session→要当发起者→**api_server（8642）是官方唯一外部通道**（Open WebUI 同款）。闭环。
+2. **数据通道 = api_server SSE**：`POST /api/sessions` 建自己的 session + `POST /api/sessions/{id}/chat/stream` 发起内容收 SSE。事件按发起者路由，自己的 session 天然收得到（Codex R1 F3 证明 WS 无被动订阅，发起式是正解）。
+3. **SSE 事件集核实**（api_server.py）：`run.started / message.started / tool.progress(_thinking=reasoning) / tool.started / tool.completed / tool.failed / assistant.completed / run.completed / error / done`。Review 可用 `tool.progress(_thinking)` 映射；**Jump/Waiting 无 SSE 信号**。
+4. **MiniPet 变迷你聊天客户端**：点桌宠弹迷你对话框（输入 + 回复显示），发送 → SSE 驱动动画 + 回复滚动。
+5. **会话复用**：创建一次 session 多次 chat/stream（连续上下文）。
+6. **state.db 兜底保留**：api_server 不可达时回退上轮 SQLite 启发式（含 14 白盒测试）。
+7. **AgentState→动画映射配置化**：7 态用户自选动画（设置页），Jump/Waiting 用配置的其他动作实现（SSE 无信号）。
+
+运维前提（接受）：config.yaml 启用 `platforms.api_server` + 设 `API_SERVER_KEY` + 重启 Hermes（本机 8642 未监听）。
+
+## Round 1 — Codex（thread=019ffab1-7255-7430-a2d5-48242118773e，model=glm-5.2 via cc-switch）
+VERDICT: **REVISE** — 11 findings（全部源码级核实 api_server.py），Claude 全采纳：
+1. **假取消路径**：`chat/stream` 的 `run_id` 不注册到 `_active_run_agents/_active_run_tasks` → `POST /v1/runs/{run_id}/stop` 404。→ 取消 = HTTP 请求中止（CancellationToken），删 stop 声称。
+2. **SSE 解析**：`_sse_frame` 事件名在 `event:`、payload 在 `data:`——只读 `data:` 丢事件类型。→ 同时解析两字段。
+3. **`assistant.delta` 缺失**：真实流对全部 assistant 文本 emit；只显示 completed 丢中间文本。→ 累积 delta + 对账 `run.completed.messages`。
+4. **Session 409**：`POST /api/sessions` 对已存在 id 返回 409。→ 建一次，409/存在即复用。
+5. **`effective_session_id` 轮转**：压缩时事件返回新 session_id，用旧 id resume 到 stale parent 重触发压缩。→ 持久化事件里的 session_id 变化。
+6. **multiplex**：`multiplex_profiles` 次 profile 走 `/p/{profile}/` + profile-scoped key。→ 非空 profile 用 `/p/{profile}` base + 该 profile key。
+7. **长回合衰减 Idle**：Aggregator StalenessSeconds 清 Run/Review/Failed，但 SSE 回合可静默（30s keepalive）。→ SSE 流活跃期间抑制 staleness 或心跳。
+8. **并发发送**：active turn 时再 POST 同 session 竞态历史写+动画。→ 发送禁用直到 done/error。
+9. **明文 API key 安全回归**：settings.json 可被同步/备份/本地进程读。→ macOS Keychain/Windows Credential Manager 存，settings 存引用。
+10. **设置变更不生效**：adapter 启动一次构造，SaveSettings 不重配。→ OnSettingsChanged 重启或文档要求重启。
+11. **`run.started` 映射遗漏**：POST 接受与 message.started 之间可落 Idle。→ map run.started→Run（首个 busy）。
+
+### Claude's response（Round 1 → Rev 2）
+11/11 采纳（final arbiter），修订 PLAN.md（Rev 2）+ ADR 已更新：SSE 解析 event:+data:、取消=HTTP 中止、assistant.delta 累积、409 复用、effective_session_id 轮转、/p/{profile}、长回合防 Idle、并发发送保护、Keychain 存 key（不可行则明文+文档标注）、设置保存提示重启、run.started→Run。
+
+## Round 2 — Codex（resume 同 thread，model=glm-5.2）
+VERDICT: **REVISE** — 4 findings（实现细节），Claude 全采纳：
+1. **HTTP abort 不可靠取消**：`_run_agent` 在 executor 跑、无 agent_ref 中断支持 → abort 可能留 turn 继续跑。→ 文档诚实标注"取消为尽力而为"。
+2. **delta + completed 重复**：累积 delta 又显示 completed.content 会重复（completed 是权威终稿）。→ delta 实时渲染 + 完成时用 completed 内容**替换** buffer。
+3. **staleness 抑制需 finally 重置**：SSE error/abort/timeout 时抑制 flag 若没清，宠物钉 Run/Review。→ finally 清 flag。
+4. **delta 需按 message_id 作用域**：多轮回放/乱序流污染。→ delta buffer 按事件 message_id 键控 + message.started 重置。
+
+### Claude's response（Round 2 → Rev 3）
+4/4 采纳，修订 PLAN.md（Rev 3）：取消诚实标注尽力而为、回复显示 delta 实时+completed 替换防重复、staleness 抑制 flag finally 清、delta buffer 按 message_id 键控。
+
+## Round 3 — Codex（resume 同 thread，model=glm-5.2）
+VERDICT: **APPROVED** — Rev 3 覆盖 Round-2 全部发现，无新阻断缺陷。残留意（纳入实现）：HTTP-abort 可能留 executor 继续跑，UI 须等上个 run 确认停止才允许新 turn（否则并发保护可绕过）。
+
+**Resolution (converged)** — 两 act 完成，plan 锁定（PLAN.md Rev 3），有效审查 3 轮（R1 REVISE×11、R2 REVISE×4、R3 APPROVED）。等待用户实现方式裁决。
+
+---
+
+## Iteration 4 — Hermes gateway 事件流接入（WS surface，全 7 态 + 显式降级链）
+Act 1 (grill-with-docs) complete — plan locked，新增 [ADR-0006](docs/adr/0006-hermes-gateway-event-subscription.md)，CONTEXT.md 增「Agent 状态 (AgentState)」术语。MAX_ROUNDS=5。基于 `claude-prompt-20260810-04.md`。
+
+Act 1 决策轨迹（9 项，均经源码核实）：
+1. **砍远程（A）** — Hermes 非 loopback 强制 OAuth gate（`?token=` 无条件拒、`--insecure` 已失效于 MCP-persistence 安全修复），第三方 WS 远程直连被设计阻断；远程走 `ssh -L` 隧道，MiniPet 锁 127.0.0.1。删 `HermesHost`。
+2. **token 本地必需** — grill 初判"loopback 免 auth"**错**（只看 HTTP `gated_auth_middleware` 层，漏 WS `_ws_auth_reason` 层）；用户纠正 + 源码核实：loopback WS 也强制 `?token=<_SESSION_TOKEN>`，无 token → `no_credential`。来源 `os.environ.get("HERMES_DASHBOARD_SESSION_TOKEN") or secrets.token_urlsafe(32)`（`web_server.py:346`）→ 不设 env 每次重启随机，MiniPet 失联。
+3. **WS 值得做** — 全 7 态（hit/mouse/say）是核心卖点，state.db 3 态撑不起；不为省 token 运维放弃。
+4. **显式降级 + 测试连接** — token 失败红字「仅 SQLite 3 态」绝不静默（避免上一轮 CC adapter「管道对、末端哑」翻版）+ 设置页「测试连接」按钮主动可见实际链路。
+5. **REST token 合并** — 删 `HermesRestToken`（= `HermesToken`，同一 `_SESSION_TOKEN`；REST 用 `Bearer`、WS 用 `?token=`）。
+6. **WS 映射补 turn.\*** — `turn.end`→Wave / `turn.error`→Failed / `turn.start`→Run（回合级，比 `message.*` 准；镜像 `derive_pet_state` 优先级）。
+7. **探活端点修正** — `/api/sessions`（需 token，plan 原不带 = 401）→ `/api/health`（`PUBLIC_API_PATHS` 免 token，专为 liveness）。
+8. **profile 显式化** — plan/现有 state.db 版隐含"默认 profile"，实测本机 3 serve 并存（默认/work-java/desktop-pet）+ 各自 state.db/端口；加 `HermesProfile`，state.db 路径 + 端口按 profile 解析，端口手填优先 + 自动发现仅端口=0 fallback 且按 `--profile` 名过滤。
+9. **ADR-0006 + CONTEXT** — 推翻刚验证 OK 的 state.db 改 WS surface 符合 ADR 三标准；CONTEXT 补 AgentState 域术语。
+
+## Round 1 — Codex（thread=019ffa4a-f43d-7162-94f8-8f103f0f51f9，model=glm-5.2）
+VERDICT: **REVISE** — 6 findings（Codex 读了 Hermes 源码 + MiniPet 现有 adapter，逐条验证 plan 事实基线）：
+- **F1（致命）**：`turn.start/turn.end/turn.error` 是 **compute-host 内部帧，不是 WS 客户端事件**。WS client 真实收到的事件集 = `approval.request / clarify.request / secret.request / sudo.request / error / message.start / message.delta / message.complete / message.interim / reasoning.available / reasoning.delta / thinking.delta / tool.start / tool.complete / tool.generating / tool.progress / status.update / browser.progress / subagent.*`（`gateway-events.ts` 权威集）。`server.py:1739` 把 compute-host `turn.error` 转成 `message.complete(status=error)` 发给客户端。→ **plan §2d 的 turn.\* 映射是错的，回退 message.\* + 内容判定**。
+- **F2（重要）**：`message.complete` → `celebrate: true`（JUMP 闪现），非 Wave；`message.complete(status=error)` → Failed。官方 desktop（`pet.ts`/`gateway-events.ts`）：`celebrate/justCompleted/error` 是**瞬时闪现拍（1.6s 衰减 timer）**，`toolRunning/reasoning/awaitingInput/busy` 才是稳态 flag。→ **plan 无 JUMP 事件，补 celebrate 触发（todos 全完成），Wave/Failed 按闪现拍语义**。
+- **F3（致命）**：`/api/ws` 是 JSON-RPC，事件按 **sid 路由**（`write_json` 只发给该 session 绑定的 transport）；**无被动订阅 RPC**（无 `session.subscribe`），只有 `session.resume(sid)`（副作用：重挂 detached WS / 取消孤儿回收）。→ **plan 的"连上被动听"架构不成立**；除非 resume 拿会话（= 半参与，违背被动观察）。实测：无 token 裸连 62986 `/api/ws` → **HTTP 403**（鉴权层拒）。
+- **F4（高）**：REST `/api/sessions` 的 `is_active = ended_at IS NULL AND now-last_active<300` → **REST 也只能 Run/Idle**，给不了 Waiting/Failed/Review/Wave/Jump。→ plan 把 WS→REST→SQLite 当"优雅降级"，实际 REST 与 SQLite 同级（2-3 态）。
+- **F5（中）**：`message.complete` / resolving `tool.complete` 才 `clearAllPrompts` 清 `awaitingInput`（Waiting）。→ plan Waiting 映射无清除语义。
+- **F6（低）**：serve/dashboard 默认端口 **9119**（`subcommands/dashboard.py:27`），plan/ADR 用 8642 当默认是任意值（作文档示例可，需注明默认 9119）。
+
+### Claude's response（Round 1 → 修订）
+F1/F2/F3 为阻断性发现，改 plan 事实基线（§0）+ 映射（§2d）：删除 turn.\* 映射，改用 client-facing 事件集；补 `message.complete`→celebrate/JUMP + `status=error`→Failed 闪现语义；明确"无被动订阅"——WS 裸连只能收 global broadcast，agent turn 事件需绑定会话（方向待用户裁决，见下）。F4→REST 回退降级说明改为"与 SQLite 同级 2-3 态"。F5→Waiting 由 message.complete/tool.complete 清除。F6→文档默认端口改 9119。
+
+**用户裁决（B 方向，采纳）**：放弃 WS `/api/ws` 主线，回 state.db 扩展。理由：事件按 session id 路由、MiniPet 观察者无 session 归属、裸连收不到 agent 事件；C 缩为广播无意义、A resume 干扰 Hermes surface 管理。裁决细节（全部纳入 Rev 2）：
+- 去 WS（不连 /api/ws）；监控链 = state.db 查询（保留 QuerySnapshot/MapState/PollOnce，仅本地）+ REST /api/sessions 轮询补充（近期活跃→Run、刚结束→Wave，失败静默跳过）；两路都经现有 PublishState → AgentStateAggregator，不改接口。
+- 7 态走 state.db 启发式：新增 HermesProfile（默认空=默认 profile，state.db 路径按 ~/.hermes/[profiles/<p>/]state.db）；messages 表 role='assistant' 最近 N 条内容无关启发——tool_calls 非空且无完成→Run、reasoning_content 非空→Review、最近 finish_reason='error'→Failed、last_activity_at 近 10s 无 tool→Review（Waiting 降级 Review）；只取列名/计数，绝不 SELECT content。
+- 配置修正：删 HermesToken（?token= 作废）、删 HermesMode 的 ws 分支；保留 HermesPort（手填优先，0=自动发现）、HermesRestPollSeconds；新增 HermesApiServerKey（API_SERVER_KEY，明文=本地凭证）。
+- 设置页：Hermes 区改「端口 + profile + API Key + REST 轮询周期 + staleness」，删 WS 连接状态，改「最近同步时间 + 当前链路(state.db/rest)」。
+- HERMES_INTEGRATION.md：api_server REST（8642 + API_SERVER_KEY）与 state.db 被动监控；未来内容发起走 POST /api/sessions/{id}/chat/stream（SSE）——**标注未证实（源码未找到）**。
+
+### Claude's response（裁决 → Rev 2）
+全采纳，修订 PLAN.md（Rev 2）+ ADR-0006（改名 `0006-hermes-state-monitoring-7state.md`，WS 方向废弃、state.db 启发式 + REST 补充）。
+**裁决后事实核实**：①messages 表 schema 实测含 role/tool_calls/tool_name/finish_reason/reasoning_content/reasoning_details/codex_reasoning_items——启发式列全真实存在；②api_server 平台 + API_SERVER_KEY + 默认端口 8642（config_defaults.py:4361/4370）核实；③`POST /api/sessions/{id}/chat/stream` SSE 端点 **web_server.py 宽查无命中 → 未证实**，HERMES_INTEGRATION.md 标注"实现前须核实"。
+
+## Round 2 — Codex（resume `019ffa4a`，model=glm-5.2）
+VERDICT: **REVISE** — 11 findings（F1–F11），全部源码核实：
+- **F1**：`hermes serve --port 8642` 起的是 **dashboard**（/api/sessions 要 `Bearer _SESSION_TOKEN` 非 API_SERVER_KEY）；api_server 是独立 gateway 平台（`gateway/platforms/api_server.py`，`hermes gateway start` 启动）→ **plan REST 目标服务器错**。
+- **F2**：api_server `/api/sessions` 返回 `last_active/ended_at`（`_session_response` api_server.py:3280-3287），**无 `is_active`**（那是 dashboard router 加的）。
+- **F3（致命）**：`finish_reason='error'` **从不出现**——源码只赋 stop/tool_calls/incomplete/content_filter/length/verification_required（conversation_loop.py:3074-3101）；**DB 实测零 error**（tool_calls 3843/stop 967/verification_required 22/length 2）→ **Failed 启发式是死的**。
+- **F4**：SSE `POST /api/sessions/{id}/chat/stream` **真实存在**（api_server.py:2072/:3776，emit run.started/assistant.completed/run.completed/tool.*/error），但**非被动**（POST 触发）——plan 的"未证实"事实错误。
+- **F5**：api_server 有 `/p/<profile>/...` 多路路由，REST 无 profile 感知。
+- **F6**：启发式优先级未镜像 derive_pet_state——busy/近期活动应→**Run**（非 Review）；应先 Failed。
+- **F7**：实际只 5-6 态（Failed 今天是坏的），别号称 7 态。
+- **F8**：tool_calls 未完成关联需解析 tool_calls JSON（含 function args）→ 触碰"绝不 SELECT content"红线。
+- **F9**：Aggregator 排名 Failed≈Run>Review>Waiting>Wave>Idle + 只衰减 Failed/Run/Review → REST 发的 Wave 会输给 state.db Run/Review。
+- **F10**：api_server health = `/health`/`/v1/health`（:2056-2058），非 `/api/health`（那是 dashboard 的）。
+- **F11**：启发式作用域未定义（active=1、未结束会话、时间窗），compacted/历史行可让 Review/Failed 常驻。
+
+**Claude 核实**：F1/F2/F3/F4/F10 全部源码 + DB 坐实（api_server.py 存在、_session_response 字段、finish_reason 零 error、SSE 端点、/health）。
+
+### 用户裁决（Round 2 → Rev 3）—— 砍 REST，纯 state.db
+选 **a：砍 REST，纯 state.db**。理由（按事实链）：REST 读的是同一 state.db（serve 起 dashboard），字段仅 last_activity_at/ended_at（无 is_active），绕 REST 一圈 = 同一数据源 + token 鉴权负担，**零增量信息**；b（api_server）是未来发起阶段依赖（桌面端默认不跑 gateway 平台），被动监控不值得多养服务；c（dashboard Bearer）把上一轮已否决的 token 运维请回来。最终监控架构：**单数据源 state.db**——现有 3 态（已验证）+ messages 启发式扩展 7 态，无 REST、无 WS、无 token；未来发起阶段独立引入 api_server SSE。
+按此改：HermesAdapter 去 REST 轮询（保留现有 SQLite）；删 `HermesRestPollSeconds`/`HermesApiServerKey`；设置页 Hermes 区只留「profile + staleness + 同步时间显示」。
+
+### Claude's response（裁决 → Rev 3）
+全采纳，修订 PLAN.md（Rev 3）+ ADR-0006（单数据源 state.db 启发式）：删 REST/WS/token、删 HermesRestPollSeconds/HermesApiServerKey、Failed 按 F3 事实诚实标注弱信号（incomplete/content_filter/length）、Waiting 降级、优先级镜像 derive_pet_state（busy→Run）、启发式作用域限定 active=1 + 时间窗、SSE 归未来发起阶段（事实修正：已证实存在但非被动）。
+
+## Round 3 — Codex（resume `019ffa4a`，model=glm-5.2）
+VERDICT: **REVISE** — 6 findings（F1–F6，全在启发式本身），全部源码+DB 核实：
+- **F1**：`finish_reason='length'/'incomplete'` 是**续传信号非终端失败**（conversation_loop.py:3205-3218 归一化续传；codex_responses_adapter.py:1334 重试 3 次）；DB 2 行 length 均 active=1 未结束。→ Failed 仅 content_filter 或 ended 标记。**实测 active=1 下零 content_filter → Failed 本轮无实际覆盖**。
+- **F2**：`tool_calls` 非空不是"进行中"信号（完成行永远非空，Run 压 Review，staleness 不修复）。→ Run 需最新行 role='assistant'+tool_calls+**无后续 role='tool' 行**。**实测 messages.role 有 tool(4547) 行**——判定可行。
+- **F3**：plan 基线用全表（tool_calls 3843/stop 967），active=1 过滤后为 tool_calls(3433)/stop(836)。→ 启发式基线用 active=1 同 scope。
+- **F4**：profile 路径忽略 HERMES_HOME（hermes_constants.py:63-75）。→ state.db 根尊重 HERMES_HOME，不硬编码 ~/.hermes。
+- **F5**：现有 AppConfig.cs 字段是 `StalenessSeconds`（:74），非 HermesStalenessSeconds。→ 复用现有字段，不改名。
+- **F6**：标题"7 态"过誉（实际 Idle/Run/Wave/Review + 弱 Failed，无 Waiting/Jump）。→ 标题改 5 态诚实范围。
+
+**Claude 核实**：F1/F2/F3/F5 全部 DB 坐实（role 分布、length active、active=1 分布、AppConfig 字段）；F4 现有代码硬编码 ~/.hermes（:343-345）确认。
+
+### Claude's response（Round 3 → Rev 4）
+6/6 采纳，修订 PLAN.md（Rev 4）+ ADR-0006：Failed 仅 content_filter/ended 标记（length/incomplete 当续传，明确 DB 零 content_filter → Failed 无实际覆盖）、Run 判定加"无后续 role='tool' 行"（tool 行实测存在）、finish_reason 基线 active=1 scope、state.db 根尊重 HERMES_HOME、复用现有 StalenessSeconds、标题改 5 态诚实范围。
+
+## Round 4 — Codex（resume `019ffa4a`，model=glm-5.2）
+VERDICT: **REVISE** — 3 findings（窄修正），全部核实：
+- **F1**：Failed 的 "ended 会话标记" 未定义会误报——`end_reason` 实测仅 `cron_complete(361)/(null)(21)/ws_orphan_reap(4)`，无失败特定值；若实现为"任何 ended"则每个正常完成会话都变 Failed 且 Failed 压 Wave 吞掉 Wave。→ **删 ended 分支，Failed 仅 content_filter**。
+- **F2**：ADR consequences 与 Rev 4 不同步（仍写 7-state、length/incomplete 当 Failed 近似）。→ 同步 5 态。
+- **F3**：role 基线全表（tool 4547）与 finish_reason active=1 不一致。→ 统一 active scope（active=1 下 tool 4055）。
+
+**Claude 核实**：F1 end_reason 实测 3 值无失败；F3 active=1 role 分布 assistant(4344)/tool(4055)/user(972) 确认。
+
+### Claude's response（Round 4 → Rev 5）
+3/3 采纳，修订 PLAN.md（Rev 5）+ ADR-0006：Failed 仅 content_filter（删 ended 标记，end_reason 无失败值）、ADR consequences 同步 5 态 + Failed=content_filter-only/有效缺失 + Run=latest-unresolved-tool、role 基线统一 active=1 scope。
+
+## Round 5 — Codex（resume `019ffa4a`，model=glm-5.2）**MAX_ROUNDS=5 封顶**
+VERDICT: **REVISE** — 2 findings：
+- **F1（重要）**：优先级 `Failed>Wave>Run>Review>Idle` + busy→Run 兜底让 **Review 永远不可达**（活跃 reasoning 会话也有近期活动，Run 总赢）；canonical 顺序 tool_running→reasoning→busy。→ 明确求值顺序 `Failed → Wave → unresolved-tool Run → reasoning Review → busy Run → Idle`。
+- **F2（低）**：元数据过期（PLAN header 仍 Rev 4、Run bullet 4547 vs active 4055、ADR context 仍 7-state 措辞）。
+
+### Claude's response（Round 5 → Rev 6，final arbiter）
+2/2 采纳，修订 PLAN.md（Rev 6）+ ADR-0006（改名 `0006-hermes-state-monitoring.md` 去 7state 误导）：求值顺序明确化（Review 先于 busy→Run）、计数统一 active=1（tool 4055）、ADR 措辞 5-state。
+
+**Resolution（cap hit 但实质收敛）** — 两 act 完成，5 轮 Codex 审查（R1 6 / R2 11 / R3 6 / R4 3 / R5 2，共 28 条意见，全采纳），max cap 无 APPROVED 但 Codex 自评"substantive architecture is now sound and source-verified"，剩余仅文档/求值顺序打磨。等待用户签收 + 实现方式裁决。
+
+---
+
 ## Iteration 3 — 纸娃娃模块重新设计（实时合成 + 统一素材选择库）
 Act 1 (grill-with-docs) complete — plan locked，CONTEXT.md 增「部件/耳朵类型/表情/皮肤/染发/遮挡锁/搭配/实时合成」术语，新增 [ADR-0005](docs/adr/0005-paperdoll-real-time-compositing.md)（取代 ADR-0002）。MAX_ROUNDS=5。
 11 项决策：①实时合成弃图条；②AnimService 帧提供者接口(加法式)；③耳朵按 WZ piece 名分组(人类靠 head 圆耳)；④统一素材选择库重做(保留 Mob/NPC)；⑤眨眼表情+外部驱动接口；⑥全部动作+武器映射+拖拽随机 fly/swing；⑦zmap 遮挡 locks；⑧搭配持久化+离线缓存；⑨皮肤+染发；⑩草稿模式；⑪WriteableBitmap 直拷。

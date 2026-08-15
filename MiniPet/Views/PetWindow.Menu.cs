@@ -164,6 +164,15 @@ public partial class PetWindow
             terminalItem.Items.Add(statusItem);
             cm.Items.Add(terminalItem);
 
+            // ── Hermes 对话（迷你聊天对话框，PLAN §3；单例，已开则 Activate/聚焦） ──
+            var chatItem = new MenuItem { Header = "💬 对话" };
+            chatItem.Click += (_, _) =>
+            {
+                try { HermesChatWindow.OpenOrActivate(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] HermesChat: {ex.Message}"); }
+            };
+            cm.Items.Add(chatItem);
+
             // ── 设置中心 ──
             var settingsItem = new MenuItem { Header = "设置中心" };
             settingsItem.Click += (_, _) =>

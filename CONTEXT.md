@@ -65,3 +65,8 @@ Rendering a 纸娃娃 frame by composing its 部件 per frame on demand, driven 
 
 ### WZ
 The packed MapleStory data files, parsed via the WzComparerR2.WzLib DLL. The source of all sprites, map data, and balloon tiles.
+
+### Agent 状态 (AgentState)
+The 7-valued activity state MiniPet reflects to show what a connected coding agent (Hermes / Claude Code / Codex) is doing **right now**: `Idle / Run / Review / Wave / Jump / Failed / Waiting` (semantics borrowed from the Hermes official pet model). One value at a time; the Pet's current 动作 (Action) is chosen from it. MiniPet is a **passive observer** of these states — it never drives the agent.
+- **Resolution priority** (highest first, only one shows): Failed > Jump > Wave > Waiting > Run > Review > Idle.
+- **Not to be confused with**: the Pet's 动作 (Action) — an AgentState is *mapped to* an action (e.g. Failed → `hit`, Waiting → `mouse`, Run → `move`), it is not itself an animation.
