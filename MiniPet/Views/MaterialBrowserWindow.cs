@@ -70,6 +70,17 @@ public partial class MaterialBrowserWindow : Window
     private int _pageSize = 10;
     private int _totalPages = 1;
 
+    // ── 列表展示行（发型同名分组后：组头行 + 变体行 + 普通条目行混排）──
+    private List<object> _displayRows = new();
+    private readonly HashSet<string> _expandedHairGroups = new(StringComparer.Ordinal);
+    private Border? _hairDyePanel;
+    private int _previewRenderSeq;
+
+    // ── 搜索防抖（300ms）+ 清除按钮 ──
+    private readonly DispatcherTimer _searchDebounceTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    private Button? _searchClearBtn;
+    private TextBlock? _countLabel;
+
     // ── UI 引用 ──
     private TextBox? _pageLabel;
     private Button? _prevBtn;
@@ -110,7 +121,10 @@ public partial class MaterialBrowserWindow : Window
         try
         {
             var saved = configService?.LoadSettings().CurrentPaperdoll;
-            if (saved != null) _draftAppearance = CloneDraft(saved);
+            if (saved != null)
+            {
+                _draftAppearance = CloneDraft(saved);
+            }
         }
         catch { }
         var hasWzConfig = false;
@@ -189,6 +203,9 @@ public partial class MaterialBrowserWindow : Window
         Grid.SetRow(bottomBar, 1);
 
         Content = root;
+
+        // 防抖定时器随窗口关闭停止（防 DispatcherTimer 残留）
+        Closed += (_, _) => _searchDebounceTimer.Stop();
 
         // 初始加载（有预选分类则选该分类）
         SelectCategory(_initialCategory ?? "全部");
@@ -400,16 +417,17 @@ public partial class MaterialBrowserWindow : Window
         UiStyle.ApplyHover(_selectBtn);
         _selectBtn.Click += (_, _) =>
         {
-            if (_itemList?.SelectedItem is not MaterialEntry entry) return;
+            if (_itemList?.SelectedItem is not MaterialEntry entry)
+            {
+                return;
+            }
             if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
             {
                 // 纸娃娃部件：草稿已实时合成预览，点按钮应用草稿到主窗口
-                Console.WriteLine($"[MaterialBrowser] OnPaperdollDraftApplied: 分类={entry.Category} Id={entry.Id}");
                 OnPaperdollDraftApplied?.Invoke(_draftAppearance);
                 Close();
                 return;
             }
-            Console.WriteLine($"[MaterialBrowser] OnMaterialSelected invoked: Id={entry.Id}, Name={entry.Name}, Category={entry.Category}");
             OnMaterialSelected?.Invoke(entry.Id, entry.Name, entry.Category);
             Close();
         };
@@ -433,6 +451,17 @@ public partial class MaterialBrowserWindow : Window
         btnRow.Children.Add(cancelBtn);
 
         stack.Children.Add(btnRow);
+
+        // 发型组内染发调色（仅选中发型时显示：HSV 滑块联动草稿 Hair，预览实时合成）
+        _hairDyePanel = new Border
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)),
+            Padding = new Thickness(8, 6),
+            IsVisible = false
+        };
+        stack.Children.Add(_hairDyePanel);
 
         // 搭配管理（纸娃娃草稿保存/加载，走 SavedPaperdolls 磁盘存档）
         // 搭配行改用两列 Grid：保存按钮列 Auto 自适应，下拉列 Star 填充剩余宽度（原 StackPanel 无法拉伸子项）
@@ -528,15 +557,56 @@ public partial class MaterialBrowserWindow : Window
             BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            // 左侧留 30 给放大镜图标（图标 Margin 左 8 + 字形宽约 14，30 足够不压字），右侧 10 为标准 padding
-            Padding = new Thickness(30, 6, 10, 6),
+            // 左侧留 30 给放大镜图标（图标 Margin 左 8 + 字形宽约 14，30 足够不压字），右侧 26 给 × 清除按钮
+            Padding = new Thickness(30, 6, 26, 6),
             VerticalAlignment = VerticalAlignment.Center
         };
-        _searchInput.TextChanged += OnSearchChanged;
+        // 300ms 防抖：输入停顿后才过滤（防每键全列表重建）
+        _searchDebounceTimer.Tick += (_, _) =>
+        {
+            _searchDebounceTimer.Stop();
+            _currentPage = 1;
+            FilterAndRefresh();
+        };
+        _searchInput.TextChanged += (_, _) =>
+        {
+            _searchDebounceTimer.Stop();
+            _searchDebounceTimer.Start();
+            UpdateSearchClearVisibility();
+        };
 
-        // 先加输入框再加图标：Grid 后加的子项绘制在上层，保证 🔍 不被白底 TextBox 盖住
+        // × 清除按钮（悬停/输入时显示，点击清空搜索并聚焦）
+        _searchClearBtn = new Button
+        {
+            Content = "×",
+            FontSize = 12,
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = BrushTxtDim,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(11),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0),
+            IsVisible = false,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        UiStyle.ApplyHover(_searchClearBtn);
+        _searchClearBtn.Click += (_, _) =>
+        {
+            _searchInput.Text = "";
+            _searchDebounceTimer.Stop();
+            _currentPage = 1;
+            FilterAndRefresh();
+            _searchInput.Focus();
+        };
+
+        // 先加输入框再加图标/清除按钮：Grid 后加的子项绘制在上层，保证 🔍/× 不被白底 TextBox 盖住
         searchGrid.Children.Add(_searchInput);
         searchGrid.Children.Add(searchIcon);
+        searchGrid.Children.Add(_searchClearBtn);
         searchPanel.Child = searchGrid;
 
         Grid.SetColumn(searchPanel, 0);
@@ -588,7 +658,10 @@ public partial class MaterialBrowserWindow : Window
         };
         _pageLabel.KeyDown += (_, e) =>
         {
-            if (e.Key != Key.Enter) return;
+            if (e.Key != Key.Enter)
+            {
+                return;
+            }
             var t = _pageLabel.Text ?? "";
             var num = t.Split('/')[0].Trim();
             // 绝对跳页：越界由 GoToPage clamp，成功后 UpdatePager 统一恢复 "当前页/总页数" 显示
@@ -636,7 +709,7 @@ public partial class MaterialBrowserWindow : Window
         bar.Children.Add(pager);
 
         // 右侧 — 条目计数
-        var countLabel = new TextBlock
+        _countLabel = new TextBlock
         {
             Text = "",
             FontSize = 10,
@@ -645,8 +718,8 @@ public partial class MaterialBrowserWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 0, 16, 0)
         };
-        Grid.SetColumn(countLabel, 2);
-        bar.Children.Add(countLabel);
+        Grid.SetColumn(_countLabel, 2);
+        bar.Children.Add(_countLabel);
 
         return new Border { Child = bar };
     }
