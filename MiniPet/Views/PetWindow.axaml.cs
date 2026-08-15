@@ -58,7 +58,12 @@ public partial class PetWindow : Window
     private TextBlock? _loadingText;
     private Point _dragStart;
     private bool _isDragging;
+    private bool _dragCandidate;      // 点击候选拖拽（位移超阈值才转正；点击不破坏 origin 补偿基准）
+    private Point _pressPoint;        // 按下位置（候选拖拽判定用）
     private PixelPoint _windowStartPos;
+    private int _dragEndAnchorX;      // 拖拽结束时的角色锚点屏幕位置（释放后第一帧绝对定位用）
+    private int _dragEndAnchorY;
+    private bool _pendingOriginSync;  // 启动/切宠物首帧：只同步 origin 基准不移动窗口（避免基准 0 首帧大跳）
     private readonly DispatcherTimer _timer;
     private readonly Stopwatch _stopwatch;
     private int _tickCount;
@@ -203,6 +208,9 @@ public partial class PetWindow : Window
         _animService.EnableRandomIdle(true);
         _lastOriginX = 0;
         _lastOriginY = 0;
+        // 启动首帧：基准尚未初始化（0），直接补偿会从 (0,0) 跳到真实 origin → 窗口首帧大跳。
+        // 首帧只同步基准不移动窗口（_pendingOriginSync 在 OnTimerTick 消费）。
+        _pendingOriginSync = true;
 
         // 动画启动由 LoadDefaultPet 控制（WZ 加载后或缓存命中后）
 
@@ -302,6 +310,8 @@ public partial class PetWindow : Window
                         _trayService.SetTooltip($"MiniPet - {pet.Item2} (ID:{pet.Item1})");
                         // 记录最近使用
                         RecordRecentItem(pet.Item1, pet.Item2, _currentEntityType);
+                        // 切宠物：旧宠物 origin 基准不适用 → 首帧只同步不补偿（避免切换瞬间窗口大跳）
+                        _pendingOriginSync = true;
                     }
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetChanged: {ex.Message}"); }
@@ -557,13 +567,10 @@ public partial class PetWindow : Window
                     ContextMenu?.Open(this);
                     return;
                 }
-                _isDragging = true;
-                _dragStart = e.GetPosition(this);
-                _windowStartPos = Position;
-                // 移动时默认气泡关闭（胶水规则 2026-08-08）：拖拽期间隐藏气泡，释放后恢复
-                _balloonWasVisible = _balloonWindow.IsVisible;
-                if (_balloonWasVisible) _balloonWindow.HideBalloonWindow();
-                _eventBus.Publish(EventType.UserDragStart);
+                // 点击≠拖拽（胶水 2026-08-15）：仅记录按下位置，位移超阈值才进拖拽。
+                // 否则「点击」也会 _isDragging=true + 释放同步 origin 基准 → stand↔move 切换补偿错位 → 角色跳位置。
+                _pressPoint = e.GetPosition(this);
+                _dragCandidate = true;
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerPressed: {ex.Message}"); }
         };
@@ -571,11 +578,33 @@ public partial class PetWindow : Window
         {
             try
             {
-                if (!_isDragging) return;
-                var p = e.GetPosition(this);
-                double rs = RenderScaling > 0 ? RenderScaling : 1.0;
-                double dx = (Position.X + p.X * rs) - (_windowStartPos.X + _dragStart.X * rs);
-                double dy = (Position.Y + p.Y * rs) - (_windowStartPos.Y + _dragStart.Y * rs);
+                if (!_isDragging)
+                {
+                    // 候选拖拽：位移超过阈值才真正开始（点击移动几像素不算拖拽）
+                    if (_dragCandidate)
+                    {
+                        var p = e.GetPosition(this);
+                        double rs = RenderScaling > 0 ? RenderScaling : 1.0;
+                        double dist = Math.Abs(p.X * rs - _pressPoint.X * rs) + Math.Abs(p.Y * rs - _pressPoint.Y * rs);
+                        if (dist < 4)
+                        {
+                            return;
+                        }
+                        _isDragging = true;
+                        _dragStart = e.GetPosition(this);
+                        _windowStartPos = Position;
+                        // 移动时默认气泡关闭（胶水规则 2026-08-08）：拖拽期间隐藏气泡，释放后恢复
+                        _balloonWasVisible = _balloonWindow.IsVisible;
+                        if (_balloonWasVisible) _balloonWindow.HideBalloonWindow();
+                        _eventBus.Publish(EventType.UserDragStart);
+                        return;
+                    }
+                    return;
+                }
+                var p2 = e.GetPosition(this);
+                double rs2 = RenderScaling > 0 ? RenderScaling : 1.0;
+                double dx = (Position.X + p2.X * rs2) - (_windowStartPos.X + _dragStart.X * rs2);
+                double dy = (Position.Y + p2.Y * rs2) - (_windowStartPos.Y + _dragStart.Y * rs2);
                 // 贴顶 clamp：窗口顶 ≥ 0（大素材 8880837 按下偏移大，不 clamp 会推到屏外看似拖不到顶，胶水反馈 2026-08-09）
                 int ny = _windowStartPos.Y + (int)dy;
                 if (ny < 0) ny = 0;
@@ -587,12 +616,16 @@ public partial class PetWindow : Window
         {
             try
             {
+                _dragCandidate = false;
                 if (!_isDragging) return;
                 _isDragging = false;
                 _eventBus.Publish(EventType.UserDragEnd);
                 // 气泡锚点基准 = 拖拽结束时的角色锚点（动画切换气泡位置不动）
                 _balloonAnchorX = Position.X + _lastOriginX;
                 _balloonAnchorY = Position.Y + _lastOriginY;
+                // 释放后第一帧绝对定位用：记录拖拽结束时的角色锚点屏幕位置
+                _dragEndAnchorX = (int)_balloonAnchorX;
+                _dragEndAnchorY = (int)_balloonAnchorY;
                 // 释放后第一帧先同步 origin 基准（不补偿）：否则动画帧 oy 已变 → 补偿恢复瞬间角色跳一下
                 _syncOriginOnNextFrame = true;
                 Console.WriteLine($"[PetWindow] DragEnd: anchor=({_balloonAnchorX},{_balloonAnchorY})");
@@ -653,10 +686,18 @@ public partial class PetWindow : Window
                 // ±2px 容忍 + 取整：超长帧 PNG 宽偶有 1-2px 微变，窗口尺寸重设会抖动（胶水反馈 2026-08-09）
                 if (scaledW > 0 && scaledH > 0 && (Math.Abs(scaledW - _lastFrameW) > 2 || Math.Abs(scaledH - _lastFrameH) > 2))
                 {
+                    // ⚠️ macOS NSWindow frame origin 是左下角：仅改尺寸（保持左下不动）会让左上角（Position）漂移，
+                    //    随后 origin 补偿基于漂移后的 Position 计算 → 锚点（脚底）跟着跳（stand→move 实测位置变更）。
+                    //    修复：resize 前记录左上角，resize 后强制恢复 → 尺寸变化不移动窗口左上角。
+                    var posBeforeResize = Position;
                     Width = Math.Round(scaledW);
                     Height = scaledH;
                     _lastFrameW = scaledW;
                     _lastFrameH = scaledH;
+                    if (Position != posBeforeResize)
+                    {
+                        Position = posBeforeResize;
+                    }
                 }
 
                 // 窗口位置补偿锚点偏移（锚点也乘缩放），使精灵图锚点对齐屏幕固定位置。
@@ -664,14 +705,32 @@ public partial class PetWindow : Window
                 // 「拖不到顶」+ 看起来像 origin 变动。拖拽中只更新基准，拖完从新位置继续补偿
                 int oxScaled = (int)(ox * _scale);
                 int oyScaled = (int)(oy * _scale);
-                if (_isDragging)
+
+                // 启动/切宠物首帧：只同步基准不移动窗口（基准尚未初始化，直接补偿会从 (0,0) 大跳）
+                if (_pendingOriginSync)
+                {
+                    _lastOriginX = oxScaled;
+                    _lastOriginY = oyScaled;
+                    _pendingOriginSync = false;
+                }
+                else if (_isDragging)
                 {
                     _lastOriginX = oxScaled;
                     _lastOriginY = oyScaled;
                 }
                 else if (_syncOriginOnNextFrame)
                 {
-                    // 拖完第一帧：基准同步为当前 origin（不补偿）→ 角色停在释放位置，不因补偿恢复而跳
+                    // 拖完第一帧：用「拖拽结束时的角色锚点屏幕位置」绝对定位（不简单同步基准）。
+                    // ⚠️ 若释放瞬间动作已切换（move→stand），同步基准=新动作 origin 会让角色视觉跳
+                    // （窗口还在旧动作锚点位置，基准却已是新 origin → 差值永不补偿）。
+                    // 绝对定位：窗口 = 锚点 - 当前帧 origin → 无论下一帧什么动作，角色停在释放位置。
+                    int newX = _dragEndAnchorX - oxScaled;
+                    int newY = _dragEndAnchorY - oyScaled;
+                    if (Position.Y <= 0 && newY < 0)
+                    {
+                        newY = Position.Y; // 贴顶：保持顶贴屏顶
+                    }
+                    Position = new PixelPoint(newX, newY);
                     _lastOriginX = oxScaled;
                     _lastOriginY = oyScaled;
                     _balloonAnchorX = Position.X + oxScaled;

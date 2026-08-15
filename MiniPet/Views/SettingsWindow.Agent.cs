@@ -6,6 +6,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using MiniPet.Models;
 using MiniPet.Services;
 using MiniPet.Services.Adapters;
@@ -78,18 +79,7 @@ public partial class SettingsWindow
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            // ── adapter 开关区 ──
-            root.Children.Add(BuildAgentSectionHeader("Adapter 开关"));
-            var switchPanel = new StackPanel { Spacing = 8 };
-            _agentHermesCheck = MakeAgentToggle("Hermes（state.db 只读轮询）", ai.HermesEnabled);
-            _agentCCCheck = MakeAgentToggle("Claude Code（开发中）", ai.CCEnabled);
-            _agentCodexCheck = MakeAgentToggle("Codex（开发中）", ai.CodexEnabled);
-            _agentEffectCheck = MakeAgentToggle("通用特效层（Jump 庆祝 / Failed 弹窗）", ai.EffectEnabled);
-            switchPanel.Children.Add(_agentHermesCheck);
-            switchPanel.Children.Add(_agentCCCheck);
-            switchPanel.Children.Add(_agentCodexCheck);
-            switchPanel.Children.Add(_agentEffectCheck);
-            root.Children.Add(switchPanel);
+            // ── adapter 开关区（2026-08-15 移到「Hermes 连接」下方——开启 agent 关联跟随当前 agent 区块）──
 
             // ── 阈值区 ──
             root.Children.Add(BuildAgentSectionHeader("阈值（秒）"));
@@ -118,17 +108,19 @@ public partial class SettingsWindow
 
             // ── Hermes 连接（api_server） ──
             root.Children.Add(BuildAgentSectionHeader("Hermes 连接（api_server）"));
-            var connPanel = new StackPanel { Spacing = 10 };
+            var connPanel = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Left };
             _agentHermesPort = new NumericUpDown();
             connPanel.Children.Add(MakeAgentNumericBox("端口（0 = 自动发现，默认 8642）", ai.HermesPort, 0, 65535, _agentHermesPort));
-            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
             keyWrap.Children.Add(new TextBlock { Text = "API Server Key（api_server Bearer 本地凭证，仅本机勿备份同步）", FontSize = 10, Foreground = BrushTxtDim });
             _agentHermesApiKey = new TextBox
             {
                 Watermark = "Hermes config.yaml 的 api_server key",
                 FontSize = 12,
+                TextAlignment = TextAlignment.Left,
                 Text = ai.HermesApiServerKey ?? string.Empty,
-                Background = BrushInputBg,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
@@ -152,7 +144,8 @@ public partial class SettingsWindow
                 Watermark = "默认空 = 默认 profile",
                 FontSize = 12,
                 Text = ai.HermesProfile ?? string.Empty,
-                Background = BrushInputBg,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
@@ -235,7 +228,8 @@ public partial class SettingsWindow
                 Watermark = "例：Effect/celebrate",
                 FontSize = 12,
                 Text = ai.WzCelebrationNodePath ?? string.Empty,
-                Background = BrushInputBg,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
@@ -297,14 +291,49 @@ public partial class SettingsWindow
         nud.FormatString = "0";
         nud.Increment = 1;
         nud.FontSize = 12;
+        nud.HorizontalContentAlignment = HorizontalAlignment.Left;
+        nud.TextAlignment = TextAlignment.Left;
         nud.Width = 140;
-        nud.Foreground = BrushTxtPrimary;
-        nud.Background = BrushInputBg;
+        nud.Foreground = Brushes.Black;
+        nud.Background = Brushes.White;
+        // Avalonia NumericUpDown.TextAlignment 属性不保证传递到模板内 PART_TextBox（实测无效），
+        // 必须等模板应用后直接操作内部 TextBox 强制左对齐（与普通 TextBox 样式一致，胶水 2026-08-15）。
+        nud.Loaded += (_, _) =>
+        {
+            try
+            {
+                var tb = FindTemplateTextBox(nud);
+                if (tb != null)
+                {
+                    tb.TextAlignment = TextAlignment.Left;
+                    tb.HorizontalContentAlignment = HorizontalAlignment.Left;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[SettingsWindow.Agent] MakeAgentNumericBox 左对齐失败: {ex.Message}");
+            }
+        };
 
-        var wrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 14, 0) };
+        var wrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 14, 0), HorizontalAlignment = HorizontalAlignment.Left };
         wrap.Children.Add(new TextBlock { Text = label, FontSize = 10, Foreground = BrushTxtDim });
         wrap.Children.Add(nud);
         return wrap;
+    }
+
+    /// <summary>在控件模板视觉树中查找第一个 TextBox（NumericUpDown 内部 PART_TextBox 用）。</summary>
+    private static TextBox? FindTemplateTextBox(Control root)
+    {
+        foreach (var child in root.GetVisualChildren())
+        {
+            if (child is TextBox tb) return tb;
+            if (child is Control c)
+            {
+                var found = FindTemplateTextBox(c);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     /// <summary>构造一个 7 态映射用的输入框（Action / Balloon 共用）。</summary>
@@ -315,7 +344,8 @@ public partial class SettingsWindow
             Watermark = watermark,
             FontSize = 12,
             Text = text,
-            Background = BrushInputBg,
+            Background = Brushes.White,
+            Foreground = Brushes.Black,
             BorderBrush = new SolidColorBrush(InputBorder),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),

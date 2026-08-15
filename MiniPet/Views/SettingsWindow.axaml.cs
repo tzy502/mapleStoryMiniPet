@@ -53,6 +53,7 @@ public partial class SettingsWindow : Window
     // ── 状态 ──
     private int _activeMainTab = 0;
     private int _activeSubTab = 0;
+    private int _activeAiSubTab = 0;
     private bool _isDarkMode = true;
     private string _selectedBgMode = "tp";
     private string _previewMobId = string.Empty;
@@ -108,6 +109,8 @@ public partial class SettingsWindow : Window
     private List<TextBlock> _mainTabHeaders = new();
     private List<TextBlock> _subTabHeaders = new();
     private List<Border> _mainPanes = new();
+    private List<TextBlock> _aiSubTabHeaders = new();
+    private List<Border> _aiSubPanes = new();
     private List<Border> _subPanes = new();
 
     // ── 纸娃娃状态 ──
@@ -299,7 +302,7 @@ public partial class SettingsWindow : Window
         var pane0 = BuildPetSettingsPane();
         _mainPanes.Add(pane0);
         grid.Children.Add(pane0);
-        var pane1 = BuildPlaceholder("🔗 AI 设置", "AI 设置功能开发中，敬请期待...");
+        var pane1 = BuildAiSettingsPane();
         pane1.IsVisible = false;
         _mainPanes.Add(pane1);
         grid.Children.Add(pane1);
@@ -330,11 +333,47 @@ public partial class SettingsWindow : Window
         return grid;
     }
 
+    /// <summary>
+    /// AI 设置主 pane（2026-08-15：Agent 接入从「桌宠设置」子 tab 移入此处）。
+    /// 子 tab：Hermes（Agent 接入）/ Deepseek harness / Claude Code / Codex（后三者占位待实现）。
+    /// </summary>
+    private Border BuildAiSettingsPane()
+    {
+        var container = new DockPanel();
+        var subTabBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 4, 14, 0) };
+        var subTabs = new[] { "Hermes", "Deepseek harness", "Claude Code", "Codex" };
+        for (int i = 0; i < subTabs.Length; i++)
+        {
+            var idx = i;
+            var tb = new TextBlock { Text = subTabs[i], FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(14, 5, 14, 7), Foreground = i == 0 ? BrushAccent : BrushTxtDim, Cursor = new Cursor(StandardCursorType.Hand) };
+            tb.PointerPressed += (_, _) => SwitchAiSubTab(idx);
+            _aiSubTabHeaders.Add(tb);
+            subTabBar.Children.Add(tb);
+        }
+        DockPanel.SetDock(subTabBar, Dock.Top);
+
+        var body = new Grid();
+        var sub0 = BuildAgentTab();
+        _aiSubPanes.Add(sub0);
+        body.Children.Add(sub0);
+        for (int i = 1; i < subTabs.Length; i++)
+        {
+            var sub = BuildPlaceholder("🚧", subTabs[i] + " 待实现");
+            sub.IsVisible = false;
+            _aiSubPanes.Add(sub);
+            body.Children.Add(sub);
+        }
+
+        container.Children.Add(subTabBar);
+        container.Children.Add(body);
+        return new Border { Child = container };
+    }
+
     private Border BuildPetSettingsPane()
     {
         var container = new DockPanel();
         var subTabBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 4, 14, 0) };
-        var subTabs = new[] { "素材桌宠设置", "纸娃娃桌宠设置", "背景设置", "聊天气泡设置", "Agent 接入" };
+        var subTabs = new[] { "素材桌宠设置", "纸娃娃桌宠设置", "背景设置", "聊天气泡设置" };
         for (int i = 0; i < subTabs.Length; i++)
         {
             var idx = i;
@@ -365,11 +404,6 @@ public partial class SettingsWindow : Window
         _subPanes.Add(sub3);
         body.Children.Add(sub3);
 
-        var sub4 = BuildAgentTab();
-        sub4.IsVisible = false;
-        _subPanes.Add(sub4);
-        body.Children.Add(sub4);
-
         container.Children.Add(subTabBar);
         container.Children.Add(body);
         return new Border { Child = container };
@@ -385,10 +419,14 @@ public partial class SettingsWindow : Window
         var sidebar = new DockPanel();
         var sidebarContent = new StackPanel { Margin = new Thickness(10), Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
 
-        var searchPanel = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), Background = BrushInputBg, Height = 30 };
+        var searchPanel = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), Background = Brushes.White, Height = 30 };
         var searchGrid = new Grid();
         var searchIcon = new TextBlock { Text = "🔍", FontSize = 13, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
-        var searchInput = new TextBox { PlaceholderText = "过滤当前列表…", FontSize = 12, Foreground = BrushTxtPrimary, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(30, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Left };
+        var searchInput = new TextBox { PlaceholderText = "过滤当前列表…", FontSize = 12, Foreground = Brushes.Black, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(30, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Left };
+        // 聚焦高亮与全项目 input 一致：外层 Border 聚焦时变 accent 蓝（内层 TextBox 无边框，需容器承载焦点态）
+        var searchInputBorder = new SolidColorBrush(InputBorder);
+        searchInput.GotFocus += (_, _) => searchPanel.BorderBrush = BrushAccent;
+        searchInput.LostFocus += (_, _) => searchPanel.BorderBrush = searchInputBorder;
         searchGrid.Children.Add(searchIcon);
         searchGrid.Children.Add(searchInput);
         searchPanel.Child = searchGrid;
@@ -503,7 +541,7 @@ public partial class SettingsWindow : Window
         var paramBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         _petNameLabel = new TextBlock { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultName : "未选择宠物", FontSize = 12, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(6, 4, 6, 4) };
         paramBar.Children.Add(_petNameLabel);
-        _petIdInput = new TextBox { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultMobId : "", Width = 80, FontSize = 11, FontFamily = new FontFamily("SF Mono, monospace"), Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), Background = new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)), BorderBrush = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 3), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        _petIdInput = new TextBox { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultMobId : "", Width = 80, FontSize = 11, FontFamily = new FontFamily("SF Mono, monospace"), Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
         paramBar.Children.Add(_petIdInput);
 
         var playBtn = new Button { Content = "▶ 播放", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(10, 3), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
@@ -655,7 +693,7 @@ public partial class SettingsWindow : Window
         header.Children.Add(new TextBlock { Text = hint, FontSize = 9, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Right });
         row.Children.Add(header);
         var inputRow = new DockPanel();
-        input = new TextBox { PlaceholderText = $"选择 {label}…", Height = 32, FontSize = 12, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 0), TextAlignment = TextAlignment.Left };
+        input = new TextBox { PlaceholderText = $"选择 {label}…", Height = 32, FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 0), TextAlignment = TextAlignment.Left };
         inputRow.Children.Add(input);
         var browseBtn = new Button { Content = "浏览…", FontSize = 10, Height = 28, Padding = new Thickness(10, 0), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
         DockPanel.SetDock(browseBtn, Dock.Right);
@@ -815,6 +853,12 @@ public partial class SettingsWindow : Window
     {
         try { if (_activeSubTab == index) return; _activeSubTab = index; for (int i = 0; i < _subTabHeaders.Count; i++) { _subTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim; _subPanes[i].IsVisible = i == index; } }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SwitchSubTab: {ex.Message}"); }
+    }
+
+    private void SwitchAiSubTab(int index)
+    {
+        try { if (_activeAiSubTab == index) return; _activeAiSubTab = index; for (int i = 0; i < _aiSubTabHeaders.Count; i++) { _aiSubTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim; _aiSubPanes[i].IsVisible = i == index; } }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SwitchAiSubTab: {ex.Message}"); }
     }
 
     private void RefreshFavoriteList()

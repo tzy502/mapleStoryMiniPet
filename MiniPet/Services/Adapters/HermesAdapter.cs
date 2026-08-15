@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -99,6 +100,11 @@ namespace MiniPet.Services.Adapters
         // ===== 依赖 =====
         private readonly EventBus _eventBus;
         private readonly string _connStr;
+
+        // 多 profile 监控（2026-08-15）：profile 名 → 连接串 + profile-scoped api key + multiplex base path。
+        // 格式 "name:key;name2:key2"（key 缺省用 _apiKey）；轮询时逐 profile 走 HTTP api_server（主链路），
+        // 各自 MapState 后取优先级最高（Failed > Completed/Wave > Run > Review > Idle）。state.db 仅 HTTP 全挂时兜底。
+        private readonly List<(string Profile, string Key, string ConnStr)> _multiDb = new();
         private readonly string _profile;   // Hermes profile 名；空 = 默认 profile（决定 state.db 路径 + 状态文案 + /p/{profile} base path）
         private readonly int _queryLimit = 8;
 
@@ -193,6 +199,33 @@ namespace MiniPet.Services.Adapters
                 ? string.Empty
                 : "/p/" + Uri.EscapeDataString(_profile);
 
+            // 多 profile 解析（2026-08-15）：HermesProfiles 分号分割，每项 "name:key"（key 缺省 = 主 _apiKey）。
+            // "default" 显式名 → 根 state.db + 无 /p/ 前缀。其余 → profiles/<p>/state.db + /p/<p>/ 前缀。
+            var multiRaw = ai?.HermesProfiles;
+            if (!string.IsNullOrWhiteSpace(multiRaw))
+            {
+                foreach (var p in multiRaw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var pName = p;
+                    var pKey = _apiKey;
+                    var colon = p.IndexOf(':');
+                    if (colon > 0)
+                    {
+                        pName = p.Substring(0, colon).Trim();
+                        var k = p.Substring(colon + 1).Trim();
+                        if (!string.IsNullOrEmpty(k))
+                        {
+                            pKey = k;
+                        }
+                    }
+                    var conn = BuildDefaultConnStr(pName.Equals("default", StringComparison.OrdinalIgnoreCase) ? null : pName);
+                    if (!_multiDb.Any(x => x.Profile == pName))
+                    {
+                        _multiDb.Add((pName, pKey, conn));
+                    }
+                }
+            }
+
             // 长回合 staleness 抑制：turn 活跃期间静默超过阈值 → 心跳重复最近活性态（刷新 Aggregator staleness）。
             _stalenessHeartbeat = new DispatcherTimer
             {
@@ -283,15 +316,90 @@ namespace MiniPet.Services.Adapters
 
             try
             {
-                var snapshot = QuerySnapshot();
-                var mapped = MapState(snapshot);
+                // ===== HTTP 主链路（api_server，2026-08-15 起替代 state.db 为主）=====
+                // 单 profile：GET {base}/api/sessions → 活跃会话 → GET messages → 信号。
+                // 多 profile：逐 profile（各自 /p/{p}/ + 各自 key）聚合取最高优先级。
+                // HTTP 全挂 → state.db 兜底（QuerySnapshot，保留旧逻辑）。
+                HermesSnapshot? httpSnap = null;
+                if (!string.IsNullOrEmpty(_apiKey))
+                {
+                    try
+                    {
+                        httpSnap = QueryHttpSnapshotAsync().GetAwaiter().GetResult();
+                    }
+                    catch
+                    {
+                        httpSnap = null; // HTTP 不可达 → 兜底
+                    }
+                }
 
-                // SSE 回合活跃期间：不发布 SQLite 启发式态（SSE 事件是权威源），仅刷新连接状态。
-                if (!_turnActive) {
-                    // 同状态不重复发（去抖动）。
-                    if (mapped.State != _lastPublished) {
+                if (httpSnap.HasValue)
+                {
+                    var mapped = MapState(httpSnap.Value);
+                    if (!_turnActive && mapped.State != _lastPublished)
+                    {
                         _lastPublished = mapped.State;
                         PublishState(mapped.State, mapped.Detail);
+                    }
+                    _consecutiveErrors = 0;
+                    _currentBackoffMs = InitialBackoffMs;
+                    RaiseConnStatus(true, "api_server");
+                    return;
+                }
+
+                // ===== state.db 兜底（HTTP 未配置或不可达）=====
+                // 多 profile 模式：逐库 QuerySnapshot+MapState，取优先级最高状态聚合发布。
+                if (_multiDb.Count > 0)
+                {
+                    var bestState = AgentState.Idle;
+                    var bestDetail = "idle";
+                    var bestRank = -1;
+                    var okCount = 0;
+                    var parts = new List<string>();
+                    foreach (var (pName, _, pConn) in _multiDb)
+                    {
+                        try
+                        {
+                            var snap = QuerySnapshot(pConn);
+                            var (st, dt) = MapState(snap);
+                            var rank = StateRank(st);
+                            parts.Add($"{pName}:{st}");
+                            okCount++;
+                            if (rank > bestRank)
+                            {
+                                bestState = st;
+                                bestDetail = dt;
+                                bestRank = rank;
+                            }
+                        }
+                        catch
+                        {
+                            // 单库失败（profile 目录不存在等）不拖垮其余库。
+                            parts.Add($"{pName}:ERR");
+                        }
+                    }
+                    if (okCount == 0)
+                    {
+                        throw new InvalidOperationException("all profiles failed");
+                    }
+                    if (!_turnActive && bestState != _lastPublished)
+                    {
+                        _lastPublished = bestState;
+                        PublishState(bestState, string.Join(" | ", parts));
+                    }
+                }
+                else
+                {
+                    var snapshot = QuerySnapshot();
+                    var mapped = MapState(snapshot);
+
+                    // SSE 回合活跃期间：不发布 SQLite 启发式态（SSE 事件是权威源），仅刷新连接状态。
+                    if (!_turnActive) {
+                        // 同状态不重复发（去抖动）。
+                        if (mapped.State != _lastPublished) {
+                            _lastPublished = mapped.State;
+                            PublishState(mapped.State, mapped.Detail);
+                        }
                     }
                 }
 
@@ -308,6 +416,227 @@ namespace MiniPet.Services.Adapters
             }
         }
 
+        /// <summary>
+        /// HTTP 主链路快照（api_server，2026-08-15）：
+        /// 多 profile → 逐 profile 轮询（/p/{profile} + 各自 key），单 profile → 主 base + 主 key。
+        /// 每 profile：GET /api/sessions → 活跃会话（ended_at null，按 last_active 倒序取最新）
+        ///   → GET /api/sessions/{id}/messages?limit=N → assistant 行信号（finish_reason/tool_calls/reasoning_content）。
+        /// 聚合返回优先级最高状态对应的快照（detail 记录各 profile 摘要）。
+        /// </summary>
+        private async Task<HermesSnapshot> QueryHttpSnapshotAsync()
+        {
+            if (_multiDb.Count > 0)
+            {
+                // 多 profile：逐 profile HTTP，取最高优先级状态快照
+                HermesSnapshot? best = null;
+                var bestRank = -1;
+                var parts = new List<string>();
+                foreach (var (pName, pKey, _) in _multiDb)
+                {
+                    try
+                    {
+                        var snap = await QueryHttpProfileAsync(pName, pKey).ConfigureAwait(false);
+                        var (st, _) = MapState(snap);
+                        parts.Add($"{pName}:{st}");
+                        var rank = StateRank(st);
+                        if (rank > bestRank)
+                        {
+                            best = snap;
+                            bestRank = rank;
+                        }
+                    }
+                    catch
+                    {
+                        parts.Add($"{pName}:ERR");
+                    }
+                }
+                if (!best.HasValue)
+                {
+                    throw new InvalidOperationException("all http profiles failed");
+                }
+                return best.Value;
+            }
+
+            return await QueryHttpProfileAsync(_profile, _apiKey).ConfigureAwait(false);
+        }
+
+        /// <summary>单 profile HTTP 快照：sessions + 最新活跃会话 messages → HermesSnapshot。</summary>
+        private async Task<HermesSnapshot> QueryHttpProfileAsync(string profile, string key)
+        {
+            var basePath = string.IsNullOrEmpty(profile) || profile.Equals("default", StringComparison.OrdinalIgnoreCase)
+                ? string.Empty
+                : "/p/" + Uri.EscapeDataString(profile);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"http://{DefaultHost}:{_port}{basePath}/api/sessions?limit=50");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            using var resp = await s_http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"sessions HTTP {(int)resp.StatusCode}");
+            }
+            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var active = new List<ActiveSessionRow>(8);
+            var recentEnded = new List<EndedSessionRow>(4);
+            string? newestActiveId = null;
+            double newestActiveTs = -1;
+
+            if (root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in dataEl.EnumerateArray())
+                {
+                    var ended = GetDoubleOrNull(s, "ended_at");
+                    var lastActive = GetDoubleOrNull(s, "last_active") ?? GetDoubleOrNull(s, "last_activity_at");
+                    var msgCount = GetIntOrNull(s, "message_count") ?? 0;
+                    var id = GetString(s, "id");
+                    var endReason = GetString(s, "end_reason");
+
+                    if (ended.HasValue)
+                    {
+                        if (ended.Value > 0)
+                        {
+                            var dt = ParseDateTime(ended.Value);
+                            if (dt.HasValue)
+                            {
+                                recentEnded.Add(new EndedSessionRow(dt.Value, endReason));
+                            }
+                        }
+                        continue;
+                    }
+
+                    active.Add(new ActiveSessionRow(ParseDateTime(lastActive), null, endReason, msgCount > 0));
+                    if (lastActive.HasValue && lastActive.Value > newestActiveTs && !string.IsNullOrEmpty(id))
+                    {
+                        newestActiveTs = lastActive.Value;
+                        newestActiveId = id;
+                    }
+                }
+            }
+
+            // 最新活跃会话的 messages → 信号
+            var signals = new MessageSignals(false, false, false, 0);
+            if (!string.IsNullOrEmpty(newestActiveId))
+            {
+                try
+                {
+                    signals = await QueryHttpMessagesAsync(profile, key, newestActiveId).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // messages 失败不致命（至少会话级信号可用）
+                }
+            }
+
+            return new HermesSnapshot(active, recentEnded, signals);
+        }
+
+        /// <summary>单 profile 最新活跃会话 messages → MessageSignals（assistant 行启发式，逻辑对齐 ReadMessageSignals）。</summary>
+        private async Task<MessageSignals> QueryHttpMessagesAsync(string profile, string key, string sessionId)
+        {
+            var basePath = string.IsNullOrEmpty(profile) || profile.Equals("default", StringComparison.OrdinalIgnoreCase)
+                ? string.Empty
+                : "/p/" + Uri.EscapeDataString(profile);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"http://{DefaultHost}:{_port}{basePath}/api/sessions/{Uri.EscapeDataString(sessionId)}/messages?limit={_queryLimit}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            using var resp = await s_http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"messages HTTP {(int)resp.StatusCode}");
+            }
+            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            bool hasContentFilter = false;
+            bool hasUnresolvedTool = false;
+            bool hasCompleted = false;
+            int reviewCount = 0;
+            bool isFirst = true;
+
+            if (root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array)
+            {
+                // messages 倒序（最新在前）？API 实测为倒序，但保险起见按 timestamp 降序重排。
+                var rows = new List<JsonElement>();
+                foreach (var m in dataEl.EnumerateArray())
+                {
+                    rows.Add(m);
+                }
+                rows.Sort((a, b) => (GetDoubleOrNull(b, "timestamp") ?? 0).CompareTo(GetDoubleOrNull(a, "timestamp") ?? 0));
+
+                foreach (var m in rows)
+                {
+                    var role = GetString(m, "role");
+                    if (role != "assistant")
+                    {
+                        continue;
+                    }
+                    var finishReason = GetString(m, "finish_reason");
+                    bool hasToolCalls = m.TryGetProperty("tool_calls", out var tc) && tc.ValueKind == JsonValueKind.Array && tc.GetArrayLength() > 0;
+                    bool hasReasoning = m.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(rc.GetString());
+
+                    if (finishReason == "content_filter")
+                    {
+                        hasContentFilter = true;
+                    }
+                    if (hasReasoning)
+                    {
+                        reviewCount++;
+                    }
+                    if (isFirst)
+                    {
+                        isFirst = false;
+                        if (hasToolCalls && !HasFollowupTool(m, rows))
+                        {
+                            hasUnresolvedTool = true;
+                        }
+                        if (finishReason == "stop" && !hasToolCalls && !hasReasoning)
+                        {
+                            hasCompleted = true;
+                        }
+                    }
+                }
+            }
+
+            return new MessageSignals(hasContentFilter, hasUnresolvedTool, hasCompleted, reviewCount);
+        }
+
+        /// <summary>最新 assistant 行之后是否存在 role='tool' 行（unresolved-tool 判定）。</summary>
+        private static bool HasFollowupTool(JsonElement assistantRow, List<JsonElement> rows)
+        {
+            var ts = GetDoubleOrNull(assistantRow, "timestamp") ?? 0;
+            foreach (var m in rows)
+            {
+                var role = GetString(m, "role");
+                if (role == "tool" && (GetDoubleOrNull(m, "timestamp") ?? 0) > ts)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static double? GetDoubleOrNull(JsonElement el, string prop)
+        {
+            if (el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number)
+            {
+                return v.GetDouble();
+            }
+            return null;
+        }
+
+        private static int? GetIntOrNull(JsonElement el, string prop)
+        {
+            if (el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number)
+            {
+                return v.GetInt32();
+            }
+            return null;
+        }
+
         // ============================================================
         // state.db 只读查询（兜底，保留不动）
         // ============================================================
@@ -316,9 +645,9 @@ namespace MiniPet.Services.Adapters
         /// 查询当前快照。每次 using 新连接，不跨生命周期持连接。
         /// ReadOnly + Pooling=false + busy_timeout=3000 + query_only=1（C11）。
         /// </summary>
-        private HermesSnapshot QuerySnapshot()
+        private HermesSnapshot QuerySnapshot(string? connStr = null)
         {
-            using var conn = OpenReadOnly();
+            using var conn = OpenReadOnly(connStr ?? _connStr);
             var active = new List<ActiveSessionRow>(8);
             var recentEnded = new List<EndedSessionRow>(4);
 
@@ -410,7 +739,7 @@ namespace MiniPet.Services.Adapters
                         if (hasToolCalls && !hasFollowupTool) {
                             hasUnresolvedTool = true;
                         }
-                        if (finishReason == "stop" && !hasToolCalls) {
+                        if (finishReason == "stop" && !hasToolCalls && !hasReasoning) {
                             hasCompleted = true;
                         }
                     }
@@ -420,10 +749,10 @@ namespace MiniPet.Services.Adapters
             return new MessageSignals(hasContentFilter, hasUnresolvedTool, hasCompleted, reviewCount);
         }
 
-        private SqliteConnection OpenReadOnly()
+        private SqliteConnection OpenReadOnly(string? connStr = null)
         {
             // 异常则由调用方做退避/重连（不在此吞）。
-            var conn = new SqliteConnection(_connStr);
+            var conn = new SqliteConnection(connStr ?? _connStr);
             conn.Open();
 
             // query_only=1 双保险（连接串已 ReadOnly）。
@@ -492,14 +821,17 @@ namespace MiniPet.Services.Adapters
                 }
             }
 
+            // 3) Review：新近窗内 assistant 行 reasoning_content 非空（纯推理信号）。
+            //    ⚠️ 2026-08-15 修复：Deepseek 思考行同时带 reasoning_content + tool_calls，
+            //    旧顺序 unresolved-tool Run 优先 → Review 永不触发（思考时桌宠没反应）。
+            //    有 reasoning = 正在思考 → Review 优先于 Run（桌宠思考中气泡 + 随机 skill 动作）。
+            if (snapshot.Messages.ReviewCount > 0) {
+                return (AgentState.Review, $"review: {snapshot.Messages.ReviewCount}");
+            }
+
             // 3) Run（unresolved-tool）：最新 assistant 行 tool_calls 非空 + 无后续 role='tool' 行（tool 未完成）。
             if (snapshot.Messages.HasUnresolvedTool) {
                 return (AgentState.Run, BuildDetail(activeCount));
-            }
-
-            // 4) Review：新近窗内 assistant 行 reasoning_content 非空（纯推理信号）。
-            if (snapshot.Messages.ReviewCount > 0) {
-                return (AgentState.Review, $"review: {snapshot.Messages.ReviewCount}");
             }
 
             // 5) busy Run 兜底：存在近期 active 会话。
@@ -515,6 +847,21 @@ namespace MiniPet.Services.Adapters
         {
             // 隐私：Detail 只放非内容摘要。
             return $"active sessions: {activeSessionCount}";
+        }
+
+        /// <summary>多 profile 聚合优先级（数值越大越优先）：Failed > Wave > Run > Review > Waiting > Idle。</summary>
+        private static int StateRank(AgentState s)
+        {
+            return s switch
+            {
+                AgentState.Failed => 6,
+                AgentState.Wave => 5,
+                AgentState.Run => 4,
+                AgentState.Review => 3,
+                AgentState.Waiting => 2,
+                AgentState.Jump => 2,
+                _ => 1, // Idle
+            };
         }
 
         // ============================================================

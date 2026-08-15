@@ -49,13 +49,15 @@ public partial class SettingsWindow
             var searchBox = new TextBox
             {
                 Watermark = "搜索地图，树状过滤…",
-                FontSize = 11,
+                FontSize = 12,
                 Height = 26,
-                Padding = new Thickness(8, 3),
-                Background = BrushInputBg,
-                BorderBrush = BrushBorder,
+                Padding = new Thickness(10, 6),
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5)
+                CornerRadius = new CornerRadius(6),
+                HorizontalAlignment = HorizontalAlignment.Left
             };
             _bgRegionTree = new TreeView
             {
@@ -120,8 +122,8 @@ public partial class SettingsWindow
             var viewportPanel = new StackPanel { Margin = new Thickness(10, 6, 5, 2), Spacing = 2 };
             viewportPanel.Children.Add(new TextBlock { Text = "🎥 摄像机镜头大小", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim });
             var viewportRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            var vpW = new TextBox { Text = _settings.ViewportW.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = BrushInputBg, Foreground = BrushTxtPrimary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
-            var vpH = new TextBox { Text = _settings.ViewportH.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = BrushInputBg, Foreground = BrushTxtPrimary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+            var vpW = new TextBox { Text = _settings.ViewportW.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
+            var vpH = new TextBox { Text = _settings.ViewportH.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
             var vpBtn = new Button { Content = "应用", FontSize = 9, Padding = new Thickness(8, 2), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3) };
             vpBtn.Click += (_, _) =>
             {
@@ -313,7 +315,7 @@ public partial class SettingsWindow
                                 }
                                 else
                                 {
-                                    stack.Children.Add(new TextBlock { Text = node.Children.Count > 0 ? "▾" : "▪", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+                                    // 展开/折叠指示由 TreeView 原生箭头承担（移除自定义 ▾/▪，避免与原生箭头重叠）
                                     stack.Children.Add(new TextBlock { Text = node.Name, FontSize = 11, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center });
                                     stack.Children.Add(new TextBlock { Text = $"[{node.TotalCount}]", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
                                 }

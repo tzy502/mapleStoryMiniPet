@@ -46,6 +46,8 @@ public partial class BalloonControl : UserControl
 
             BalloonText.Text = text;
             BalloonText.FontSize = 12;
+            // 加粗仅「思考中…」由 RenderBalloon(bold) 在 PNG 层绘制；这里不全局加粗（胶水 2026-08-15）
+            BalloonText.FontWeight = FontWeight.Normal;
             BalloonText.Foreground = Brushes.Black;
             BalloonText.TextAlignment = TextAlignment.Center;
 

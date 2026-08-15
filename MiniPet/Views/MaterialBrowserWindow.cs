@@ -33,6 +33,8 @@ public partial class MaterialBrowserWindow : Window
     private static readonly SolidColorBrush BrushBg = new(BgColor);
     private static readonly SolidColorBrush BrushCard = new(CardColor);
     private static readonly SolidColorBrush BrushBorder = new(BorderColor);
+    // input 边框与全项目统一（AI 配置样式：半透明浅灰，胶水 2026-08-15）
+    private static readonly SolidColorBrush InputBorder = new(Color.FromArgb(77, 120, 120, 140));
     private static readonly SolidColorBrush BrushAccent = new(AccentColor);
     private static readonly SolidColorBrush BrushTxtPrimary = new(TxtPrimary);
     private static readonly SolidColorBrush BrushTxtSecondary = new(TxtSecondary);
@@ -444,11 +446,11 @@ public partial class MaterialBrowserWindow : Window
             Width = 130,
             Height = 26,
             FontSize = 11,
-            Foreground = BrushTxtPrimary,
-            Background = BrushInputBg,
-            BorderBrush = BrushBorder,
+            Foreground = Brushes.Black,
+            Background = Brushes.White,
+            BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(6),
             PlaceholderText = "加载搭配"
         };
         _outfitCombo.SelectionChanged += (_, _) => { try { LoadDraftOutfit(); } catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] LoadOutfit: {ex.Message}"); } };
@@ -477,9 +479,9 @@ public partial class MaterialBrowserWindow : Window
         var searchPanel = new Border
         {
             CornerRadius = new CornerRadius(6),
-            BorderBrush = BrushBorder,
+            BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
-            Background = BrushInputBg,
+            Background = Brushes.White,
             Height = 30,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0)
@@ -497,13 +499,17 @@ public partial class MaterialBrowserWindow : Window
         {
             PlaceholderText = "按名称 / ID 搜索…",
             FontSize = 12,
-            Foreground = BrushTxtPrimary,
+            Foreground = Brushes.Black,
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(28, 0, 8, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
         _searchInput.TextChanged += OnSearchChanged;
+        // 聚焦高亮与全项目 input 一致：外层 Border 聚焦时变 accent 蓝（内层 TextBox 无边框，需容器承载焦点态）
+        var searchPanelBorder = new SolidColorBrush(InputBorder.Color);
+        _searchInput.GotFocus += (_, _) => searchPanel.BorderBrush = BrushAccent;
+        _searchInput.LostFocus += (_, _) => searchPanel.BorderBrush = searchPanelBorder;
 
         searchGrid.Children.Add(searchIcon);
         searchGrid.Children.Add(_searchInput);
@@ -541,18 +547,20 @@ public partial class MaterialBrowserWindow : Window
         pager.Children.Add(_prevBtn);
 
         // 分页可输入：输入页码 Enter 跳转（胶水需求 2026-08-09）
+        // 样式与全项目 input 统一（白底黑字圆角 6，胶水 2026-08-15）
         _pageLabel = new TextBox
         {
             Text = "1/1",
-            FontSize = 11,
-            Foreground = BrushTxtSecondary,
+            FontSize = 12,
+            Foreground = Brushes.Black,
             VerticalAlignment = VerticalAlignment.Center,
             Width = 80,
             TextAlignment = TextAlignment.Center,
-            Background = new SolidColorBrush(Color.FromArgb(16, 255, 255, 255)),
-            BorderBrush = BrushBorder,
+            Background = Brushes.White,
+            BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4)
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6)
         };
         _pageLabel.KeyDown += (_, e) =>
         {

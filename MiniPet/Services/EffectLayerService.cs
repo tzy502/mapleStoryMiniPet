@@ -36,6 +36,10 @@ namespace MiniPet.Services
         // 当前生效态，避免重复触发同一反馈（例如 Run 期间连续 OnReflect 只触发一次 busy 表情）
         private AgentState _currentReflect = AgentState.Idle;
 
+        // Review（思考）周期提示定时器：同态去重后进入 Review 只触发一次动画不重复，
+        // 用定时器每 3~5 秒补一次随机动作（skill/attack 优先），离开 Review 停止。
+        private DispatcherTimer? _reviewTimer;
+
         /// <summary>
         /// 实体动作驱动（Agent Run 切忙碌动作；PLAN §2 expression gateway 扩展）。
         /// 不进构造（装配 agent 并行按现有 public 构造签名装配，避免冲突），
@@ -87,6 +91,17 @@ namespace MiniPet.Services
 
             var prev = _currentReflect;
             _currentReflect = state;
+
+            // Review（思考）周期提示：进入 Review 启动定时器（每 3~5 秒随机动作），离开停止
+            if (state == AgentState.Review)
+            {
+                StartReviewTimer();
+            }
+            else
+            {
+                StopReviewTimer();
+            }
+
             ApplyEffect(state, prev);
         }
 
@@ -112,18 +127,39 @@ namespace MiniPet.Services
                 }
 
                 // Action 非空 → 切实体动作（Run 默认 "move"：纸娃娃→walk1，Mob→move，NPC→fallback stand）。
+                // Action 空且非 Idle → 随机动作（优先 skill/attack，AnimService.GetRandomAction；空=无可用动作则静默）。
                 // 实体差异在 driver 内消化；未注入 ActionDriver 时静默跳过。
                 if (!string.IsNullOrEmpty(fb?.Action))
                 {
                     ActionDriver?.PlayAction(fb.Action);
                 }
+                else if (state != AgentState.Idle && ActionDriver is AnimService animSvc)
+                {
+                    var randomAction = animSvc.GetRandomAction();
+                    if (!string.IsNullOrEmpty(randomAction))
+                    {
+                        ActionDriver.PlayAction(randomAction);
+                        Console.WriteLine($"[EffectLayerService] {state} → 随机动作 {randomAction}");
+                    }
+                }
 
-                // Balloon 非空 → 气泡；都空 → 不反馈
+                // Balloon 非空 → 气泡；空 → 状态默认话语（DefaultAgentStateFeedback 兜底，如 Review=思考中…）。
                 // Wave（做完了 撒花 🎉）显示 5s 后自动关闭；其余状态气泡常驻等替换。
-                if (!string.IsNullOrEmpty(fb?.Balloon))
+                var balloonText = fb?.Balloon;
+                if (string.IsNullOrEmpty(balloonText))
+                {
+                    var defaults = AgentIntegrationConfig.DefaultAgentStateFeedback();
+                    if (defaults.TryGetValue(state, out var defFb) && !string.IsNullOrEmpty(defFb.Balloon))
+                    {
+                        balloonText = defFb.Balloon;
+                    }
+                }
+                if (!string.IsNullOrEmpty(balloonText))
                 {
                     int? durationMs = state == AgentState.Wave ? 5000 : (int?)null;
-                    ShowBalloon(fb.Balloon, durationMs);
+                    // 加粗仅 Review（思考中…）气泡（胶水 2026-08-15：只针对思考时加粗）
+                    bool bold = state == AgentState.Review;
+                    ShowBalloon(balloonText, durationMs, bold);
                 }
             }
             catch (Exception ex)
@@ -137,7 +173,7 @@ namespace MiniPet.Services
         /// balloonId 取用户配置，缺省回退 "560"（与 PetWindow.ShowBalloonNow 一致）。
         /// BalloonService.Show 内部后台渲染 → OnBalloonReady 回调由上层（PetWindow）在 UI 线程显示。
         /// </summary>
-        private void ShowBalloon(string text, int? durationMs = null)
+        private void ShowBalloon(string text, int? durationMs = null, bool bold = false)
         {
             try
             {
@@ -154,11 +190,90 @@ namespace MiniPet.Services
                     return;
                 }
                 // fire-and-forget：Show 内部已切后台线程渲染，OnBalloonReady 回调到 UI 线程
-                _ = _balloonService.Show(text, data, durationMs);
+                _ = _balloonService.Show(text, data, durationMs, bold);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[EffectLayerService] ShowBalloon({text}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 启动 Review（思考）周期提示定时器：每 3~5 秒随机播一次动作（AnimService.GetRandomAction，
+        /// skill/attack 优先）。进入 Review 时调用；同态去重保证只启动一次，重复进入（已启动）直接跳过。
+        /// </summary>
+        private void StartReviewTimer()
+        {
+            try
+            {
+                if (_reviewTimer != null)
+                {
+                    return;
+                }
+                _reviewTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(Random.Shared.Next(3, 6))
+                };
+                _reviewTimer.Tick += OnReviewTimerTick;
+                _reviewTimer.Start();
+                Console.WriteLine("[EffectLayerService] Review → 启动思考提示定时器（每 3~5 秒随机动作）");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[EffectLayerService] StartReviewTimer: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 停止 Review 周期提示定时器。离开 Review 时调用（任何非 Review 状态都会停）。
+        /// </summary>
+        private void StopReviewTimer()
+        {
+            try
+            {
+                if (_reviewTimer == null)
+                {
+                    return;
+                }
+                _reviewTimer.Stop();
+                _reviewTimer.Tick -= OnReviewTimerTick;
+                _reviewTimer = null;
+                Console.WriteLine("[EffectLayerService] 离开 Review → 停止思考提示定时器");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[EffectLayerService] StopReviewTimer: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Review 定时器 tick：随机动作一次（复用 ApplyEffect 的 AnimService.GetRandomAction 分支逻辑）。
+        /// ActionDriver 未注入或不是 AnimService（无可选动作）时静默跳过，不打扰。
+        /// </summary>
+        private void OnReviewTimerTick(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (ActionDriver is not AnimService animSvc)
+                {
+                    return;
+                }
+                var randomAction = animSvc.GetRandomAction();
+                if (string.IsNullOrEmpty(randomAction))
+                {
+                    return;
+                }
+                ActionDriver.PlayAction(randomAction);
+                Console.WriteLine($"[EffectLayerService] Review 思考提示 → 随机动作 {randomAction}");
+                if (_reviewTimer != null)
+                {
+                    // 每次播完重设随机间隔（3~5 秒），节奏自然
+                    _reviewTimer.Interval = TimeSpan.FromSeconds(Random.Shared.Next(3, 6));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[EffectLayerService] OnReviewTimerTick: {ex.Message}");
             }
         }
 

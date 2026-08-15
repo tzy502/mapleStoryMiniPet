@@ -86,7 +86,7 @@ namespace MiniPet.Services
         /// origin-aware 定位（每片 origin 做 pivot 偏移）、角块原尺寸平铺、中心区拉伸、
         /// head 画在顶行中间、arrow 画在底行开头（s 宽>arrow 宽时回退对齐）。
         /// </summary>
-        public byte[]? RenderBalloon(string text, BalloonData balloonData)
+        public byte[]? RenderBalloon(string text, BalloonData balloonData, bool bold = false)
         {
             var tiles = balloonData.Tiles;
             if (tiles == null) return null;
@@ -126,15 +126,17 @@ namespace MiniPet.Services
             var textColor = new SKColor(cr, cg, cb, ca);
 
             // 文字断行（中文逐字符，对齐 MapleSalon2：wordWrapWidth=90, lineHeight=16, SimSun/MingLiU 系）
+            // 加粗仅「思考中…」（Review 状态气泡）使用（胶水 2026-08-15：只针对思考加粗）
+            var fontWeight = bold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal;
             using var textPaint = new SKPaint
             {
                 TextSize = 12,
                 Color = textColor,
                 IsAntialias = true,
                 TextAlign = SKTextAlign.Center,
-                Typeface = SKTypeface.FromFamilyName("PingFang SC")
-                    ?? SKTypeface.FromFamilyName("SimSun")
-                    ?? SKTypeface.FromFamilyName("MingLiU")
+                Typeface = SKTypeface.FromFamilyName("PingFang SC", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("SimSun", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("MingLiU", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
                     ?? SKTypeface.Default
             };
             const int wrapW = 90;
@@ -310,7 +312,7 @@ namespace MiniPet.Services
         /// 后台线程合成气泡 PNG，完成后通过 OnBalloonReady 回调（由上层在 UI 线程显示）。
         /// 自动淡出计时由 BalloonControl 内部负责。
         /// </summary>
-        public async Task Show(string text, BalloonData data, int? durationMs = null)
+        public async Task Show(string text, BalloonData data, int? durationMs = null, bool bold = false)
         {
             _hideCts?.Cancel();
             _hideCts = new CancellationTokenSource();
@@ -320,7 +322,7 @@ namespace MiniPet.Services
                 byte[]? rendered = null;
                 await Task.Run(() =>
                 {
-                    try { rendered = RenderBalloon(text, data); }
+                    try { rendered = RenderBalloon(text, data, bold); }
                     catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Render: {ex.Message}"); }
                 }, token);
 
@@ -355,7 +357,7 @@ namespace MiniPet.Services
             using var paint = new SKPaint
             {
                 TextSize = 12,
-                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
             };
 
             // 近似换行：按 maxWidth 截断，计算行数

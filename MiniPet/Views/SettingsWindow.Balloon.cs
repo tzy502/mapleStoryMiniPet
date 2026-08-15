@@ -42,11 +42,13 @@ public partial class SettingsWindow
             {
                 Watermark = "搜索气泡 ID / 名称",
                 FontSize = 12,
-                Padding = new Thickness(8, 4),
-                Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+                Padding = new Thickness(10, 6),
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5)
+                CornerRadius = new CornerRadius(6),
+                HorizontalAlignment = HorizontalAlignment.Left
             };
             sidebar.Children.Add(balloonSearch);
 

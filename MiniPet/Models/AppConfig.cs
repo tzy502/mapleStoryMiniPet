@@ -58,6 +58,8 @@ namespace MiniPet.Models
     /// </summary>
     public class AgentIntegrationConfig
     {
+        // Agent 集成总开关：false = 整块不加载（Aggregator / EffectLayer / 各 adapter 全部跳过创建）
+        public bool Enabled { get; set; } = true;
         // adapter 开关（默认仅 Hermes 开）
         public bool HermesEnabled { get; set; } = true;
         public bool CCEnabled { get; set; }
@@ -67,6 +69,10 @@ namespace MiniPet.Models
 
         // Hermes 接入 profile（默认空=默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析，根尊重 HERMES_HOME）
         public string? HermesProfile { get; set; }
+
+        // 多 profile 监控（2026-08-15）：分号分割，如 "default;work-dba;work-java"。空 = 仅 HermesProfile 单值。
+        // 兼容：HermesProfiles 优先；两者都空 = 默认 profile。
+        public string? HermesProfiles { get; set; }
 
         // Hermes state.db 只读轮询周期（秒）
         public int HermesPollIntervalSeconds { get; set; } = 5;

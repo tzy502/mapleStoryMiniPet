@@ -70,42 +70,50 @@ public partial class App : Application
             // Aggregator 与 EffectLayerService 在构造内已自 Subscribe，这里只 new + Start。
             try
             {
-                var balloonService = _serviceProvider.GetRequiredService<BalloonService>();
-                var paperdoll = _serviceProvider.GetRequiredService<PaperdollService>();
-
-                // 1) 聚合器：订阅各 adapter 的 AgentStateChanged，按优先级算桌宠反映态
-                //    （构造内已 Subscribe；Start 启 staleness/Jump 衰减 DispatcherTimer）
-                _agentAggregator = new AgentStateAggregator(eventBus);
-                ApplyAgentIntegrationSettings(_agentAggregator, configService);
-                _agentAggregator.Start();
-
-                // 2) 特效层：订阅 PetReflectStateChanged，把反映态翻译成气泡/表情
-                //    （构造内已 Subscribe；无 Start/Stop，跟随 App 生命周期）
-                _effectLayer = new EffectLayerService(eventBus, balloonService, configService, paperdoll);
-                // 接 IActionDriver（缺口3）：AnimService 实现 IActionDriver，Run/Idle 经它切忙碌动作
-                //     （纸娃娃→walk1 / Mob→move / NPC→fallback stand）。internal set 同 assembly 可写。
-                _effectLayer.ActionDriver = _serviceProvider.GetRequiredService<AnimService>();
-
-                // 3) 读 config.AgentIntegration 开关，按开关实例化 adapter 并 Start
+                // 读 config.AgentIntegration 配置；总开关 Enabled=false 时整块不加载（Aggregator / EffectLayer / 各 adapter）
                 var ai = LoadAgentIntegration(configService);
-                if (ai.HermesEnabled)
+                if (!ai.Enabled)
                 {
-                    // HermesAdapter 传 ai（HermesProfile 生效；profile 空 = 默认 state.db）。
-                    var hermes = new HermesAdapter(eventBus, ai);
-                    _agentAdapters.Add(hermes);
-                    hermes.Start();
+                    Console.WriteLine("[App] Agent 集成已禁用（配置 Enabled=false）");
                 }
-                if (ai.CCEnabled)
+                else
                 {
-                    var cc = new ClaudeCodeAdapter(eventBus);
-                    _agentAdapters.Add(cc);
-                    cc.Start();
-                }
-                if (ai.CodexEnabled)
-                {
-                    var codex = new CodexAdapter(eventBus);
-                    _agentAdapters.Add(codex);
-                    codex.Start();
+                    var balloonService = _serviceProvider.GetRequiredService<BalloonService>();
+                    var paperdoll = _serviceProvider.GetRequiredService<PaperdollService>();
+
+                    // 1) 聚合器：订阅各 adapter 的 AgentStateChanged，按优先级算桌宠反映态
+                    //    （构造内已 Subscribe；Start 启 staleness/Jump 衰减 DispatcherTimer）
+                    _agentAggregator = new AgentStateAggregator(eventBus);
+                    ApplyAgentIntegrationSettings(_agentAggregator, configService);
+                    _agentAggregator.Start();
+
+                    // 2) 特效层：订阅 PetReflectStateChanged，把反映态翻译成气泡/表情
+                    //    （构造内已 Subscribe；无 Start/Stop，跟随 App 生命周期）
+                    _effectLayer = new EffectLayerService(eventBus, balloonService, configService, paperdoll);
+                    // 接 IActionDriver（缺口3）：AnimService 实现 IActionDriver，Run/Idle 经它切忙碌动作
+                    //     （纸娃娃→walk1 / Mob→move / NPC→fallback stand）。internal set 同 assembly 可写。
+                    _effectLayer.ActionDriver = _serviceProvider.GetRequiredService<AnimService>();
+
+                    // 3) 按 adapter 开关实例化 adapter 并 Start
+                    if (ai.HermesEnabled)
+                    {
+                        // HermesAdapter 传 ai（HermesProfile 生效；profile 空 = 默认 state.db）。
+                        var hermes = new HermesAdapter(eventBus, ai);
+                        _agentAdapters.Add(hermes);
+                        hermes.Start();
+                    }
+                    if (ai.CCEnabled)
+                    {
+                        var cc = new ClaudeCodeAdapter(eventBus);
+                        _agentAdapters.Add(cc);
+                        cc.Start();
+                    }
+                    if (ai.CodexEnabled)
+                    {
+                        var codex = new CodexAdapter(eventBus);
+                        _agentAdapters.Add(codex);
+                        codex.Start();
+                    }
                 }
             }
             catch (Exception ex)

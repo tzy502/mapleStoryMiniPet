@@ -153,7 +153,7 @@ public partial class SettingsWindow
 
         var genderRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         genderRow.Children.Add(new TextBlock { Text = "性别", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
-        _genderCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), ItemsSource = new[] { "男 (0)", "女 (1)" }, SelectedIndex = _paperdollCurrent.Gender };
+        _genderCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), ItemsSource = new[] { "男 (0)", "女 (1)" }, SelectedIndex = _paperdollCurrent.Gender };
         _genderCombo.SelectionChanged += (_, _) => { try { _paperdollCurrent.Gender = _genderCombo.SelectedIndex; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Gender: {ex.Message}"); } };
         genderRow.Children.Add(_genderCombo);
         content.Children.Add(genderRow);
@@ -161,7 +161,7 @@ public partial class SettingsWindow
         // 皮肤：body id 选择（head=body+10000 成对）
         var skinRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         skinRow.Children.Add(new TextBlock { Text = "皮肤", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
-        _skinCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4) };
+        _skinCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
         _skinCombo.ItemsSource = BuildSkinList();
         _skinCombo.SelectedIndex = SkinIndex(_paperdollCurrent.BodyId);
         _skinCombo.SelectionChanged += (_, _) => { try { if (_skinCombo.SelectedItem is SkinItem si) { _paperdollCurrent.BodyId = si.Id; UpdatePaperdollPreview(); } } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Skin: {ex.Message}"); } };
@@ -170,7 +170,7 @@ public partial class SettingsWindow
 
         var earRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         earRow.Children.Add(new TextBlock { Text = "耳朵", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
-        _earCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = BrushTxtPrimary, Background = BrushInputBg, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), ItemsSource = new[] { "人类", "精灵", "精灵(Lef)", "高等精灵" }, SelectedIndex = EarIndex(_paperdollCurrent.Ear) };
+        _earCombo = new ComboBox { Width = 100, Height = 26, FontSize = 11, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), ItemsSource = new[] { "人类", "精灵", "精灵(Lef)", "高等精灵" }, SelectedIndex = EarIndex(_paperdollCurrent.Ear) };
         _earCombo.SelectionChanged += (_, _) => { try { var i = _earCombo?.SelectedIndex ?? 0; _paperdollCurrent.Ear = EarTypeAt(i); UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Ear: {ex.Message}"); } };
         earRow.Children.Add(_earCombo);
         content.Children.Add(earRow);
@@ -217,7 +217,8 @@ public partial class SettingsWindow
         return content;
     }
 
-    /// <summary>装备选择行：按钮点击 → 打开素材选择器（预选部位分类），选件应用到当前外观；× 清除。</summary>
+    /// <summary>装备选择行：input 样式（白底黑字，与 AI 配置 input 统一——胶水 2026-08-15：这是 input 不是 button），
+    /// 点击打开素材选择器（预选部位分类），选件应用到当前外观；× 清除。</summary>
     private StackPanel BuildEquipSelectRow(string label, string category, out Button selectBtn)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
@@ -225,15 +226,15 @@ public partial class SettingsWindow
         selectBtn = new Button
         {
             Content = "选择…",
-            Width = 120,
-            Height = 26,
-            FontSize = 11,
-            Foreground = BrushTxtPrimary,
-            Background = BrushInputBg,
+            Width = 140,
+            Height = 28,
+            FontSize = 12,
+            Foreground = Brushes.Black,
+            Background = Brushes.White,
             BorderBrush = new SolidColorBrush(InputBorder),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 0),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
             HorizontalContentAlignment = HorizontalAlignment.Left
         };
         var btnRef = selectBtn;
