@@ -20,10 +20,14 @@ namespace MiniPet.Services
         // Mob 完整信息源：Data/Mob/Mob.wz 文件模式加载（Mob/{id}.img 含动作/origin/PNG-outlink；_Canvas 只是 PNG 仓库，不直接找）
         private Wz_Node? _mobFullRoot;
         private WzError? _lastError;
-        private static bool _stringDiagShown;
-        private static bool _eqpDiagShown;
         // Wz_Image.TryExtract 非线程安全：所有 img 提取串行化，避免并发损坏节点树
         private readonly object _wzLock = new();
+        // D8/D9 结果缓存（GetItemName / GetBalloonList）：WZ 重载时清空（见 LoadWz）。
+        // 锁纪律：_cacheLock 与 _wzLock 不嵌套逆序——取/存缓存不持锁调用 WZ（见各方法），
+        // 唯一同时持两锁的路径是 GetBalloonList 的 _wzLock → _cacheLock 顺序，无死锁。
+        private readonly object _cacheLock = new();
+        private readonly Dictionary<(string Category, string Id), string> _itemNameCache = new();
+        private List<(int Id, string Name)>? _balloonListCache;
         // 地图目录服务（God Class 拆分：地图 id 枚举/名称缓存/三级层级 独立成类）
         private readonly MapCatalogService _mapCatalog;
         // LoadWz 并发守卫：多窗口同时触发加载时单飞
@@ -68,6 +72,12 @@ namespace MiniPet.Services
                 _lastError = null;
                 LastWzLibWarning = null;
                 _mapCatalog.Reset();
+                // D8/D9：WZ 重载/重建后结果缓存失效（新数据可能改变名称/气泡集合）
+                lock (_cacheLock)
+                {
+                    _itemNameCache.Clear();
+                    _balloonListCache = null;
+                }
 
                 // wzlib 路径校验（仅校验与提示，运行时仍用编译期内置 DLL）
                 try
@@ -102,6 +112,9 @@ namespace MiniPet.Services
             if (string.IsNullOrEmpty(baseWzPath) || !Directory.Exists(baseWzPath))
             {
                 _lastError = WzError.WzPathInvalid;
+                // D1：路径无效视为加载失败——释放上一轮残留结构，避免半构建内存驻留
+                _wzs = null;
+                _mobFullRoot = null;
                 return (false, _lastError);
             }
             _baseWzPath = baseWzPath;
@@ -180,6 +193,10 @@ namespace MiniPet.Services
             {
                 Console.Error.WriteLine($"[WzService] WZ 加载失败: {ex.Message}");
                 _lastError = WzError.Unknown;
+                // D1：释放半构建结构（内存驻留 + 允许下次 LoadWz 干净重试）
+                _wzs = null;
+                _mobFullRoot = null;
+                _wzLoaded = false;
                 return (false, _lastError);
             }
             }
@@ -336,6 +353,43 @@ namespace MiniPet.Services
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[WzService] ExtractPng({wzPath}): {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 提取装备/部件图标 PNG（素材浏览器 icon 预览用）：优先 {root}/icon，回退 {root}/iconRaw。
+        /// 节点为 Wz_Png 或经 UOL/_outlink 链接（解析链与 ExtractTilePng 一致）；锁语义同其他提取方法（_wzLock 内串行化）。
+        /// 返回 PNG 编码字节；无图标/解析失败返回 null。
+        /// </summary>
+        /// <param name="root">WZ 部件路径（不含字段名），如 Character/Cap/01000000.img。</param>
+        public byte[]? GetIcon(string root)
+        {
+            try
+            {
+                if (!_wzLoaded || _wzs?.WzNode == null || string.IsNullOrEmpty(root)) return null;
+                lock (_wzLock)
+                {
+                    foreach (var field in new[] { "icon", "iconRaw" })
+                    {
+                        var node = _wzs.WzNode.FindNodeByPath(true, $"{root}/{field}".Replace('/', '\\').Split('\\'));
+                        if (node == null) continue;
+                        try
+                        {
+                            var pngNode = node.ResolveUol() ?? node;
+                            var linkNode = GetLinkedSourceNode(pngNode) ?? pngNode;
+                            var png = linkNode.GetValue<Wz_Png>() ?? pngNode.GetValue<Wz_Png>();
+                            if (png == null || png.Width <= 1 || png.Height <= 1) continue;
+                            return PngEncoder.Encode(PngEncoder.DecodePixels(png), png.Width, png.Height);
+                        }
+                        catch { /* 单字段解析失败 → 试下一字段 */ }
+                    }
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WzService] GetIcon({root}): {ex.Message}");
                 return null;
             }
         }
@@ -555,9 +609,27 @@ namespace MiniPet.Services
         /// <summary>
         /// 从 String.wz 获取纸娃娃部件中文名（发型/脸型/装备/坐骑/皮肤）。
         /// 桌宠 WZ 探针：戒指名在 String/Eqp.img/Eqp/Ring/{code}/name（Wz_Image 需 TryExtract）。
-        /// 多路径探测：Item.img/{cat}/{key}、Item.img/{cat}/{8位}、Eqp.img 各种层级 + TryExtract 回退；失败打印 String 结构诊断。
+        /// 多路径探测：Item.img/{cat}/{key}、Item.img/{cat}/{8位}、Eqp.img 各种层级 + TryExtract 回退。
+        /// D8：结果缓存（(category,id)→name，含空结果），WZ 重载清空——避免每次调用探测 9 条候选路径。
         /// </summary>
         public string GetItemName(string category, string id)
+        {
+            lock (_cacheLock)
+            {
+                if (_itemNameCache.TryGetValue((category, id), out var cached))
+                {
+                    return cached;
+                }
+            }
+            var result = GetItemNameCore(category, id);
+            lock (_cacheLock)
+            {
+                _itemNameCache[(category, id)] = result;
+            }
+            return result;
+        }
+
+        private string GetItemNameCore(string category, string id)
         {
             try
             {
@@ -591,32 +663,6 @@ namespace MiniPet.Services
                         var n = img.Node.FindNodeByPath($"{p}/name")?.GetValueEx<string>(null);
                         if (!string.IsNullOrEmpty(n)) return n;
                     }
-                    // 诊断：Eqp.img 内部结构（只打一次，帮定位皮肤/坐骑名路径）
-                    if (!_eqpDiagShown)
-                    {
-                        _eqpDiagShown = true;
-                        try
-                        {
-                            var eqpNode = img.Node.FindNodeByPath("Eqp");
-                            if (eqpNode != null)
-                                Console.WriteLine($"[WzService] GetItemName 诊断: Eqp 子节点前40=[{string.Join(",", eqpNode.Nodes.Take(40).Select(x => x.Text))}]");
-                            else
-                                Console.WriteLine($"[WzService] GetItemName 诊断: Eqp.img 顶层节点前40=[{string.Join(",", img.Node.Nodes.Take(40).Select(x => x.Text))}]");
-                        }
-                        catch { }
-                    }
-                }
-                // 诊断：String 结构（只打一次，帮定位真实路径；避免素材库枚举刷屏）
-                if (!_stringDiagShown)
-                {
-                    _stringDiagShown = true;
-                    try
-                    {
-                        var stringNode = FindNodeByPath("String");
-                        if (stringNode != null)
-                            Console.WriteLine($"[WzService] GetItemName 诊断({category}/{id}): String 子节点=[{string.Join(",", stringNode.Nodes.Take(30).Select(x => x.Text))}]");
-                    }
-                    catch { }
                 }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetItemName({category}/{id}): {ex.Message}"); }
@@ -871,37 +917,61 @@ namespace MiniPet.Services
         /// 遍历 Character/Ring/{code}.img 的 info/chatBalloon 字段 → 气泡 id；
         /// 名字取 String/Eqp.img/Eqp/Ring/{code去前导零}/name 的中文名（气泡名 = 关联装备名）。
         /// 探针实证：Character/Ring 1794 个戒指，01112200.img → chatBalloon=1；String 1112001 → 恋人戒指。
+        /// D9：结果缓存（首次构建后不再每次锁内 TryExtract 全部戒指），WZ 重载清空；返回浅拷贝防调用方污染缓存。
         /// </summary>
         public List<(int Id, string Name)> GetBalloonList()
         {
-            var result = new List<(int Id, string Name)>();
-            if (!_wzLoaded || _wzs?.WzNode == null) return result;
-            lock (_wzLock)
-            try
+            if (!_wzLoaded || _wzs?.WzNode == null) return new List<(int Id, string Name)>();
+            lock (_cacheLock)
             {
-                var ringDir = _wzs.WzNode.FindNodeByPath("Character", true)?.Nodes.FirstOrDefault(n => n.Text == "Ring");
-                if (ringDir == null) return result;
-                var seen = new HashSet<int>();
-                foreach (Wz_Node n in ringDir.Nodes)
+                if (_balloonListCache != null)
                 {
-                    if (!n.Text.EndsWith(".img")) continue;
-                    try
-                    {
-                        var img = n.GetValue<Wz_Image>();
-                        if (img == null || !img.TryExtract()) continue;
-                        var cb = img.Node.FindNodeByPath("info")?.FindNodeByPath("chatBalloon")?.GetValueEx<int>(0);
-                        if (cb == null || cb.Value <= 0) continue;
-                        if (!seen.Add(cb.Value)) continue; // 多戒指共用同一气泡 → 取第一个名字
-                        var strCode = n.Text[..^4].TrimStart('0');
-                        var name = strCode.Length > 0 ? GetRingName(strCode) : null;
-                        result.Add((cb.Value, string.IsNullOrEmpty(name) ? $"气泡 {cb.Value}" : name));
-                    }
-                    catch { /* 单个戒指解析失败跳过 */ }
+                    return new List<(int Id, string Name)>(_balloonListCache);
                 }
-                result.Sort((a, b) => a.Id.CompareTo(b.Id));
             }
-            catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetBalloonList: {ex.Message}"); }
-            return result;
+            lock (_wzLock)
+            {
+                // 双检：并发首次构建只建一次（_wzLock 串行化 WZ 遍历；锁序 _wzLock → _cacheLock，无逆序）
+                lock (_cacheLock)
+                {
+                    if (_balloonListCache != null)
+                    {
+                        return new List<(int Id, string Name)>(_balloonListCache);
+                    }
+                }
+                var result = new List<(int Id, string Name)>();
+                try
+                {
+                    var ringDir = _wzs.WzNode.FindNodeByPath("Character", true)?.Nodes.FirstOrDefault(n => n.Text == "Ring");
+                    if (ringDir != null)
+                    {
+                        var seen = new HashSet<int>();
+                        foreach (Wz_Node n in ringDir.Nodes)
+                        {
+                            if (!n.Text.EndsWith(".img")) continue;
+                            try
+                            {
+                                var img = n.GetValue<Wz_Image>();
+                                if (img == null || !img.TryExtract()) continue;
+                                var cb = img.Node.FindNodeByPath("info")?.FindNodeByPath("chatBalloon")?.GetValueEx<int>(0);
+                                if (cb == null || cb.Value <= 0) continue;
+                                if (!seen.Add(cb.Value)) continue; // 多戒指共用同一气泡 → 取第一个名字
+                                var strCode = n.Text[..^4].TrimStart('0');
+                                var name = strCode.Length > 0 ? GetRingName(strCode) : null;
+                                result.Add((cb.Value, string.IsNullOrEmpty(name) ? $"气泡 {cb.Value}" : name));
+                            }
+                            catch { /* 单个戒指解析失败跳过 */ }
+                        }
+                        result.Sort((a, b) => a.Id.CompareTo(b.Id));
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[WzService] GetBalloonList: {ex.Message}"); }
+                lock (_cacheLock)
+                {
+                    _balloonListCache = result;
+                }
+                return new List<(int Id, string Name)>(result);
+            }
         }
 
         /// <summary>取戒指中文名：String/Eqp.img/Eqp/Ring/{code}/name（code 为去前导零的 7 位短码）。</summary>
