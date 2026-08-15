@@ -384,7 +384,7 @@ namespace MiniPet.Services
                     return new FrameResult { Empty = true };
                 }
                 int idx = Math.Max(0, Math.Min(_currentFrameIndex, cs.FrameCount - 1));
-                var framePng = _spriteService.GetFramePng(_currentMobId, cs, idx, cd);
+                var framePng = _spriteService.GetFramePng(OfflineCacheMobId, cs, idx, cd);
                 return new FrameResult { Data = GetFrameMeta(cs, idx), Png = framePng };
             }
             catch
@@ -392,6 +392,15 @@ namespace MiniPet.Services
                 return new FrameResult { Empty = true };
             }
         }
+
+        /// <summary>
+        /// 离线条带缓存 mobId（R4）：纸娃娃按外观 hash 后缀（PaperdollService.OfflineCacheMobId），
+        /// 换外观自动失效；Mob/NPC 用原 mobId。
+        /// </summary>
+        private string OfflineCacheMobId =>
+            IsProviderActive && _frameProvider is PaperdollService pd && !string.IsNullOrEmpty(pd.OfflineCacheMobId)
+                ? pd.OfflineCacheMobId
+                : _currentMobId;
 
         /// <summary>
         /// 获取当前帧
@@ -726,14 +735,23 @@ namespace MiniPet.Services
 
         private (SpriteStrip?, byte[]?) LoadStripWithFallback(string action)
         {
-            var result = _spriteService.LoadSpriteStrip(_currentMobId, action);
+            // R3 纸娃娃离线兜底：语义动作名对齐离线条动作（stand→stand1、walk/move→walk1、fly→jump），
+            // 否则 "stand" 请求命不中 stand1 条带 → 空白宠物（A4 离线兜底不可达）。
+            // 只映射一次（IsOfflineActionName 防止已映射名再递归 → stand1→stand 死循环）。
+            string loadAction = action;
+            if (IsProviderActive && !IsOfflineActionName(loadAction))
+            {
+                loadAction = MapOfflineAction(loadAction);
+            }
+
+            var result = _spriteService.LoadSpriteStrip(OfflineCacheMobId, loadAction);
             if (result != null)
             {
-                var cached = _spriteService.GetCachedStrip(_currentMobId, action);
+                var cached = _spriteService.GetCachedStrip(OfflineCacheMobId, loadAction);
                 return cached;
             }
 
-            // fallback 链（_animDefs 声明的回退，如 fly→stand）
+            // fallback 链（语义名按原动作走，纸娃娃别名已在上方解析完，不会递归回 stand→stand1）
             var fallback = ResolveFallback(action);
             if (fallback != null && fallback != action)
             {
@@ -777,6 +795,19 @@ namespace MiniPet.Services
 
             return (null, null);
         }
+
+        /// <summary>离线条动作名（对齐 PaperdollService.OfflineActions：stand1/stand2/walk1/walk2/jump）。</summary>
+        private static bool IsOfflineActionName(string action) =>
+            action == "stand1" || action == "stand2" || action == "walk1" || action == "walk2" || action == "jump";
+
+        /// <summary>语义动作 → 离线条动作（R3：与 PaperdollService.ResolveAction 的 stand→stand1 语义对齐）。</summary>
+        private static string MapOfflineAction(string action) => action switch
+        {
+            "stand" => "stand1",
+            "walk" or "move" => "walk1",
+            "fly" => "jump",
+            _ => action
+        };
 
         private bool HasSpriteForAction(string action)
         {

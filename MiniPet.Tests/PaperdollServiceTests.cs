@@ -250,7 +250,89 @@ public class PaperdollServiceTests
         Assert.Null(loaded);
     }
 
+    // --- R1: 坐骑/椅子根路径 ---
+
+    [Fact]
+    public void MountRoot_190Range_ReturnsTamingMobPath()
+    {
+        Assert.Equal("Character/TamingMob/01902000.img", MountRoot("1902000"));
+        Assert.Equal("Character/TamingMob/01932021.img", MountRoot("1932021"));
+    }
+
+    [Fact]
+    public void MountRoot_InvalidId_ReturnsEmpty()
+    {
+        Assert.Equal("", MountRoot("not_a_number"));
+        Assert.Equal("", MountRoot("0"));
+    }
+
+    [Fact]
+    public void ChairRoot_3010000_FirstCandidateIs03010Img()
+    {
+        var candidates = ChairRootCandidates("3010000");
+        Assert.Equal("Item/Install/03010.img/03010000", candidates[0]);
+    }
+
+    [Fact]
+    public void ChairRoot_3020000_SecondCandidateIs0302Img()
+    {
+        var candidates = ChairRootCandidates("3020000");
+        Assert.Equal("Item/Install/0302.img/03020000", candidates[1]);
+    }
+
+    [Fact]
+    public void EarringSlots_ByIdPrefix()
+    {
+        // R8：101 面饰→Af、102 肩饰→Ay、103 耳环→Ae；非法回退 Ae
+        Assert.Equal("Af", EarringSlots("1010000"));
+        Assert.Equal("Ay", EarringSlots("1020000"));
+        Assert.Equal("Ae", EarringSlots("1030000"));
+        Assert.Equal("Ae", EarringSlots(""));
+    }
+
+    [Fact]
+    public void OfflineCacheMobId_HasHashSuffix()
+    {
+        // R4：离线条带缓存键含外观指纹（哨兵 + hash），换外观自动失效
+        Assert.StartsWith("__paperdoll__", OfflineCacheMobId("someHash123"));
+        Assert.EndsWith("someHash123", OfflineCacheMobId("someHash123"));
+    }
+
     // --- embedded minimal logic replicas ---
+
+    private static string MountRoot(string id)
+    {
+        if (!int.TryParse(id, out var n) || n <= 0) return "";
+        return $"Character/TamingMob/{n:D8}.img";
+    }
+
+    private static List<string> ChairRootCandidates(string id)
+    {
+        var n = int.Parse(id);
+        string node = n.ToString("D8");
+        return new List<string>
+        {
+            $"Item/Install/{n / 1000:D5}.img/{node}",
+            $"Item/Install/{n / 10000:D4}.img/{node}",
+            $"Item/Install/0301.img/{node}",
+            $"Item/Cash/{n / 1000:D5}.img/{node}",
+            $"Item/Cash/{n / 10000:D4}.img/{node}",
+        };
+    }
+
+    private static string EarringSlots(string? itemId)
+    {
+        if (!string.IsNullOrEmpty(itemId) && int.TryParse(itemId, out var n))
+        {
+            int part = n / 10000;
+            if (part == 101) return "Af";
+            if (part == 102) return "Ay";
+        }
+        return "Ae";
+    }
+
+    private static string OfflineCacheMobId(string hash) =>
+        string.IsNullOrEmpty(hash) ? "__paperdoll__" : $"__paperdoll__{hash}";
 
     private static readonly string[] ZOrder =
     {

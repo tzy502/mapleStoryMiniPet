@@ -287,6 +287,33 @@ public class AnimServiceTests
         Assert.False(triggered);
     }
 
+    // --- R3: 纸娃娃离线兜底动作映射（stand→stand1 等） ---
+
+    [Theory]
+    [InlineData("stand", "stand1")]
+    [InlineData("walk", "walk1")]
+    [InlineData("move", "walk1")]
+    [InlineData("fly", "jump")]
+    [InlineData("stand1", "stand1")]
+    [InlineData("walk2", "walk2")]
+    [InlineData("jump", "jump")]
+    [InlineData("swingOF", "swingOF")]
+    public void MapOfflineAction_AlignsWithOfflineStripNames(string input, string expected)
+    {
+        Assert.Equal(expected, MapOfflineAction(input));
+    }
+
+    [Fact]
+    public void IsOfflineActionName_OnlyStripActions()
+    {
+        Assert.True(IsOfflineActionName("stand1"));
+        Assert.True(IsOfflineActionName("walk2"));
+        Assert.True(IsOfflineActionName("jump"));
+        Assert.False(IsOfflineActionName("stand"));
+        Assert.False(IsOfflineActionName("move"));
+        Assert.False(IsOfflineActionName("swingOF"));
+    }
+
     // --- embedded minimal logic replicas ---
 
     private static readonly Dictionary<string, TestAnimationDef> AnimDefs = new()
@@ -394,4 +421,17 @@ public class AnimServiceTests
         if (state.CurrentMode != TestPlayMode.Loop) return false;
         return state.IdleAccumulated >= state.IdleTimeoutMinMs;
     }
+
+    // --- R3: 与 AnimService 离线兜底段一致的最小逻辑副本 ---
+
+    private static bool IsOfflineActionName(string action) =>
+        action == "stand1" || action == "stand2" || action == "walk1" || action == "walk2" || action == "jump";
+
+    private static string MapOfflineAction(string action) => action switch
+    {
+        "stand" => "stand1",
+        "walk" or "move" => "walk1",
+        "fly" => "jump",
+        _ => action
+    };
 }
