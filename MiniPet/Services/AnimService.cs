@@ -66,7 +66,10 @@ namespace MiniPet.Services
 
         // 实体帧提供者（纸娃娃实时合成；Mob/NPC 为 null 走图条）
         private IEntityFrameProvider? _frameProvider;
-        private int _lastDiagFrame = -1;
+
+        // 空闲随机动作池缓存（A13）：避免每次空闲触发都枚举磁盘动作列表；mob 变化时失效重建
+        private string _idlePoolMobId = string.Empty;
+        private List<string> _idleActionPool = new();
 
         public AnimService(SpriteService spriteService)
         {
@@ -94,6 +97,10 @@ namespace MiniPet.Services
         /// </summary>
         public void Play(string action, PlayMode mode)
         {
+            // 直接 Play 会打断当前动作（含 OneShot）——「等 OneShot 播完再切」的契约破裂，
+            // 残留的 pending（A1 拖拽/移动请求）应一并作废，否则会在下一次 OneShot 完成时误触发。
+            _pendingAction = string.Empty;
+
             if (ActiveProvider != null)
             {
                 // 纸娃娃：动作名解析到 provider 实际动作（stand→stand1 等），不查图条
@@ -154,17 +161,22 @@ namespace MiniPet.Services
         /// </summary>
         public void SwitchTo(string action)
         {
-            // 如果当前是 OneShot（非 fly/move/stand），
-            // 新动作是 fly/move → 不覆盖，等播完再切
+            // 当前在播 OneShot 表情（非 stand/fly/move）且新动作是 fly/move：
+            // 不打断表情动画，把新动作记入 _pendingAction，等 OneShot 播完（Tick 内 SwitchTo(nextAction)）再切。
+            // A1 修正：条件原为 `if (!string.IsNullOrEmpty(_pendingAction))`（写反）——OneShot 从干净状态
+            // （菜单触发等，pending 为空）播放时，move/fly 请求被静默丢弃；且空闲随机预置 pending="stand" 时
+            // 会无条件覆盖用户请求。修正语义：仅当没有 pending，或 pending 只是空闲随机预置的默认回退
+            // "stand" 时记录；已有用户请求（move/fly）时保留首次请求，不被后续覆盖。
             if (_currentMode == PlayMode.OneShot
                 && !_currentAction.StartsWith("stand")
                 && !_currentAction.StartsWith("fly")
                 && !_currentAction.StartsWith("move")
                 && (action.StartsWith("fly") || action.StartsWith("move")))
             {
-                // 标记 pending，等 OneShot 播完自动切
-                if (!string.IsNullOrEmpty(_pendingAction))
+                if (_pendingAction.Length == 0 || _pendingAction == "stand")
+                {
                     _pendingAction = action;
+                }
                 return;
             }
 
@@ -186,7 +198,10 @@ namespace MiniPet.Services
 
             var (strip, pngData) = _currentStrip;
             if (strip == null || pngData == null)
-                return new FrameResult();
+            {
+                // A9：在播但无条带（mob 无该动作/加载失败）→ 返回空帧标记，UI 清画布防旧帧冻结
+                return new FrameResult { Empty = true };
+            }
 
             _accumulatedDelay += deltaMs;
 
@@ -200,8 +215,10 @@ namespace MiniPet.Services
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
-                        _pendingAction = "stand";
-                        SwitchTo(randomAction);
+                        // A10：随机空闲只选 Loop 类动作 → 直接 Loop 播放，不预置 pending
+                        // （Loop 无 OneShot 完成回调，原预置 "stand" 会悬挂：下次 OneShot 完成时误回 stand）
+                        _pendingAction = string.Empty;
+                        Play(randomAction, PlayMode.Loop);
                         return Tick(0);
                     }
                     // 没有可用动作，重置计时器
@@ -255,6 +272,11 @@ namespace MiniPet.Services
 
             var (cs, cd) = _currentStrip;
             var framePng = _spriteService.GetFramePng(_currentMobId, cs!, _currentFrameIndex, cd);
+            if (framePng == null)
+            {
+                // A9：帧数据缺失（条带重建中/解码失败）→ 空帧标记，UI 清画布防旧帧冻结
+                return new FrameResult { Data = frameData, Empty = true };
+            }
             return new FrameResult { Data = frameData, Png = framePng };
         }
 
@@ -272,8 +294,9 @@ namespace MiniPet.Services
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction}");
-                        _pendingAction = ResolveActionForProvider("stand");
-                        SwitchTo(randomAction);
+                        // A10：同 mob 路径——只选 Loop 类动作，直接 Loop 播放，不预置 pending
+                        _pendingAction = string.Empty;
+                        Play(randomAction, PlayMode.Loop);
                         return TickProvider(provider, 0);
                     }
                     ResetIdleThreshold();
@@ -324,13 +347,6 @@ namespace MiniPet.Services
 
             if (advances > 0) EmitEvent(AnimEventType.FrameChanged, _currentAction);
 
-            // 诊断：帧推进（变化即打印，定位"动画只有一帧"）
-            if (_currentFrameIndex != _lastDiagFrame)
-            {
-                Console.WriteLine($"[Anim] action={_currentAction} frame={_currentFrameIndex}/{frameCount}");
-                _lastDiagFrame = _currentFrameIndex;
-            }
-
             var (bmp, ox, oy, fw, fh) = provider.RenderFrame(_currentAction, _currentFrameIndex);
             if (bmp == null) return FallbackToOfflineStrip(_currentAction);
             return new FrameResult
@@ -362,12 +378,19 @@ namespace MiniPet.Services
             {
                 _currentStrip = LoadStripWithFallback(action);
                 var (cs, cd) = _currentStrip;
-                if (cs == null || cd == null) return new FrameResult();
+                if (cs == null || cd == null)
+                {
+                    // A9：离线兜底也无可用条带 → 空帧标记，UI 清画布防旧帧冻结
+                    return new FrameResult { Empty = true };
+                }
                 int idx = Math.Max(0, Math.Min(_currentFrameIndex, cs.FrameCount - 1));
                 var framePng = _spriteService.GetFramePng(_currentMobId, cs, idx, cd);
                 return new FrameResult { Data = GetFrameMeta(cs, idx), Png = framePng };
             }
-            catch { return new FrameResult(); }
+            catch
+            {
+                return new FrameResult { Empty = true };
+            }
         }
 
         /// <summary>
@@ -399,6 +422,12 @@ namespace MiniPet.Services
         /// 获取当前动作名
         /// </summary>
         public string GetCurrentAction() => _currentAction;
+
+        /// <summary>
+        /// 当前播放图条引用（A13）：供 UI 帧循环直接读取，避免每帧二次 GetCachedStrip（锁 + LRU 链表维护）。
+        /// 图条路径有效；纸娃娃 provider 路径为 null（UI 走 FrameResult.Bitmap）。
+        /// </summary>
+        public SpriteStrip? CurrentStrip => _currentStrip.Item1;
 
         /// <summary>
         /// 获取可用动作列表
@@ -457,37 +486,103 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 获取随机空闲动作：从 mob 真实可用动作中选，排除 move/fly/die*/hit*，优先 skill*/attack*。
+        /// 获取随机空闲动作：只从「Loop 类动作」池中选（A10 统一 Loop/OneShot 分裂；A13 池缓存免每触发磁盘枚举）。
+        /// 旧逻辑问题：mob 路径会选中 walk1 等 OneShot（走一遍就停）、skill/attack 优先导致其他动作永轮不到、
+        /// 纸娃娃路径会选中 fly（Loop 无限循环且 pending 悬挂）。统一后空闲随机只播站/走/飞等循环微动效，
+        /// 由空闲阈值周期性替换，OneShot 完成回调不再参与。
         /// </summary>
         public string? GetRandomAction()
         {
+            var pool = GetIdleActionPool();
+            if (pool.Count == 0)
+            {
+                return null;
+            }
+
+            // 池缓存不含「当前动作」过滤（动作随时变），取时排除
+            var candidates = new List<string>(pool.Count);
+            foreach (var a in pool)
+            {
+                if (a != _currentAction)
+                {
+                    candidates.Add(a);
+                }
+            }
+            if (candidates.Count == 0)
+            {
+                return null;
+            }
+            return candidates[Random.Shared.Next(candidates.Count)];
+        }
+
+        /// <summary>
+        /// 空闲随机动作池（仅 Loop 类动作）：按 mob 缓存，mob 变化/动作集变化时失效重建（A13）。
+        /// 纸娃娃走 provider 动作列表；Mob/NPC 走精灵图条动作列表（内存 ∪ 磁盘）。
+        /// </summary>
+        private List<string> GetIdleActionPool()
+        {
+            if (_idlePoolMobId == _currentMobId && _idleActionPool.Count > 0)
+            {
+                return _idleActionPool;
+            }
+
+            List<string>? available;
             var provider = ActiveProvider;
             if (provider != null)
             {
-                var pAll = provider.GetAvailableActions()
-                    .Where(a => a != _currentAction
-                        && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
-                        && !a.StartsWith("hit", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                if (pAll.Count == 0) return null;
-                var pPreferred = pAll.Where(a => a.StartsWith("skill", StringComparison.OrdinalIgnoreCase)
-                                            || a.StartsWith("attack", StringComparison.OrdinalIgnoreCase)).ToList();
-                var pPool = pPreferred.Count > 0 ? pPreferred : pAll;
-                return pPool[Random.Shared.Next(pPool.Count)];
+                available = provider.GetAvailableActions();
+            }
+            else
+            {
+                available = _spriteService.GetAvailableActions(_currentMobId);
             }
 
-            var all = _spriteService.GetAvailableActions(_currentMobId)
-                .Where(a => a != _currentAction
-                    && !a.StartsWith("die", StringComparison.OrdinalIgnoreCase)
-                    && !a.StartsWith("hit", StringComparison.OrdinalIgnoreCase)
-                    && !a.Equals("move", StringComparison.OrdinalIgnoreCase)
-                    && !a.Equals("fly", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            if (all.Count == 0) return null;
-            var preferred = all.Where(a => a.StartsWith("skill", StringComparison.OrdinalIgnoreCase)
-                                        || a.StartsWith("attack", StringComparison.OrdinalIgnoreCase)).ToList();
-            var pool = preferred.Count > 0 ? preferred : all;
-            return pool[Random.Shared.Next(pool.Count)];
+            var pool = new List<string>();
+            foreach (var a in available)
+            {
+                if (a.StartsWith("die", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (a.StartsWith("hit", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (IsLoopAction(a))
+                {
+                    pool.Add(a);
+                }
+            }
+
+            _idlePoolMobId = _currentMobId;
+            _idleActionPool = pool;
+            return pool;
+        }
+
+        /// <summary>动作是否为 Loop 类（A10）：_animDefs 显式 Loop，或常见站立/移动循环动作名（stand*/walk*/fly/jump）。</summary>
+        private bool IsLoopAction(string action)
+        {
+            if (_animDefs.TryGetValue(action, out var def) && def.IsLoop)
+            {
+                return true;
+            }
+            if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (action.StartsWith("fly", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (action.StartsWith("stand", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -518,6 +613,8 @@ namespace MiniPet.Services
         public void SetCurrentMobId(string mobId)
         {
             _currentMobId = mobId ?? string.Empty;
+            // 随机动作池缓存失效（A13）：mob 变化后按新 mob 重建
+            _idlePoolMobId = string.Empty;
         }
 
         // ─── IActionDriver（Agent Run 实体忙碌动作驱动；PLAN-agent-integration.md §2）───
@@ -632,16 +729,50 @@ namespace MiniPet.Services
             var result = _spriteService.LoadSpriteStrip(_currentMobId, action);
             if (result != null)
             {
-                var pngKey = $"{_currentMobId}_{action}";
                 var cached = _spriteService.GetCachedStrip(_currentMobId, action);
                 return cached;
             }
 
-            // fallback 链
+            // fallback 链（_animDefs 声明的回退，如 fly→stand）
             var fallback = ResolveFallback(action);
             if (fallback != null && fallback != action)
             {
                 return LoadStripWithFallback(fallback);
+            }
+
+            // A4：纸娃娃离线兜底——离线精灵图条只含 provider 实际动作名（stand1/stand2/walk1/walk2/jump），
+            // 语义名（stand/move/walk/fly）解析不到 → 按 provider 别名 + stand1 终极兜底，避免离线空白宠物
+            if (_currentMobId == PaperdollService.SentinelMobId)
+            {
+                var alias = ResolveActionForProvider(action);
+                if (!string.IsNullOrEmpty(alias) && alias != action)
+                {
+                    var aliasResult = _spriteService.LoadSpriteStrip(_currentMobId, alias);
+                    if (aliasResult != null)
+                    {
+                        return _spriteService.GetCachedStrip(_currentMobId, alias);
+                    }
+                }
+                var stand1 = _spriteService.LoadSpriteStrip(_currentMobId, "stand1");
+                if (stand1 != null)
+                {
+                    return _spriteService.GetCachedStrip(_currentMobId, "stand1");
+                }
+            }
+
+            // A9：fallback 终点（stand）仍无 → 依次尝试常用移动动作，mob 无 stand 时不至于空白
+            foreach (var alt in new[] { "move", "fly", "walk" })
+            {
+                if (alt == action)
+                {
+                    continue;
+                }
+                var altResult = _spriteService.LoadSpriteStrip(_currentMobId, alt);
+                if (altResult != null)
+                {
+                    var cached = _spriteService.GetCachedStrip(_currentMobId, alt);
+                    return cached;
+                }
             }
 
             return (null, null);
@@ -719,5 +850,8 @@ namespace MiniPet.Services
         public int OriginY { get; set; }
         public int FrameW { get; set; }
         public int FrameH { get; set; }
+
+        /// <summary>在播但无帧可画（条带缺失/解码失败/离线兜底空）→ UI 应清画布防旧帧冻结（A9）。</summary>
+        public bool Empty { get; set; }
     }
 }

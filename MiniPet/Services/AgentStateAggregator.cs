@@ -120,18 +120,15 @@ namespace MiniPet.Services
                 }
             }
 
-            // 2) staleness 衰减：超时源降 Idle + 清 Failed/Run/Review
+            // 2) staleness 衰减：超时源降 Idle（A11：全状态统一衰减——原实现只清 Failed/Run/Review，
+            //    Wave/Waiting 永不因 staleness 回 Idle → 桌宠一直"撒花/等待"。现任何非 Idle 状态超时都降 Idle）
             var cutoff = now.AddSeconds(-StalenessSeconds);
             foreach (var kv in _latest)
             {
-                if (kv.Value.LastSeen < cutoff)
+                if (kv.Value.LastSeen < cutoff && kv.Value.State != AgentState.Idle)
                 {
-                    var s = kv.Value.State;
-                    if (s == AgentState.Failed || s == AgentState.Run || s == AgentState.Review)
-                    {
-                        _latest[kv.Key] = (AgentState.Idle, kv.Value.LastSeen);
-                        changed = true;
-                    }
+                    _latest[kv.Key] = (AgentState.Idle, kv.Value.LastSeen);
+                    changed = true;
                 }
             }
 

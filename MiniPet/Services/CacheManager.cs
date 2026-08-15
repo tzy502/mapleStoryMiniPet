@@ -12,6 +12,9 @@ namespace MiniPet.Services
     {
         private readonly string _cacheDir;
         private readonly Dictionary<string, byte[]> _memoryCache;
+        // A6：真 LRU 顺序（front=最近访问）+ 键→mob 映射（淘汰时跳过正在写入的活动 mob）
+        private readonly LinkedList<string> _lruOrder = new();
+        private readonly Dictionary<string, string> _keyMob = new();
         private readonly object _lock = new();
         private long _memoryCacheSize;
         private const long MaxMemoryCacheSize = 256 * 1024 * 1024; // 256MB（大素材下 128MB 过小，1~2 个 mob 即超限频繁淘汰）
@@ -79,7 +82,7 @@ namespace MiniPet.Services
 
                     // 更新内存缓存
                     var key = $"sprite_{mobId}_{action}";
-                    AddToMemoryCache(key, pngData);
+                    AddToMemoryCache(key, pngData, mobId);
                 }
                 catch (IOException)
                 {
@@ -104,8 +107,7 @@ namespace MiniPet.Services
                     var key = $"sprite_{mobId}_{action}";
                     if (_memoryCache.TryGetValue(key, out var oldPng))
                     {
-                        _memoryCache.Remove(key);
-                        _memoryCacheSize -= oldPng.Length;
+                        RemoveMemoryEntry(key, oldPng);
                     }
                 }
                 catch (IOException) { }
@@ -124,6 +126,8 @@ namespace MiniPet.Services
                 // 先检查内存缓存
                 if (_memoryCache.TryGetValue(key, out var cachedPng))
                 {
+                    // A6：命中刷新 LRU 顺序（真 LRU 淘汰依赖）
+                    TouchMemoryCache(key, mobId);
                     var configPath = GetSpritePath(mobId, action, "json");
                     if (File.Exists(configPath))
                     {
@@ -151,7 +155,7 @@ namespace MiniPet.Services
                         var configData = File.ReadAllBytes(configPath);
 
                         // 添加到内存缓存
-                        AddToMemoryCache(key, pngData);
+                        AddToMemoryCache(key, pngData, mobId);
 
                         return (pngData, configData);
                     }
@@ -405,30 +409,91 @@ namespace MiniPet.Services
             return Path.Combine(_cacheDir, "balloons", balloonId);
         }
 
-        private void AddToMemoryCache(string key, byte[] data)
+        private void AddToMemoryCache(string key, byte[] data, string mobId)
         {
-            // 检查是否需要清理内存缓存
-            while (_memoryCacheSize + data.Length > MaxMemoryCacheSize && _memoryCache.Count > 0)
-            {
-                // 简单的LRU：移除第一个元素
-                var enumerator = _memoryCache.GetEnumerator();
-                if (enumerator.MoveNext())
-                {
-                    var oldKey = enumerator.Current.Key;
-                    var evicted = enumerator.Current.Value;
-                    _memoryCache.Remove(oldKey);
-                    _memoryCacheSize -= evicted.Length;
-                }
-            }
+            // 先腾空间（A6 真 LRU + 活动 mob 免淘汰）
+            EvictToFit(data.Length, mobId);
 
             // 移除旧值（如果存在）
             if (_memoryCache.TryGetValue(key, out var oldValue))
             {
                 _memoryCacheSize -= oldValue.Length;
+                _lruOrder.Remove(key);
             }
 
             _memoryCache[key] = data;
             _memoryCacheSize += data.Length;
+            _lruOrder.AddFirst(key);
+            _keyMob[key] = mobId;
+        }
+
+        /// <summary>内存缓存访问触碰（A6）：命中时移到最近端（真 LRU 顺序维护）。</summary>
+        private void TouchMemoryCache(string key, string mobId)
+        {
+            if (!_memoryCache.ContainsKey(key))
+            {
+                return;
+            }
+            _lruOrder.Remove(key);
+            _lruOrder.AddFirst(key);
+            _keyMob[key] = mobId;
+        }
+
+        /// <summary>
+        /// 按容量腾出空间（A6）：原实现枚举 Dictionary 首个条目淘汰 = FIFO 伪 LRU，
+        /// 且 46MB 级条带写入会清空全部活跃条目（活跃条带刚写入即被淘汰 → 反复磁盘重读）。
+        /// 现改为真 LRU：从最久未访问（链表尾部）淘汰，跳过正在写入的 mob（活动 mob 免淘汰）；
+        /// 全部条目都属于活动 mob 时兜底淘汰 LRU 尾部。
+        /// </summary>
+        private void EvictToFit(long incomingSize, string? incomingMobId)
+        {
+            while (_memoryCacheSize + incomingSize > MaxMemoryCacheSize && _memoryCache.Count > 0)
+            {
+                // 从 LRU 尾部找候选：跳过正在写入的 mob（活动 mob 免淘汰）
+                string? evictKey = null;
+                byte[]? evictData = null;
+                var node = _lruOrder.Last;
+                while (node != null)
+                {
+                    var key = node.Value;
+                    if (_memoryCache.TryGetValue(key, out var data))
+                    {
+                        var mob = _keyMob.TryGetValue(key, out var m) ? m : null;
+                        if (mob != incomingMobId)
+                        {
+                            evictKey = key;
+                            evictData = data;
+                            break;
+                        }
+                    }
+                    node = node.Previous;
+                }
+
+                // 兜底：全部都是 incoming mob → 直接淘汰 LRU 尾部
+                if (evictKey == null)
+                {
+                    var last = _lruOrder.Last;
+                    if (last == null)
+                    {
+                        break;
+                    }
+                    evictKey = last.Value;
+                    if (!_memoryCache.TryGetValue(evictKey, out evictData))
+                    {
+                        break;
+                    }
+                }
+
+                RemoveMemoryEntry(evictKey, evictData);
+            }
+        }
+
+        private void RemoveMemoryEntry(string key, byte[] data)
+        {
+            _memoryCache.Remove(key);
+            _memoryCacheSize -= data.Length;
+            _lruOrder.Remove(key);
+            _keyMob.Remove(key);
         }
 
         private static byte[] ReadTileFile(string dir, string fileName)
