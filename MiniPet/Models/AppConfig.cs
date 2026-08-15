@@ -67,6 +67,20 @@ namespace MiniPet.Models
         // 通用特效层（Jump 庆祝 / Failed 弹窗）
         public bool EffectEnabled { get; set; }
 
+        // ── DSH（DeepSeek Harness）接入（RESEARCH-dsh-http-bridge.md §4.5）──
+
+        /// <summary>DSH 接入开关（本机 loopback 免鉴权，仅 127.0.0.1；默认关）。</summary>
+        public bool DshEnabled { get; set; }
+
+        /// <summary>DSH Host（默认 127.0.0.1，锁本机 loopback，不做跨机访问）。</summary>
+        public string DshHost { get; set; } = "127.0.0.1";
+
+        /// <summary>DSH Web 端口（默认 3080，dsh --profile web）。0 = 默认 3080。</summary>
+        public int DshPort { get; set; } = 3080;
+
+        /// <summary>DSH 会话工作区 cwd（可选；空 → MiniPet 进程当前目录）。</summary>
+        public string DshWorkspace { get; set; } = string.Empty;
+
         // Hermes 接入 profile（默认空=默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析，根尊重 HERMES_HOME）
         public string? HermesProfile { get; set; }
 

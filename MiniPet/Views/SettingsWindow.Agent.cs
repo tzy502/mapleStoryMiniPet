@@ -25,6 +25,7 @@ public partial class SettingsWindow
     private CheckBox? _agentCCCheck;
     private CheckBox? _agentCodexCheck;
     private CheckBox? _agentEffectCheck;
+    private CheckBox? _agentDshCheck;
     private NumericUpDown? _agentHermesInterval;
     private NumericUpDown? _agentCCSilence;
     private NumericUpDown? _agentJumpDisplay;
@@ -34,6 +35,10 @@ public partial class SettingsWindow
     private TextBlock? _agentHermesStatusText;
     private NumericUpDown? _agentHermesPort;
     private TextBox? _agentHermesApiKey;
+    private TextBox? _agentDshHostInput;
+    private NumericUpDown? _agentDshPort;
+    private TextBox? _agentDshWorkspaceInput;
+    private TextBlock? _agentDshStatusText;
     private readonly Dictionary<AgentState, TextBox> _agentStateActionInputs = new();
     private readonly Dictionary<AgentState, TextBox> _agentStateBalloonInputs = new();
 
@@ -73,7 +78,7 @@ public partial class SettingsWindow
             });
             root.Children.Add(new TextBlock
             {
-                Text = "订阅 Hermes / Claude Code / Codex 的实时活动状态，用桌宠反映 agent 干活过程。\n优先级 Hermes > Claude Code > Codex。",
+                Text = "订阅 DSH / Hermes / Claude Code / Codex 的实时活动状态，用桌宠反映 agent 干活过程。\n优先级 DSH > Hermes > Claude Code > Codex。",
                 FontSize = 11,
                 Foreground = BrushTxtDim,
                 TextWrapping = TextWrapping.Wrap,
@@ -177,6 +182,71 @@ public partial class SettingsWindow
                 Foreground = BrushTxtDim,
                 TextWrapping = TextWrapping.Wrap,
             });
+
+            // ── DSH 连接（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权） ──
+            root.Children.Add(BuildAgentSectionHeader("DSH 连接（DeepSeek Harness）"));
+            var dshPanel = new StackPanel { Spacing = 10 };
+            _agentDshCheck = MakeAgentToggle("启用 DSH 状态观察（默认关；仅本机 127.0.0.1）", ai.DshEnabled);
+            dshPanel.Children.Add(_agentDshCheck);
+            var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
+            _agentDshHostInput = new TextBox
+            {
+                Watermark = "127.0.0.1",
+                FontSize = 12,
+                Text = ai.DshHost ?? "127.0.0.1",
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            _agentDshStatusText = new TextBlock
+            {
+                Text = "⚪ 未同步",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(_agentDshHostInput, 0);
+            Grid.SetColumn(_agentDshStatusText, 1);
+            dshHostRow.Children.Add(_agentDshHostInput);
+            dshHostRow.Children.Add(_agentDshStatusText);
+            dshPanel.Children.Add(dshHostRow);
+            _agentDshPort = new NumericUpDown();
+            dshPanel.Children.Add(MakeAgentNumericBox("端口（默认 3080，dsh --profile web）", ai.DshPort == 0 ? 3080 : ai.DshPort, 1, 65535, _agentDshPort));
+            var wsWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            wsWrap.Children.Add(new TextBlock { Text = "会话工作区 cwd（可选，留空 = MiniPet 进程当前目录）", FontSize = 10, Foreground = BrushTxtDim });
+            _agentDshWorkspaceInput = new TextBox
+            {
+                Watermark = "例：/Users/.../mapleStoryMiniPet/.worktrees/dsh",
+                FontSize = 12,
+                Text = ai.DshWorkspace ?? string.Empty,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            wsWrap.Children.Add(_agentDshWorkspaceInput);
+            dshPanel.Children.Add(wsWrap);
+            root.Children.Add(dshPanel);
+            root.Children.Add(new TextBlock
+            {
+                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // 挂 DshAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
+            if (DshAdapter.Current is { } dshAdapter)
+            {
+                dshAdapter.ConnStatusCallback += UpdateDshConnStatus;
+            }
 
             // ── 7 态映射配置区 ──
             root.Children.Add(BuildAgentSectionHeader("7 态 状态→反馈 映射"));
@@ -409,6 +479,22 @@ public partial class SettingsWindow
                 var k = _agentHermesApiKey.Text?.Trim();
                 ai.HermesApiServerKey = k ?? string.Empty;
             }
+            // DSH 接入（开关 / Host / 端口 / 工作区）
+            if (_agentDshCheck != null) { ai.DshEnabled = _agentDshCheck.IsChecked ?? false; }
+            if (_agentDshHostInput != null)
+            {
+                var h = _agentDshHostInput.Text?.Trim();
+                ai.DshHost = string.IsNullOrEmpty(h) ? "127.0.0.1" : h;
+            }
+            if (_agentDshPort != null && _agentDshPort.Value.HasValue)
+            {
+                ai.DshPort = (int)Math.Max(1, _agentDshPort.Value.Value);
+            }
+            if (_agentDshWorkspaceInput != null)
+            {
+                var w = _agentDshWorkspaceInput.Text?.Trim();
+                ai.DshWorkspace = w ?? string.Empty;
+            }
             // 7 态映射：读现有 AgentStateFeedback 或默认，改后存回
             var map = ai.AgentStateFeedback ?? AgentIntegrationConfig.DefaultAgentStateFeedback();
             foreach (var kv in _agentStateActionInputs)
@@ -443,6 +529,20 @@ public partial class SettingsWindow
         if (_agentHermesStatusText != null)
         {
             _agentHermesStatusText.Text = (connected ? "🟢 " : "🔴 ") + text;
+        }
+    }
+
+    /// <summary>更新 DSH 同步状态显示（DshAdapter 回调）。UI 线程安全。</summary>
+    public void UpdateDshConnStatus(string text, bool connected)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => UpdateDshConnStatus(text, connected));
+            return;
+        }
+        if (_agentDshStatusText != null)
+        {
+            _agentDshStatusText.Text = (connected ? "🟢 " : "🔴 ") + text;
         }
     }
 }
