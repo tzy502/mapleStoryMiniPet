@@ -205,6 +205,50 @@ public class AnimServiceTests
         Assert.True(completed);
     }
 
+    // ── A1：OneShot 期间 move/fly 切换的 pending 语义（原实现条件写反 → 静默丢弃）──
+
+    [Fact]
+    public void SwitchTo_MoveDuringOneShot_WithEmptyPending_SetsPendingAndKeepsAction()
+    {
+        var state = new TestAnimState();
+        SwitchTo(state, "say");                       // 进入 OneShot 表情
+        Assert.Equal(TestPlayMode.OneShot, state.CurrentMode);
+        state.PendingAction = string.Empty;           // 干净状态（菜单触发等场景）
+        SwitchTo(state, "move");                      // A1：原实现静默丢弃，修正后应记 pending
+        Assert.Equal("move", state.PendingAction);
+        Assert.Equal("say", state.CurrentAction);     // 不打断当前表情
+    }
+
+    [Fact]
+    public void SwitchTo_MoveDuringOneShot_PendingStand_OverridesToMove()
+    {
+        var state = new TestAnimState();
+        SwitchTo(state, "say");
+        state.PendingAction = "stand";                // 空闲随机预置的默认回退
+        SwitchTo(state, "move");
+        Assert.Equal("move", state.PendingAction);    // 用户请求覆盖默认回退
+    }
+
+    [Fact]
+    public void SwitchTo_MoveDuringOneShot_ExistingUserPending_KeepsFirst()
+    {
+        var state = new TestAnimState();
+        SwitchTo(state, "say");
+        state.PendingAction = "fly";                  // 已有用户请求
+        SwitchTo(state, "move");
+        Assert.Equal("fly", state.PendingAction);     // 保留首次请求，不被后续覆盖
+    }
+
+    [Fact]
+    public void SwitchTo_StandDuringOneShot_InterruptsImmediately()
+    {
+        var state = new TestAnimState();
+        SwitchTo(state, "say");
+        SwitchTo(state, "stand");                     // stand 不受 OneShot 保护
+        Assert.Equal("stand", state.CurrentAction);
+        Assert.Equal(TestPlayMode.Loop, state.CurrentMode);
+    }
+
     [Fact]
     public void IdleAccumulated_ReachesThreshold_TriggersRandomAction()
     {
@@ -261,6 +305,22 @@ public class AnimServiceTests
 
     private static void SwitchTo(TestAnimState state, string action)
     {
+        // A1 语义（与 AnimService.SwitchTo 对齐）：OneShot 表情播放中收到 fly/move →
+        // 仅在无 pending 或 pending 为默认回退 "stand" 时记录为 pending，不打断当前表情动画。
+        // （原实现 `if (!string.IsNullOrEmpty(pending))` 写反：干净状态 pending 为空时 move/fly 被静默丢弃）
+        if (state.CurrentMode == TestPlayMode.OneShot
+            && !state.CurrentAction.StartsWith("stand")
+            && !state.CurrentAction.StartsWith("fly")
+            && !state.CurrentAction.StartsWith("move")
+            && (action.StartsWith("fly") || action.StartsWith("move")))
+        {
+            if (state.PendingAction.Length == 0 || state.PendingAction == "stand")
+            {
+                state.PendingAction = action;
+            }
+            return;
+        }
+
         var resolved = action;
         if (!AnimDefs.ContainsKey(action))
         {
@@ -268,6 +328,8 @@ public class AnimServiceTests
             if (resolved == null) return;
         }
 
+        // 对齐 AnimService.Play：直接播放（非 OneShot 保护分支）即作废残留 pending
+        state.PendingAction = string.Empty;
         state.CurrentAction = resolved;
         state.CurrentMode = IsLooping(resolved) ? TestPlayMode.Loop : TestPlayMode.OneShot;
         state.CurrentFrameIndex = 0;

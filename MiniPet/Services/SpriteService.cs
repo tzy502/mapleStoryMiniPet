@@ -121,7 +121,17 @@ namespace MiniPet.Services
                 _accessOrder.AddFirst(key);
                 _memoryCache[key] = entry;
 
-                // 锁内只做字典合并（极快），不再做像素解码/裁剪/重编码
+                // 锁内只做字典合并（极快），不再做像素解码/裁剪/重编码。
+                // A5：条带重建（帧数/几何变化或解码失败）后旧帧键会残留 → GetFramePng 命中旧帧显示错误帧。
+                // 合并前先按 "mobId|action_" 前缀清掉本动作的旧帧键（ConcurrentDictionary 枚举安全，可边删边遍历）。
+                var framePrefix = mobId + KeySep + action + "_";
+                foreach (var oldKey in _framesCache.Keys)
+                {
+                    if (oldKey.StartsWith(framePrefix, StringComparison.Ordinal))
+                    {
+                        _framesCache.TryRemove(oldKey, out _);
+                    }
+                }
                 foreach (var kv in frames)
                 {
                     _framesCache[kv.Key] = kv.Value;
@@ -286,6 +296,29 @@ namespace MiniPet.Services
 
         private void ProcessBgQueue()
         {
+            // Y2：后台队列全部经 50ms 定时器链异步处理——原实现首项在 PreloadMob 调用线程同步执行
+            // （"其余动作"队列首项仍阻塞调用方），后续项才走定时器。
+            System.Threading.Timer? timer = null;
+            timer = new System.Threading.Timer(_ =>
+            {
+                timer?.Dispose();
+                try
+                {
+                    ProcessBgQueueItem();
+                    // 处理完当前项，继续调度下一项（队列空时 ProcessBgQueueItem 置 _bgQueueRunning=false 停止链）
+                    ProcessBgQueue();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SpriteService] BgQueue: {ex.Message}");
+                    // 单项目失败不中断队列：继续处理下一项
+                    ProcessBgQueue();
+                }
+            }, null, 50, System.Threading.Timeout.Infinite);
+        }
+
+        private void ProcessBgQueueItem()
+        {
             (WzService? wz, string mobId, string action, string type)? item;
             lock (_bgQueueLock)
             {
@@ -305,12 +338,6 @@ namespace MiniPet.Services
                 {
                     PreloadAction(wz, mobId, action, type);
                 }
-                System.Threading.Timer? timer = null;
-                timer = new System.Threading.Timer(_ =>
-                {
-                    timer?.Dispose();
-                    ProcessBgQueue();
-                }, null, 50, System.Threading.Timeout.Infinite);
             }
         }
 

@@ -19,6 +19,8 @@ public partial class BalloonControl : UserControl
     private CancellationTokenSource? _fadeCts;
     private CancellationTokenSource? _autoHideCts;
     private readonly Random _rng = new();
+    // A3：当前持有的渲染位图（替换/隐藏前必须 Dispose，否则每颗气泡泄漏一个 Avalonia Bitmap）
+    private Bitmap? _currentBitmap;
 
     public BalloonControl()
     {
@@ -54,7 +56,11 @@ public partial class BalloonControl : UserControl
             if (renderedBitmap != null)
             {
                 // PNG 已含文字（BalloonService.RenderBalloon 绘制），不再叠加 TextBlock（旧版双重渲染 → 黑字盖白字）
+                // A3：先换 Source 再 Dispose 旧图（避免渲染期引用已释放位图；每次替换释放上一颗气泡的位图）
+                var old = _currentBitmap;
+                _currentBitmap = renderedBitmap;
                 BalloonImage.Source = renderedBitmap;
+                old?.Dispose();
                 BalloonText.IsVisible = false;
                 Width = renderedBitmap.PixelSize.Width;
                 Height = renderedBitmap.PixelSize.Height;
@@ -63,6 +69,9 @@ public partial class BalloonControl : UserControl
             {
                 BalloonText.IsVisible = true;
                 BalloonImage.Source = null;
+                // A3：切回文本模式时释放旧位图
+                _currentBitmap?.Dispose();
+                _currentBitmap = null;
                 Width = 260;
                 Height = 90;
             }
@@ -110,7 +119,10 @@ public partial class BalloonControl : UserControl
             if (!cts.Token.IsCancellationRequested)
             {
                 IsVisible = false;
+                // A3：隐藏时释放位图（先清 Source 再 Dispose，防渲染期引用已释放位图）
                 BalloonImage.Source = null;
+                _currentBitmap?.Dispose();
+                _currentBitmap = null;
                 BalloonText.Text = null;
             }
         }

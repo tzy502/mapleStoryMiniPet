@@ -63,7 +63,6 @@ public partial class PetWindow : Window
     private bool _pendingOriginSync;  // 启动/切宠物首帧：只同步 origin 基准不移动窗口（避免基准 0 首帧大跳）
     private readonly DispatcherTimer _timer;
     private readonly Stopwatch _stopwatch;
-    private int _tickCount;
     private double _lastElapsed;
     private SettingsWindow? _settingsWindow;
     private bool _isExiting;
@@ -86,6 +85,9 @@ public partial class PetWindow : Window
     private double _balloonAnchorX;      // 气泡锚点基准 X（屏幕像素，拖拽结束更新 → 动画切换气泡不动）
     private double _balloonAnchorY;      // 气泡锚点基准 Y（屏幕像素）
     private bool _balloonWasVisible;     // 拖拽前气泡是否可见（移动时隐藏，释放后恢复）
+    private bool _balloonWasVisibleBeforeHide;  // 隐藏到托盘前气泡是否可见（恢复时跟随显示，Y7）
+    // A15：已登记的 EventBus 订阅（窗口销毁时统一退订——匿名 lambda 无法单独退订）
+    private readonly List<(EventType Type, Action<object?> Handler)> _eventSubscriptions = new();
 
     public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager)
     {
@@ -223,7 +225,7 @@ public partial class PetWindow : Window
         // 随机聊天气泡定时器（30~90s，仅在 stand 时触发）
         InitBalloonTimer();
 
-        _eventBus.Subscribe(EventType.UserDragStart, _ =>
+        SubscribeBus(EventType.UserDragStart, _ =>
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -249,7 +251,7 @@ public partial class PetWindow : Window
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DragStart anim: {ex.Message}"); }
             });
         });
-        _eventBus.Subscribe(EventType.UserDragEnd, _ =>
+        SubscribeBus(EventType.UserDragEnd, _ =>
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -262,7 +264,7 @@ public partial class PetWindow : Window
             });
         });
 
-        _eventBus.Subscribe(EventType.AppExit, _ =>
+        SubscribeBus(EventType.AppExit, _ =>
         {
             try
             {
@@ -282,7 +284,7 @@ public partial class PetWindow : Window
             }
         });
 
-        _eventBus.Subscribe(EventType.ConfigChanged, data =>
+        SubscribeBus(EventType.ConfigChanged, data =>
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -294,7 +296,7 @@ public partial class PetWindow : Window
             });
         });
 
-        _eventBus.Subscribe(EventType.PetChanged, data =>
+        SubscribeBus(EventType.PetChanged, data =>
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -313,7 +315,7 @@ public partial class PetWindow : Window
             });
         });
 
-        _eventBus.Subscribe(EventType.OpenSettings, _ =>
+        SubscribeBus(EventType.OpenSettings, _ =>
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -325,6 +327,24 @@ public partial class PetWindow : Window
         // 桌宠缩放：启动读 WindowScale，订阅配置变更实时跟随（设置中心拖动滑块即生效）
         try { var sc = _configService.LoadSettings().WindowScale; _scale = sc > 0 ? sc : 1.0; } catch { _scale = 1.0; }
         _configService.OnSettingsChanged += s => { try { _scale = s.WindowScale > 0 ? s.WindowScale : 1.0; } catch { } };
+    }
+
+    /// <summary>EventBus 订阅登记（A15：窗口销毁时统一退订；匿名 lambda 无法单独退订）。</summary>
+    private void SubscribeBus(EventType eventType, Action<object?> handler)
+    {
+        _eventSubscriptions.Add((eventType, handler));
+        _eventBus.Subscribe(eventType, handler);
+    }
+
+    /// <summary>退订全部已登记 EventBus 订阅（A15，OnClosed 调用）。</summary>
+    private void UnsubscribeBusAll()
+    {
+        foreach (var (type, handler) in _eventSubscriptions)
+        {
+            try { _eventBus.Unsubscribe(type, handler); }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Unsubscribe {type}: {ex.Message}"); }
+        }
+        _eventSubscriptions.Clear();
     }
 
     public void LoadDefaultPet(WzService? wzService)
@@ -406,7 +426,7 @@ public partial class PetWindow : Window
             ScheduleRandomBalloon();
 
             // Agent 反映态订阅：非 Idle 时抑制随机气泡（状态气泡为主）
-            _eventBus.Subscribe(EventType.PetReflectStateChanged, data =>
+            SubscribeBus(EventType.PetReflectStateChanged, data =>
             {
                 if (data is AgentState s)
                 {
@@ -421,6 +441,10 @@ public partial class PetWindow : Window
                     try
                     {
                         if (png == null) { return; }
+                        // Y8：拖拽期间不弹新气泡——拖拽中窗口移动但锚点基准不更新，此时显示的气泡
+                        // 会停在旧位置漂移成「幽灵」；释放后下一轮定时器/状态变化再触发。
+                        // 同理：窗口已隐藏到托盘（在途气泡回调晚到）也不显示，防隐藏后幽灵气泡。
+                        if (_isDragging || !IsVisible) { return; }
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
                         TimeSpan? autoHide = durationMs.HasValue ? TimeSpan.FromMilliseconds(durationMs.Value) : null;
@@ -430,7 +454,6 @@ public partial class PetWindow : Window
                         // 锚点基准 = 当前角色锚点（拖拽结束会更新）
                         _balloonAnchorX = Position.X + _lastOriginX;
                         _balloonAnchorY = Position.Y + _lastOriginY;
-                        Console.WriteLine($"[PetWindow] BubbleShow: anchor=({_balloonAnchorX},{_balloonAnchorY}) lastOrigin=({_lastOriginX},{_lastOriginY}) pos={Position}");
                         _balloonWindow.ShowBalloonWindow();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonShow: {ex.Message}"); }
@@ -464,7 +487,11 @@ public partial class PetWindow : Window
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
         finally
         {
-            ScheduleRandomBalloon();
+            // A2：隐藏到托盘后不再调度下一轮（否则隐藏期间的异步续延会重启定时器，白烧 CPU）
+            if (IsVisible)
+            {
+                ScheduleRandomBalloon();
+            }
         }
     }
 
@@ -541,9 +568,87 @@ public partial class PetWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        try { _trayService.HideTrayIcon(); }
+        try
+        {
+            _trayService.HideTrayIcon();
+            // A15：窗口销毁时退订全部 EventBus 订阅（防匿名 lambda 泄漏）
+            UnsubscribeBusAll();
+        }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnClosed: {ex.Message}"); }
         base.OnClosed(e);
+    }
+
+    // ── A2/Y7：隐藏到托盘/恢复显示的生命周期处理 ──
+
+    /// <summary>
+    /// 监听 IsVisible 变化（Hide→托盘 / Show→恢复），停/启帧循环与随机气泡定时器（A2），
+    /// 气泡窗口跟随宠物隐藏/显示（Y7）。
+    /// </summary>
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty)
+        {
+            try
+            {
+                if (change.GetNewValue<bool>())
+                {
+                    OnPetShown();
+                }
+                else
+                {
+                    OnPetHidden();
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] IsVisibleChanged: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>隐藏到托盘：停 30fps 帧循环 + 随机气泡定时器，隐藏气泡窗口（A2/Y7）。</summary>
+    private void OnPetHidden()
+    {
+        try
+        {
+            if (_timer != null && _timer.IsEnabled)
+            {
+                _timer.Stop();
+            }
+            if (_balloonTimer != null && _balloonTimer.IsEnabled)
+            {
+                _balloonTimer.Stop();
+            }
+            // Y7：宠物隐藏时气泡窗口跟随隐藏（否则托盘隐藏后气泡仍悬浮成幽灵）
+            _balloonWasVisibleBeforeHide = _balloonWindow.IsVisible;
+            if (_balloonWindow.IsVisible)
+            {
+                _balloonWindow.HideBalloonWindow();
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetHidden: {ex.Message}"); }
+    }
+
+    /// <summary>从托盘恢复显示：重启帧循环 + 随机气泡定时器，恢复气泡（追帧保护已有：OnTimerTick delta&gt;500 钳 33）。</summary>
+    private void OnPetShown()
+    {
+        try
+        {
+            // 重置计时基准，避免恢复首帧算出隐藏期间的大 delta（虽有钳制，但保持基准干净）
+            _lastElapsed = _stopwatch.Elapsed.TotalMilliseconds;
+            if (_timer != null && !_timer.IsEnabled)
+            {
+                _timer.Start();
+            }
+            if (_balloonTimer != null && !_balloonTimer.IsEnabled)
+            {
+                ScheduleRandomBalloon(); // 内含 Stop+Start
+            }
+            if (_balloonWasVisibleBeforeHide)
+            {
+                _balloonWasVisibleBeforeHide = false;
+                _balloonWindow.ShowBalloonWindow();
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetShown: {ex.Message}"); }
     }
 
     private void SetupDragEvents()
@@ -635,7 +740,6 @@ public partial class PetWindow : Window
     {
         try
         {
-            _tickCount++;
             var elapsed = _stopwatch.Elapsed.TotalMilliseconds;
             var delta = elapsed - _lastElapsed;
             _lastElapsed = elapsed;
@@ -654,11 +758,17 @@ public partial class PetWindow : Window
             else if (fr.Png != null)
             {
                 pngData = fr.Png;
-                var strip = _spriteService.GetCachedStrip(_animService.GetCurrentMobId(), _animService.GetCurrentAction()).Item1;
+                // A13：直接读 AnimService 持有的当前图条，不再每帧二次 GetCachedStrip（锁 + LRU 链表维护）
+                var strip = _animService.CurrentStrip;
                 ox = strip?.OriginX ?? 0;
                 oy = strip?.OriginY ?? 0;
                 fw = strip?.FrameWidth ?? 0;
                 fh = strip?.FrameHeight ?? 0;
+            }
+            else if (fr.Empty)
+            {
+                // A9：在播但无帧数据（条带缺失/解码失败/离线兜底空）→ 清画布，避免旧帧冻结
+                _spriteCanvas.Clear();
             }
             if (pngData != null || fr.Bitmap != null)
             {
@@ -758,6 +868,12 @@ public partial class PetWindow : Window
                 // mob/npc = 居中于锚点（原逻辑，胶水规则 2026-08-08：arrow 修复不改动其他类型）
                 if (_balloonWindow.IsVisible)
                 {
+                    // Y8：拖拽中气泡锚点跟随当前角色位置（拖拽期间窗口移动而锚点基准不更新 → 残留气泡漂移成幽灵）
+                    if (_isDragging)
+                    {
+                        _balloonAnchorX = Position.X + _lastOriginX;
+                        _balloonAnchorY = Position.Y + _lastOriginY;
+                    }
                     double aw = _anchorFrameW > 0 ? _anchorFrameW : fw;
                     double ah = _anchorFrameH > 0 ? _anchorFrameH : fh;
                     double ratio = aw > 0 ? ah / aw : 1.5;
@@ -784,8 +900,8 @@ public partial class PetWindow : Window
                         (int)by);
                 }
             }
-            var action = _animService.GetCurrentAction();
-            _infoText.Text = $"{action} #{_tickCount}";
+            // 状态文字只显示动作名（去掉原调试用 tick 计数）
+            _infoText.Text = _animService.GetCurrentAction();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
     }
@@ -955,6 +1071,7 @@ public partial class PetWindow : Window
     /// <summary>
     /// 切换到指定素材桌宠：stand 已缓存则立即切；未缓存则后台预加载（显示 loading 菊花），期间保持旧角色播放，加载完成后切换。
     /// 避免首次切换（WZ 构建/磁盘读取）在 UI 线程同步执行导致的明显卡顿。代际 token 防快速连点竞态。
+    /// A8：加载失败不再静默——提示用户且不发布 PetChanged（托盘 tooltip 与最近使用记录不脏数据）。
     /// </summary>
     private void SwitchToPet(string id, string name, string type)
     {
@@ -969,6 +1086,8 @@ public partial class PetWindow : Window
                 _lastFrameW = 0; _lastFrameH = 0;
                 _animService.SetCurrentMobId(id);
                 _animService.SwitchTo("stand");
+                // 切换成功才发布 PetChanged（tooltip / 最近使用记录）
+                _eventBus.Publish(EventType.PetChanged, (id, name));
             }
             else
             {
@@ -984,17 +1103,24 @@ public partial class PetWindow : Window
                         {
                             if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖
                             ShowPetLoading(false);
-                            if (!ok) { return; }
+                            if (!ok)
+                            {
+                                // A8：失败提示 + 不发布 PetChanged（不脏 tooltip/最近使用）
+                                Console.Error.WriteLine($"[PetWindow] SwitchToPet({id}) 加载失败");
+                                ShowInfoPopup("切换宠物", $"素材 [{name}] ({id}) 加载失败，已保持当前宠物。\n若为离线状态，请确认该素材已有本地缓存。");
+                                return;
+                            }
                             _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
                             _lastFrameW = 0; _lastFrameH = 0;
                             _animService.SetCurrentMobId(id);
                             _animService.SwitchTo("stand");
+                            // 切换成功才发布 PetChanged（tooltip / 最近使用记录）
+                            _eventBus.Publish(EventType.PetChanged, (id, name));
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetSwitch: {ex.Message}"); }
                     });
                 });
             }
-            _eventBus.Publish(EventType.PetChanged, (id, name));
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPet: {ex.Message}"); }
     }

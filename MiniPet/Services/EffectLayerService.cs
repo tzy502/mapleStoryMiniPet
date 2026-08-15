@@ -159,7 +159,8 @@ namespace MiniPet.Services
                     int? durationMs = state == AgentState.Wave ? 5000 : (int?)null;
                     // 加粗仅 Review（思考中…）气泡（胶水 2026-08-15：只针对思考时加粗）
                     bool bold = state == AgentState.Review;
-                    ShowBalloon(balloonText, durationMs, bold);
+                    // A14：balloonId 由本次 ApplyEffect 已读的 settings 传入，避免每状态变化 2 次 LoadSettings（锁内磁盘 IO）
+                    ShowBalloon(balloonText, durationMs, bold, settings.BalloonId);
                 }
             }
             catch (Exception ex)
@@ -173,12 +174,16 @@ namespace MiniPet.Services
         /// balloonId 取用户配置，缺省回退 "560"（与 PetWindow.ShowBalloonNow 一致）。
         /// BalloonService.Show 内部后台渲染 → OnBalloonReady 回调由上层（PetWindow）在 UI 线程显示。
         /// </summary>
-        private void ShowBalloon(string text, int? durationMs = null, bool bold = false)
+        private void ShowBalloon(string text, int? durationMs = null, bool bold = false, string? balloonId = null)
         {
             try
             {
-                var settings = _configService.LoadSettings();
-                var balloonId = settings.BalloonId;
+                // A14：balloonId 由调用方（ApplyEffect 已读 settings）传入；调用方未传时兜底读取一次
+                if (string.IsNullOrEmpty(balloonId))
+                {
+                    var settings = _configService.LoadSettings();
+                    balloonId = settings.BalloonId;
+                }
                 if (string.IsNullOrEmpty(balloonId))
                 {
                     balloonId = "560";

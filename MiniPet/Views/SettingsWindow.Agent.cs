@@ -136,6 +136,24 @@ public partial class SettingsWindow
             connPanel.Children.Add(keyWrap);
             root.Children.Add(connPanel);
 
+            // ── adapter 开关区（S2：补装配——原注释声明此区「移到 Hermes 连接下方」但控件从未构建，
+            //     _agentHermesCheck/_agentCCCheck 等死字段从未赋值 → 开关在 UI 上不可用、保存时读 null 丢弃）──
+            root.Children.Add(BuildAgentSectionHeader("Adapter 开关"));
+            var switchRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 16,
+            };
+            _agentHermesCheck = MakeAgentToggle("Hermes", ai.HermesEnabled);
+            _agentCCCheck = MakeAgentToggle("Claude Code", ai.CCEnabled);
+            _agentCodexCheck = MakeAgentToggle("Codex", ai.CodexEnabled);
+            _agentEffectCheck = MakeAgentToggle("特效层", ai.EffectEnabled);
+            switchRow.Children.Add(_agentHermesCheck);
+            switchRow.Children.Add(_agentCCCheck);
+            switchRow.Children.Add(_agentCodexCheck);
+            switchRow.Children.Add(_agentEffectCheck);
+            root.Children.Add(switchRow);
+
             // ── Hermes Profile（profile 名 + 同步状态显示） ──
             root.Children.Add(BuildAgentSectionHeader("Hermes Profile"));
             var profileRow = new Grid
