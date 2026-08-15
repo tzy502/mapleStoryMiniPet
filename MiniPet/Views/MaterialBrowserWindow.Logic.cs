@@ -7,6 +7,7 @@ using Avalonia;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -54,119 +55,312 @@ public partial class MaterialBrowserWindow
     // ═══════════════════════════════════════════
     // 搜索过滤
     // ═══════════════════════════════════════════
-    private void OnSearchChanged(object? sender, TextChangedEventArgs e)
-    {
-        _currentPage = 1;
-        FilterAndRefresh();
-    }
-
     private void FilterAndRefresh()
     {
         var query = (_searchInput?.Text ?? "").Trim();
 
+        // 性别联动过滤（发型/脸型按草稿 Gender 分 id 段）
         _filteredEntries = _allEntries
             .Where(e => _activeCategory == "全部" || e.Category == _activeCategory)
+            .Where(e => MatchesGender(e.Category, e.Id, _draftAppearance.Gender))
             .Where(e =>
                 string.IsNullOrEmpty(query) ||
                 e.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                e.Id.ToString().Contains(query))
+                e.Id.Contains(query))
             .ToList();
 
-        _totalPages = Math.Max(1, (int)Math.Ceiling(_filteredEntries.Count / (double)_pageSize));
+        // 发型同名折叠分组（组头 + 展开变体行）
+        _displayRows = BuildDisplayRows(query);
+
+        _totalPages = Math.Max(1, (int)Math.Ceiling(_displayRows.Count / (double)_pageSize));
         if (_currentPage > _totalPages)
+        {
             _currentPage = _totalPages;
+        }
 
         RefreshList();
         UpdatePager();
     }
 
     // ═══════════════════════════════════════════
+    // 发型同名折叠分组（E：同名变体 → 组头 + 展开变体行）
+    // ═══════════════════════════════════════════
+
+    /// <summary>发型条目按显示名分组：多变体同名折叠为组；缺名（回退名）或单例保持原样。纯函数，可单测。</summary>
+    internal static List<HairGroupRow> GroupHairByName(IEnumerable<MaterialEntry> hairEntries)
+    {
+        var groups = new Dictionary<string, HairGroupRow>(StringComparer.Ordinal);
+        foreach (var e in hairEntries)
+        {
+            if (e == null || IsFallbackHairName(e.Name))
+            {
+                continue;
+            }
+            if (!groups.TryGetValue(e.Name, out var g))
+            {
+                g = new HairGroupRow { Name = e.Name };
+                groups[e.Name] = g;
+            }
+            g.Variants.Add(e);
+        }
+        var result = new List<HairGroupRow>();
+        foreach (var g in groups.Values)
+        {
+            if (g.Variants.Count > 1)
+            {
+                g.Variants.Sort((a, b) => NumericId(a.Id).CompareTo(NumericId(b.Id)));
+                result.Add(g);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>构建列表展示行（组头 + 展开变体 + 普通条目，保持原过滤顺序）；搜索时自动展开匹配组。</summary>
+    private List<object> BuildDisplayRows(string query)
+    {
+        var rows = new List<object>();
+        var multiGroups = GroupHairByName(_filteredEntries.Where(e => e.Category == "发型")).ToDictionary(g => g.Name, StringComparer.Ordinal);
+        if (multiGroups.Count == 0)
+        {
+            rows.AddRange(_filteredEntries);
+            return rows;
+        }
+
+        var q = (query ?? "").Trim();
+        if (q.Length > 0)
+        {
+            foreach (var g in multiGroups.Values)
+            {
+                if (g.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    g.Variants.Any(v => v.Id.Contains(q) || v.Name.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _expandedHairGroups.Add(g.Name);
+                }
+            }
+        }
+
+        var emitted = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var e in _filteredEntries)
+        {
+            if (e.Category == "发型" && multiGroups.ContainsKey(e.Name))
+            {
+                if (!emitted.Add(e.Name))
+                {
+                    continue; // 变体已随组头发过
+                }
+                var g = multiGroups[e.Name];
+                g.IsExpanded = _expandedHairGroups.Contains(g.Name);
+                rows.Add(g);
+                if (g.IsExpanded)
+                {
+                    rows.AddRange(g.Variants);
+                }
+            }
+            else
+            {
+                rows.Add(e);
+            }
+        }
+        return rows;
+    }
+
+    /// <summary>组头点击：展开/折叠（状态记入 _expandedHairGroups，过滤刷新不丢）。</summary>
+    private void ToggleHairGroup(HairGroupRow g)
+    {
+        if (!_expandedHairGroups.Add(g.Name))
+        {
+            _expandedHairGroups.Remove(g.Name);
+        }
+        RefreshList();
+    }
+
+    /// <summary>缺名回退判断：AddCharacterCategory 缺名时生成 "{cat}_{id}"（发型_30000），此类不折叠。</summary>
+    internal static bool IsFallbackHairName(string name) =>
+        name.StartsWith("发型_", StringComparison.Ordinal);
+
+    private static int NumericId(string id) => int.TryParse(id, out var n) ? n : int.MaxValue;
+
+    /// <summary>性别联动过滤：男（Gender=0）只显示 30000–30999 发型 / 20000–20999 脸型，女相反；非发型/脸型不过滤。纯函数，可单测。</summary>
+    internal static bool MatchesGender(string category, string id, int gender)
+    {
+        if (category != "发型" && category != "脸型")
+        {
+            return true;
+        }
+        if (!int.TryParse(id, out var n))
+        {
+            return true;
+        }
+        if (category == "发型")
+        {
+            return gender == 1 ? n >= 31000 : n < 31000;
+        }
+        return gender == 1 ? n >= 21000 : n < 21000;
+    }
+
+    // ═══════════════════════════════════════════
     // 列表刷新
     // ═══════════════════════════════════════════
+
+    /// <summary>发型同名分组行（列表折叠组头；展开后紧跟变体条目行）。</summary>
+    internal sealed class HairGroupRow
+    {
+        public string Name = "";
+        public List<MaterialEntry> Variants = new();
+        public bool IsExpanded;
+    }
+
     private void RefreshList()
     {
-        if (_itemList == null) return;
+        if (_itemList == null)
+        {
+            return;
+        }
 
-        var page = _filteredEntries
+        var page = _displayRows
             .Skip((_currentPage - 1) * _pageSize)
             .Take(_pageSize)
             .ToList();
 
-        _itemList.ItemsSource = page;
-        _itemList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<MaterialEntry>((data, _) =>
+        // 空态提示（搜索无匹配 / 性别过滤空 / 分类空目录）
+        if (page.Count == 0 && _displayRows.Count == 0)
         {
-            var row = new DockPanel { Margin = new Thickness(12, 4), Height = 42 };
+            page.Add("🔍 无匹配条目（试试清除搜索或切换性别）");
+        }
 
-            var iconBorder = new Border
+        _itemList.ItemsSource = page;
+        _itemList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<object>((data, _) =>
+        {
+            switch (data)
             {
-                Width = 32,
-                Height = 32,
-                CornerRadius = new CornerRadius(5),
-                Background = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)),
-                VerticalAlignment = VerticalAlignment.Center,
-                ClipToBounds = true
-            };
-            // 缩略图 = 默认动画 stand 首帧（后台懒加载；无图时 emoji 兜底）
-            var entry = data;
-            if (entry != null && entry.Thumb != null)
-            {
-                iconBorder.Child = new Image { Source = entry.Thumb, Width = 32, Height = 32, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                case HairGroupRow g:
+                    return BuildHairGroupRow(g);
+                case MaterialEntry entry:
+                    return BuildEntryRow(entry);
+                default:
+                    return new TextBlock
+                    {
+                        Text = data?.ToString() ?? "",
+                        FontSize = 12,
+                        Foreground = BrushTxtDim,
+                        Margin = new Thickness(12, 10)
+                    };
             }
-            else
-            {
-                var emojiText = new TextBlock
-                {
-                    [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Emoji"),
-                    FontSize = 15,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                iconBorder.Child = emojiText;
-                LoadThumbAsync(entry, emojiText);
-            }
-            row.Children.Add(iconBorder);
-
-            var info = new StackPanel
-            {
-                Spacing = 1,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 0, 0)
-            };
-            info.Children.Add(new TextBlock
-            {
-                [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Name"),
-                FontSize = 13,
-                FontWeight = FontWeight.Medium,
-                Foreground = BrushTxtPrimary
-            });
-            info.Children.Add(new TextBlock
-            {
-                [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Id"),
-                FontSize = 10,
-                Foreground = BrushTxtDim,
-                FontFamily = new FontFamily("SF Mono, monospace")
-            });
-            row.Children.Add(info);
-
-            var catBadge = new Border
-            {
-                CornerRadius = new CornerRadius(3),
-                Background = new SolidColorBrush(Color.FromArgb(26, 94, 156, 255)),
-                Padding = new Thickness(6, 2),
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 0, 8, 0)
-            };
-            catBadge.Child = new TextBlock
-            {
-                [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Category"),
-                FontSize = 9,
-                Foreground = BrushAccent
-            };
-            row.Children.Add(catBadge);
-
-            return row;
         });
+    }
+
+    /// <summary>条目行：缩略图（优先 icon，见 LoadThumbAsync）+ 名称/ID + 分类角标 + 悬停 tooltip。</summary>
+    private Control BuildEntryRow(MaterialEntry entry)
+    {
+        var row = new DockPanel { Margin = new Thickness(12, 4), Height = 42 };
+
+        var iconBorder = new Border
+        {
+            Width = 32,
+            Height = 32,
+            CornerRadius = new CornerRadius(5),
+            Background = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255)),
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipToBounds = true
+        };
+        if (entry != null && entry.Thumb != null)
+        {
+            iconBorder.Child = new Image { Source = entry.Thumb, Width = 32, Height = 32, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        }
+        else
+        {
+            var emojiText = new TextBlock
+            {
+                [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Emoji"),
+                FontSize = 15,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            iconBorder.Child = emojiText;
+            LoadThumbAsync(entry, emojiText);
+        }
+        row.Children.Add(iconBorder);
+
+        var info = new StackPanel
+        {
+            Spacing = 1,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0)
+        };
+        info.Children.Add(new TextBlock
+        {
+            [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Name"),
+            FontSize = 13,
+            FontWeight = FontWeight.Medium,
+            Foreground = BrushTxtPrimary
+        });
+        info.Children.Add(new TextBlock
+        {
+            [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Id"),
+            FontSize = 10,
+            Foreground = BrushTxtDim,
+            FontFamily = new FontFamily("SF Mono, monospace")
+        });
+        row.Children.Add(info);
+
+        var catBadge = new Border
+        {
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Color.FromArgb(26, 94, 156, 255)),
+            Padding = new Thickness(6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        catBadge.Child = new TextBlock
+        {
+            [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Category"),
+            FontSize = 9,
+            Foreground = BrushAccent
+        };
+        row.Children.Add(catBadge);
+
+        // 悬停 tooltip：显示完整名称（MapleSalon2 参考）
+        ToolTip.SetTip(row, entry?.Name ?? "");
+        return row;
+    }
+
+    /// <summary>发型分组组头行：名称 + 变体数 + 展开箭头，点击折叠/展开。</summary>
+    private Control BuildHairGroupRow(HairGroupRow g)
+    {
+        var row = new DockPanel
+        {
+            Margin = new Thickness(12, 4),
+            Height = 42,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        var arrow = new TextBlock
+        {
+            Text = g.IsExpanded ? "▼" : "▶",
+            FontSize = 10,
+            Foreground = BrushTxtSecondary,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        row.Children.Add(arrow);
+        var name = new TextBlock
+        {
+            Text = $"💇 {g.Name}（{g.Variants.Count} 色变体）",
+            FontSize = 13,
+            FontWeight = FontWeight.Medium,
+            Foreground = BrushTxtPrimary,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        row.Children.Add(name);
+        ToolTip.SetTip(row, g.IsExpanded ? "点击折叠" : $"点击展开 {g.Variants.Count} 个颜色变体");
+        // 组头点击 = 折叠切换（标记 Handled 尽量不触发条目选中；OnItemSelected 对组头也做了忽略兜底）
+        row.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            ToggleHairGroup(g);
+        };
+        return row;
     }
 
     // ═══════════════════════════════════════════
@@ -174,7 +368,11 @@ public partial class MaterialBrowserWindow
     // ═══════════════════════════════════════════
     private void OnItemSelected(object? sender, SelectionChangedEventArgs e)
     {
-        if (_itemList?.SelectedItem is not MaterialEntry entry) return;
+        // 组头选中忽略（折叠切换已在 BuildHairGroupRow 处理），只处理条目
+        if (_itemList?.SelectedItem is not MaterialEntry entry)
+        {
+            return;
+        }
         if (_selectBtn != null)
         {
             _selectBtn.Content = IsPaperdollCategory(entry.Category) && _paperdoll != null ? "✅ 应用到主窗口" : "✅ 选择";
@@ -184,9 +382,27 @@ public partial class MaterialBrowserWindow
 
     private void UpdateDetail(MaterialEntry entry)
     {
-        if (_detailTitle != null) _detailTitle.Text = entry.Name;
-        if (_detailInfo != null) _detailInfo.Text = $"ID: {entry.Id}";
-        if (_detailType != null) _detailType.Text = $"类型: {entry.Category}";
+        if (_detailTitle != null)
+        {
+            _detailTitle.Text = entry.Name;
+        }
+        if (_detailInfo != null)
+        {
+            _detailInfo.Text = $"ID: {entry.Id}";
+        }
+        if (_detailType != null)
+        {
+            _detailType.Text = $"类型: {entry.Category}";
+        }
+        // 发型：显示组内染发调色面板（HSV 滑块联动草稿 Hair）
+        if (_hairDyePanel != null)
+        {
+            _hairDyePanel.IsVisible = entry.Category == "发型";
+            if (_hairDyePanel.IsVisible)
+            {
+                RefreshHairDyePanel();
+            }
+        }
 
         // 加载预览图
         LoadPreview(entry);
@@ -194,18 +410,38 @@ public partial class MaterialBrowserWindow
 
     private void LoadPreview(MaterialEntry entry)
     {
-        if (_wzService == null || !_wzService.IsLoaded || _previewBox == null) return;
+        if (_wzService == null || !_wzService.IsLoaded || _previewBox == null)
+        {
+            return;
+        }
 
         try
         {
-            // 纸娃娃部件分类：穿在身上合成预览（草稿外观 + 该部件）
+            // 纸娃娃部件分类：优先 icon（WZ 装备节点自带 icon/iconRaw，比全身合成/精灵图条快得多）；
+            // 无 icon 再回退穿身上合成预览（草稿外观 + 该部件，stand1 首帧）
             if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
             {
+                var iconPng = TryExtractIcon(_wzService, entry.Category, entry.Id);
+                if (iconPng != null)
+                {
+                    var iconBmp = DecodePngBytes(iconPng);
+                    if (iconBmp != null)
+                    {
+                        SetPreviewChild(new Image
+                        {
+                            Source = iconBmp,
+                            Stretch = Stretch.Uniform,
+                            HorizontalAlignment = HorizontalAlignment.Stretch,
+                            VerticalAlignment = VerticalAlignment.Stretch
+                        });
+                        return;
+                    }
+                }
                 LoadPaperdollPreview(entry);
                 return;
             }
 
-            // 按动作顺序找第一个有帧的动作
+            // 怪物/NPC：按动作顺序找第一个有帧的动作（无 icon 字段）
             string category = entry.Category switch
             {
                 "怪物" => "Mob",
@@ -230,13 +466,13 @@ public partial class MaterialBrowserWindow
                         VerticalAlignment = VerticalAlignment.Stretch
                     };
 
-                    _previewBox.Child = image;
+                    SetPreviewChild(image);
                     return;
                 }
             }
 
             // 没找到任何动作，显示占位
-            _previewBox.Child = new TextBlock
+            SetPreviewChild(new TextBlock
             {
                 Text = "🎨\n无预览",
                 FontSize = 13,
@@ -245,12 +481,12 @@ public partial class MaterialBrowserWindow
                 VerticalAlignment = VerticalAlignment.Center,
                 TextAlignment = TextAlignment.Center,
                 LineHeight = 1.5
-            };
+            });
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[MaterialBrowser] LoadPreview({entry.Id}): {ex.Message}");
-            _previewBox.Child = new TextBlock
+            SetPreviewChild(new TextBlock
             {
                 Text = "🎨\n预览加载失败",
                 FontSize = 13,
@@ -259,8 +495,184 @@ public partial class MaterialBrowserWindow
                 VerticalAlignment = VerticalAlignment.Center,
                 TextAlignment = TextAlignment.Center,
                 LineHeight = 1.5
-            };
+            });
         }
+    }
+
+    // ═══════════════════════════════════════════
+    // icon 预览（D：WZ 装备节点自带 icon/iconRaw，ExtractPng 直取，比合成快）
+    // ═══════════════════════════════════════════
+
+    /// <summary>替换预览框内容：旧 Image.Source 位图先 Dispose 再换新（防逐次选中泄漏位图）。</summary>
+    private void SetPreviewChild(Control child)
+    {
+        if (_previewBox == null)
+        {
+            return;
+        }
+        if (_previewBox.Child is Image oldImg && oldImg.Source is IDisposable oldSrc)
+        {
+            oldSrc.Dispose();
+        }
+        _previewBox.Child = child;
+    }
+
+    /// <summary>分类 → WZ img 根路径（icon 提取用；纸娃娃部件按 8 位补零，椅子在 Install/0301.img 下）。纯函数，可单测。</summary>
+    internal static string? CategoryWzRoot(string category, string id)
+    {
+        return category switch
+        {
+            "发型" => $"Character/Hair/{id.PadLeft(8, '0')}.img",
+            "脸型" => $"Character/Face/{id.PadLeft(8, '0')}.img",
+            "帽子" => $"Character/Cap/{id.PadLeft(8, '0')}.img",
+            "上衣" => $"Character/Coat/{id.PadLeft(8, '0')}.img",
+            "长袍" => $"Character/Longcoat/{id.PadLeft(8, '0')}.img",
+            "裤子" => $"Character/Pants/{id.PadLeft(8, '0')}.img",
+            "鞋子" => $"Character/Shoes/{id.PadLeft(8, '0')}.img",
+            "手套" => $"Character/Glove/{id.PadLeft(8, '0')}.img",
+            "武器" => $"Character/Weapon/{id.PadLeft(8, '0')}.img",
+            "盾牌" => $"Character/Shield/{id.PadLeft(8, '0')}.img",
+            "披风" => $"Character/Cape/{id.PadLeft(8, '0')}.img",
+            "饰品" => $"Character/Accessory/{id.PadLeft(8, '0')}.img",
+            "坐骑" => $"Character/TamingMob/{id.PadLeft(8, '0')}.img",
+            "椅子" => $"Item/Install/0301.img/{id.PadLeft(8, '0')}",
+            _ => null
+        };
+    }
+
+    /// <summary>尝试提取条目 icon PNG（优先 icon 字段，回退 iconRaw；均无返回 null）。</summary>
+    private byte[]? TryExtractIcon(WzService wz, string category, string id)
+    {
+        var root = CategoryWzRoot(category, id);
+        if (root == null)
+        {
+            return null;
+        }
+        foreach (var sub in new[] { "icon", "iconRaw" })
+        {
+            var png = wz.ExtractPng($"{root}/{sub}");
+            if (png != null && png.Length > 0)
+            {
+                return png;
+            }
+        }
+        return null;
+    }
+
+    private static Bitmap? DecodePngBytes(byte[]? png)
+    {
+        if (png == null || png.Length == 0)
+        {
+            return null;
+        }
+        try
+        {
+            using var ms = new MemoryStream(png);
+            return new Bitmap(ms);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════
+    // 发型组内染发调色（E：HSV 滑块联动草稿 Hair）
+    // ═══════════════════════════════════════════
+
+    private void RefreshHairDyePanel()
+    {
+        if (_hairDyePanel == null)
+        {
+            return;
+        }
+        var h = _draftAppearance.Hair ?? new ItemInfo();
+        var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 4, 0, 0) };
+        stack.Children.Add(new TextBlock { Text = "🎨 染发调色（HSV，实时联动草稿）", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim });
+        stack.Children.Add(BuildDyeRow("色相", 0, 360, h.Hue, v => ApplyHairDye(v, h.Saturation, h.Brightness)));
+        stack.Children.Add(BuildDyeRow("饱和度", 0, 100, h.Saturation, v => ApplyHairDye(h.Hue, v, h.Brightness)));
+        stack.Children.Add(BuildDyeRow("亮度", 0, 100, h.Brightness, v => ApplyHairDye(h.Hue, h.Saturation, v)));
+        _hairDyePanel.Child = stack;
+    }
+
+    private StackPanel BuildDyeRow(string label, int min, int max, int value, Action<int> onChanged)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
+        row.Children.Add(new TextBlock { Text = label, FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40, TextAlignment = TextAlignment.Right });
+        var slider = new Slider { Minimum = min, Maximum = max, Value = value, Width = 110, VerticalAlignment = VerticalAlignment.Center };
+        var valText = new TextBlock { Text = value.ToString(), FontSize = 10, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Width = 28 };
+        slider.ValueChanged += (_, e) =>
+        {
+            valText.Text = ((int)e.NewValue).ToString();
+            try { onChanged((int)e.NewValue); } catch { }
+        };
+        row.Children.Add(slider);
+        row.Children.Add(valText);
+        return row;
+    }
+
+    /// <summary>滑块变化：写入草稿 Hair HSV 并重新合成穿身上预览（染发效果可见）。</summary>
+    private void ApplyHairDye(int hue, int sat, int bright)
+    {
+        var hair = _draftAppearance.Hair ?? new ItemInfo();
+        hair.Hue = hue;
+        hair.Saturation = sat;
+        hair.Brightness = bright;
+        _draftAppearance.Hair = hair;
+        RefreshWearingPreviewAsync();
+    }
+
+    /// <summary>后台合成穿身上预览（stand1 首帧，代际防串台）；染发滑块拖动时预览实时更新。</summary>
+    private void RefreshWearingPreviewAsync()
+    {
+        if (_paperdoll == null || _previewBox == null)
+        {
+            return;
+        }
+        int seq = ++_previewRenderSeq;
+        var snapshot = CloneDraft(_draftAppearance);
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                var png = _paperdoll.CompositeFrame(snapshot, "stand1", 0);
+                if (png == null || png.Length == 0)
+                {
+                    return;
+                }
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (seq != _previewRenderSeq)
+                        {
+                            return;
+                        }
+                        using var ms = new MemoryStream(png);
+                        var bmp = new Bitmap(ms);
+                        SetPreviewChild(new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[MaterialBrowser] WearingPreview: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MaterialBrowser] WearingComposite: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>搜索框 × 清除按钮显隐（有输入才显示）。</summary>
+    private void UpdateSearchClearVisibility()
+    {
+        if (_searchClearBtn == null)
+        {
+            return;
+        }
+        _searchClearBtn.IsVisible = !string.IsNullOrEmpty(_searchInput?.Text);
     }
 
     /// <summary>纸娃娃部件预览：把选中部件写入草稿外观，穿在身上合成 stand1 首帧。</summary>
@@ -272,7 +684,7 @@ public partial class MaterialBrowserWindow
             var png = _paperdoll!.CompositeFrame(_draftAppearance, "stand1", 0);
             if (png == null || png.Length == 0)
             {
-                _previewBox!.Child = new TextBlock
+                SetPreviewChild(new TextBlock
                 {
                     Text = "🎨\n无预览",
                     FontSize = 13,
@@ -281,24 +693,24 @@ public partial class MaterialBrowserWindow
                     VerticalAlignment = VerticalAlignment.Center,
                     TextAlignment = TextAlignment.Center,
                     LineHeight = 1.5
-                };
+                });
                 return;
             }
             using var ms = new MemoryStream(png);
             var bmp = new Bitmap(ms);
             // 自适应：去掉 MaxWidth=220/MaxHeight=260 约束，随预览框填满并等比缩放
-            _previewBox!.Child = new Image
+            SetPreviewChild(new Image
             {
                 Source = bmp,
                 Stretch = Stretch.Uniform,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
-            };
+            });
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[MaterialBrowser] LoadPaperdollPreview({entry.Id}): {ex.Message}");
-            _previewBox!.Child = new TextBlock
+            SetPreviewChild(new TextBlock
             {
                 Text = "🎨\n预览失败",
                 FontSize = 13,
@@ -307,7 +719,7 @@ public partial class MaterialBrowserWindow
                 VerticalAlignment = VerticalAlignment.Center,
                 TextAlignment = TextAlignment.Center,
                 LineHeight = 1.5
-            };
+            });
         }
     }
 
@@ -318,9 +730,22 @@ public partial class MaterialBrowserWindow
         switch (category)
         {
             case "皮肤":
-                if (int.TryParse(id, out var bodyId)) _draftAppearance.BodyId = bodyId;
+                if (int.TryParse(id, out var bodyId))
+                {
+                    _draftAppearance.BodyId = bodyId;
+                }
                 return;
-            case "发型": _draftAppearance.Hair = it; return;
+            case "发型":
+                // 保留现有染发参数：组内换变体时 HSV 延续（染发调色入口联动草稿 Hair）
+                _draftAppearance.Hair = new ItemInfo
+                {
+                    Id = id,
+                    Dye = _draftAppearance.Hair.Dye,
+                    Hue = _draftAppearance.Hair.Hue,
+                    Saturation = _draftAppearance.Hair.Saturation,
+                    Brightness = _draftAppearance.Hair.Brightness
+                };
+                return;
             case "脸型": _draftAppearance.Face = it; return;
             case "帽子": _draftAppearance.Cap = it; return;
             case "上衣": _draftAppearance.Coat = it; return;
@@ -336,7 +761,10 @@ public partial class MaterialBrowserWindow
             case "椅子": _draftAppearance.Chair = new ChairInfo { Id = id }; return;
         }
         // 装备（"全部"分类选中时）：按 id 前缀映射部位
-        if (!int.TryParse(id, out var n)) return;
+        if (!int.TryParse(id, out var n))
+        {
+            return;
+        }
         int part = n / 10000;
         switch (part)
         {
@@ -352,7 +780,10 @@ public partial class MaterialBrowserWindow
             case 109: _draftAppearance.Shield = it; break;
             case 110: _draftAppearance.Cape = it; break;
             default:
-                if (part >= 121 && part <= 170) _draftAppearance.Weapon = it;
+                if (part >= 121 && part <= 170)
+                {
+                    _draftAppearance.Weapon = it;
+                }
                 break;
         }
     }
@@ -361,7 +792,10 @@ public partial class MaterialBrowserWindow
     private void SaveDraftOutfit()
     {
         var cfg = _configService?.LoadSettings();
-        if (cfg == null) return;
+        if (cfg == null)
+        {
+            return;
+        }
         string name = $"搭配 {cfg.SavedPaperdolls.Count + 1}";
         cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
         _configService!.SaveSettings(cfg);
@@ -371,23 +805,35 @@ public partial class MaterialBrowserWindow
     /// <summary>从搭配存档加载草稿并合成预览。</summary>
     private void LoadDraftOutfit()
     {
-        if (_outfitCombo?.SelectedItem is not string name) return;
+        if (_outfitCombo?.SelectedItem is not string name)
+        {
+            return;
+        }
         var cfg = _configService?.LoadSettings();
-        if (cfg == null || !cfg.SavedPaperdolls.TryGetValue(name, out var app)) return;
+        if (cfg == null || !cfg.SavedPaperdolls.TryGetValue(name, out var app))
+        {
+            return;
+        }
         _draftAppearance = CloneDraft(app);
-        if (_previewBox == null || _paperdoll == null) return;
+        if (_previewBox == null || _paperdoll == null)
+        {
+            return;
+        }
         var png = _paperdoll.CompositeFrame(_draftAppearance, "stand1", 0);
         if (png is { Length: > 0 })
         {
             using var ms = new MemoryStream(png);
             var bmp = new Bitmap(ms);
-            _previewBox.Child = new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+            SetPreviewChild(new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch });
         }
     }
 
     private void RefreshOutfitList()
     {
-        if (_outfitCombo == null) return;
+        if (_outfitCombo == null)
+        {
+            return;
+        }
         var names = _configService?.LoadSettings().SavedPaperdolls.Keys.OrderBy(x => x).ToList() ?? new List<string>();
         _outfitCombo.ItemsSource = names;
     }
@@ -409,7 +855,10 @@ public partial class MaterialBrowserWindow
 
     private static ItemInfo? CloneItem(ItemInfo? it)
     {
-        if (it == null) return null;
+        if (it == null)
+        {
+            return null;
+        }
         return new ItemInfo { Id = it.Id, Dye = it.Dye, Hue = it.Hue, Saturation = it.Saturation, Brightness = it.Brightness };
     }
 
@@ -419,8 +868,14 @@ public partial class MaterialBrowserWindow
     /// <summary>绝对跳页：clamp 到 [1, _totalPages] 后刷新列表与分页显示（UpdatePager 同时恢复页码框文本）。</summary>
     private void GoToPage(int page)
     {
-        if (page < 1) page = 1;
-        if (page > _totalPages) page = _totalPages;
+        if (page < 1)
+        {
+            page = 1;
+        }
+        if (page > _totalPages)
+        {
+            page = _totalPages;
+        }
         _currentPage = page;
         RefreshList();
         UpdatePager();
@@ -430,16 +885,26 @@ public partial class MaterialBrowserWindow
 
     private void UpdatePager()
     {
+        if (_countLabel != null)
+        {
+            _countLabel.Text = $"{_filteredEntries.Count} 条 / {_totalPages} 页";
+        }
         if (_pageLabel != null)
+        {
             _pageLabel.Text = $"{_currentPage}/{_totalPages}";
+        }
         if (_prevBtn != null)
+        {
             _prevBtn.IsEnabled = _currentPage > 1;
+        }
         if (_nextBtn != null)
+        {
             _nextBtn.IsEnabled = _currentPage < _totalPages;
+        }
     }
 
     // ═══════════════════════════════════════════
-    // 示例数据
+    // WZ 素材加载
     // ═══════════════════════════════════════════
     private static List<MaterialEntry> LoadFromWz(WzService wz)
     {
@@ -450,7 +915,10 @@ public partial class MaterialBrowserWindow
             foreach (var id in mobIds)
             {
                 var name = wz.GetMobName(id);
-                if (string.IsNullOrEmpty(name)) name = $"怪物_{id}";
+                if (string.IsNullOrEmpty(name))
+                {
+                    name = $"怪物_{id}";
+                }
                 entries.Add(new MaterialEntry("怪物", id, name, "👾"));
             }
 
@@ -458,7 +926,10 @@ public partial class MaterialBrowserWindow
             foreach (var id in npcIds)
             {
                 var name = wz.GetNpcName(id);
-                if (string.IsNullOrEmpty(name)) name = $"NPC_{id}";
+                if (string.IsNullOrEmpty(name))
+                {
+                    name = $"NPC_{id}";
+                }
                 entries.Add(new MaterialEntry("NPC", id, name, "🧑"));
             }
 
@@ -521,93 +992,63 @@ public partial class MaterialBrowserWindow
         catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] AddCharacterCategory({folder}): {ex.Message}"); }
     }
 
-    private static List<MaterialEntry> BuildSampleData()
-    {
-        return new List<MaterialEntry>
-        {
-            // 怪物
-            new("怪物", "8880150", "路西德", "👼"),
-            new("怪物", "8860000", "品克缤", "🎀"),
-            new("怪物", "9300573", "狐狸", "🦊"),
-            new("怪物", "8600001", "龙", "🐉"),
-            new("怪物", "2230000", "机器人", "🤖"),
-            new("怪物", "9400121", "蝙蝠怪", "🦇"),
-            new("怪物", "9300730", "雪人", "⛄"),
-            new("怪物", "8810114", "黑龙", "🐲"),
-            new("怪物", "8880000", "扎昆", "🪨"),
-            new("怪物", "8500002", "闹钟", "⏰"),
-            new("怪物", "8800002", "品克缤(大)", "🎀"),
-            new("怪物", "9300013", "企鹅", "🐧"),
-            new("怪物", "9400113", "暗黑龙王", "🐲"),
-            new("怪物", "9300452", "蜗牛", "🐌"),
 
-            // NPC
-            new("NPC", "11000", "达夫", "🧙"),
-            new("NPC", "12000", "希拉", "🧝"),
-            new("NPC", "1012100", "弓箭手教练", "🏹"),
-            new("NPC", "1022000", "魔法师教练", "🔮"),
-            new("NPC", "1052100", "商店老板", "💊"),
-            new("NPC", "9201000", "克丽斯", "👩‍🦰"),
-            new("NPC", "9201001", "奥利弗", "👨‍🦰"),
-
-            // 装备
-            new("装备", "1002140", "青龙头盔", "⛑️"),
-            new("装备", "1050100", "青龙战甲", "🛡️"),
-            new("装备", "1082001", "青龙手套", "🧤"),
-            new("装备", "1072158", "青龙靴", "👢"),
-            new("装备", "1302056", "青龙刀", "🗡️"),
-
-            // 发型
-            new("发型", "30000", "经典发型", "💇"),
-            new("发型", "30100", "短发", "💇‍♂️"),
-            new("发型", "30200", "长发", "💇‍♀️"),
-            new("发型", "30300", "双马尾", "👧"),
-
-            // 脸型
-            new("脸型", "20000", "标准脸", "😊"),
-            new("脸型", "20100", "可爱脸", "😋"),
-            new("脸型", "20200", "酷脸", "😎"),
-            new("脸型", "20300", "惊讶脸", "😲"),
-
-            // 坐骑
-            new("坐骑", "1902000", "红色摩托车", "🏍️"),
-            new("坐骑", "1902001", "蓝色龙", "🐉"),
-            new("坐骑", "1902002", "云朵", "☁️"),
-            new("坐骑", "1902003", "独角兽", "🦄"),
-
-            // 椅子
-            new("椅子", "3010000", "木椅", "🪑"),
-            new("椅子", "3010001", "王座", "👑"),
-            new("椅子", "3010002", "沙发", "🛋️"),
-            new("椅子", "3010003", "月亮椅", "🌙"),
-        };
-    }
-
-    /// <summary>后台加载条目缩略图（默认动画 stand 首帧；窗口可见才更新，防 Skia 与关闭并发）。</summary>
+    /// <summary>后台加载条目缩略图：纸娃娃部件优先 icon（快），无 icon 回退默认动画 stand 首帧；窗口可见才更新，防 Skia 与关闭并发。</summary>
     private void LoadThumbAsync(MaterialEntry entry, Control emojiText)
     {
-        if (entry == null || _wzService == null || !_wzService.IsLoaded) return;
+        if (entry == null || _wzService == null || !_wzService.IsLoaded)
+        {
+            return;
+        }
         var id = entry.Id;
+        var category = entry.Category;
         // 分类映射：素材浏览条目 Category 是中文（怪物/NPC）——漏映射导致缩略图不加载（胶水反馈 2026-08-09）
-        var type = entry.Category switch
+        var type = category switch
         {
             "Mob" or "怪物" => "Mob",
             "NPC" or "Npc" => "Npc",
             _ => ""
         };
+        var wz = _wzService;
         System.Threading.Tasks.Task.Run(() =>
         {
-            Bitmap? bmp = null;
             try
             {
-                if (string.IsNullOrEmpty(type)) return;
-                var actions = _wzService.GetActionList(id, type);
-                if (actions.Count == 0) return;
+                // 纸娃娃部件：优先 icon（WZ 装备节点自带 icon/iconRaw）
+                if (IsPaperdollCategory(category))
+                {
+                    var iconPng = TryExtractIcon(wz, category, id);
+                    if (iconPng != null)
+                    {
+                        var iconBmp = DecodePngBytes(iconPng);
+                        if (iconBmp != null)
+                        {
+                            PostThumb(entry, emojiText, iconBmp);
+                        }
+                    }
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(type))
+                {
+                    return;
+                }
+                var actions = wz.GetActionList(id, type);
+                if (actions.Count == 0)
+                {
+                    return;
+                }
                 var action = actions.Contains("stand") ? "stand" : actions[0];
-                var (pngData, strip, _) = _wzService.BuildSpriteStrip(id, action, type);
-                if (pngData == null || strip == null || strip.FrameWidth <= 0 || strip.FrameHeight <= 0) return;
+                var (pngData, strip, _) = wz.BuildSpriteStrip(id, action, type);
+                if (pngData == null || strip == null || strip.FrameWidth <= 0 || strip.FrameHeight <= 0)
+                {
+                    return;
+                }
                 using var src = SKBitmap.Decode(pngData);
-                if (src == null) return;
+                if (src == null)
+                {
+                    return;
+                }
                 int fw = Math.Min(strip.FrameWidth, src.Width);
                 int fh = Math.Min(strip.FrameHeight, src.Height);
                 using var crop = new SKBitmap(fw, fh);
@@ -619,24 +1060,39 @@ public partial class MaterialBrowserWindow
                 using var img = SKImage.FromBitmap(crop);
                 var png = img.Encode(SKEncodedImageFormat.Png, 90).ToArray();
                 using var ms = new MemoryStream(png);
-                bmp = new Bitmap(ms);
+                PostThumb(entry, emojiText, new Bitmap(ms));
             }
-            catch { bmp = null; }
-            if (bmp == null) return;
-            var captured = bmp;
-            Dispatcher.UIThread.Post(() =>
+            catch (Exception ex)
             {
-                try
+                Console.Error.WriteLine($"[MaterialBrowser] LoadThumbAsync({id}): {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>缩略图回主线程：写入条目缓存 + 替换 emoji 占位（防窗口关闭/不可见时并发更新）。</summary>
+    private void PostThumb(MaterialEntry entry, Control emojiText, Bitmap bmp)
+    {
+        var captured = bmp;
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                entry.Thumb = captured;
+                var parent = emojiText.Parent as Border;
+                if (emojiText.IsLoaded && emojiText.IsVisible && parent != null)
                 {
-                    entry.Thumb = captured;
-                    var parent = emojiText.Parent as Border;
-                    if (emojiText.IsLoaded && emojiText.IsVisible && parent != null)
+                    // 同条目重复加载时：替换前 Dispose 旧 Image.Source（防缩略图泄漏）
+                    if (parent.Child is Image oldImg && oldImg.Source is IDisposable oldSrc && !ReferenceEquals(oldSrc, captured))
                     {
-                        parent.Child = new Image { Source = captured, Width = 32, Height = 32, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                        oldSrc.Dispose();
                     }
+                    parent.Child = new Image { Source = captured, Width = 32, Height = 32, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 }
-                catch { captured.Dispose(); }
-            });
+            }
+            catch
+            {
+                captured.Dispose();
+            }
         });
     }
 }

@@ -24,6 +24,8 @@ namespace MiniPet.Views;
 public partial class SettingsWindow
 {
     private TextBlock? _balloonApplyHint;   // 气泡应用结果提示
+    /// <summary>气泡搜索 300ms 防抖（S11：删每键日志 + 防全列表重建风暴）。</summary>
+    private readonly DispatcherTimer _balloonSearchDebounce = new() { Interval = TimeSpan.FromMilliseconds(300) };
 
     private Border BuildBalloonTab()
     {
@@ -103,15 +105,20 @@ public partial class SettingsWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BalloonDbl: {ex.Message}"); }
             };
-            // 搜索过滤：历史优先排序 + query 过滤
-            balloonSearch.TextChanged += (_, _) =>
+            // 搜索过滤：历史优先排序 + query 过滤（300ms 防抖，删每键调试日志）
+            _balloonSearchDebounce.Tick += (_, _) =>
             {
+                _balloonSearchDebounce.Stop();
                 try
                 {
-                    Console.WriteLine($"[SettingsWindow] BalloonSearch text='{balloonSearch.Text}' list={_realBalloonList.Count}");
                     ApplyBalloonFilter(balloonListBox, balloonSearch.Text ?? "");
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BalloonSearch: {ex.Message}"); }
+            };
+            balloonSearch.TextChanged += (_, _) =>
+            {
+                _balloonSearchDebounce.Stop();
+                _balloonSearchDebounce.Start();
             };
             // 可视化加载：后台枚举真实 WZ 气泡列表（UI 线程不阻塞）
             Task.Run(() =>
@@ -137,7 +144,10 @@ public partial class SettingsWindow
                     {
                         if (balloonListBox.Items[i] is ValueTuple<int, string> it && it.Item1 == curId) { selIdx = i; break; }
                     }
-                    if (selIdx >= 0) balloonListBox.SelectedIndex = selIdx;
+                    if (selIdx >= 0)
+                    {
+                        balloonListBox.SelectedIndex = selIdx;
+                    }
                     else if (balloonListBox.Items.Count > 0) balloonListBox.SelectedIndex = 0;
                     if (balloonListBox.SelectedItem is ValueTuple<int, string> first)
                         UpdateRealBalloonPreview(first.Item1);
@@ -182,7 +192,10 @@ public partial class SettingsWindow
     {
         try
         {
-            if (_balloonPreviewCanvas == null) return;
+            if (_balloonPreviewCanvas == null)
+            {
+                return;
+            }
             _balloonPreviewCanvas.Child = new TextBlock { Text = $"加载中… #{id}", FontSize = 12, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
 
             var idStr = id.ToString();
@@ -361,7 +374,10 @@ public partial class SettingsWindow
     {
         try
         {
-            if (_previewCanvas == null || _previewStrip == null || _previewSourceBitmap == null) return;
+            if (_previewCanvas == null || _previewStrip == null || _previewSourceBitmap == null)
+            {
+                return;
+            }
             // 预览内容已改 Grid（自适应），用 Panel 判断兼容
             if (_previewCanvas.Child is Panel stack)
             {
@@ -373,11 +389,21 @@ public partial class SettingsWindow
                         var frameHeight = _previewStrip.FrameHeight;
 
                         var frameRect = new PixelRect(frameWidth * _previewFrameIndex, 0, frameWidth, frameHeight);
-                        try { img2.Source = new CroppedBitmap(_previewSourceBitmap, frameRect); }
+                        try
+                        {
+                            // 替换前释放旧 CroppedBitmap（防每帧泄漏；S4 同源修复）
+                            if (img2.Source is IDisposable oldSrc)
+                            {
+                                oldSrc.Dispose();
+                            }
+                            img2.Source = new CroppedBitmap(_previewSourceBitmap, frameRect);
+                        }
                         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TickFrame: {ex.Message}"); }
                         _previewFrameIndex++;
                         if (_previewFrameIndex >= _previewStrip.FrameCount)
+                        {
                             _previewFrameIndex = 0;
+                        }
                         break;
                     }
                 }
