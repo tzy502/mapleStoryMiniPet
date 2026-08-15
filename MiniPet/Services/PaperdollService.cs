@@ -118,7 +118,6 @@ public class PaperdollService : IEntityFrameProvider
             if (delay <= 0) delay = 100;
             // 限速上限 300ms（WZ 极慢动作如 500ms 呼吸太像静止；正常 walk/swing 100ms 不变）
             if (delay > 300) delay = 300;
-            if (_delayDiag.Add($"{action}|{frame}")) Console.WriteLine($"[Paperdoll] GetFrameDelay {action}/{frame}={delay}");
             _delayCache[key] = delay;
             return delay;
         }
@@ -212,32 +211,17 @@ public class PaperdollService : IEntityFrameProvider
             var bounds = GetBounds(hash, a, action);
             if (bounds.W <= 0 || bounds.H <= 0)
             {
-                if (!_renderFailDiag)
-                {
-                    _renderFailDiag = true;
-                    Console.WriteLine($"[Paperdoll] RenderFrame FAIL: action={action} frame={frame} bounds={bounds.W}x{bounds.H} hash={hash}");
-                }
+                Console.Error.WriteLine($"[Paperdoll] RenderFrame FAIL: action={action} frame={frame} bounds={bounds.W}x{bounds.H} hash={hash}");
                 return (null, 0, 0, 0, 0);
             }
 
             var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression));
             ResolveAnchors(pieces);
             AssignLayers(pieces);
-            // 调试：locks 疑似错误隐藏披风，先禁用观察（旧代码无 locks）
-            // ApplyLocks(hash, a, pieces);
+            // 遮挡锁：帽子遮发 / 套服遮裤等覆盖关系（对齐 MapleSalon2 buildLock/refreshLock）
+            ApplyLocks(hash, a, pieces);
 
             var locked = pieces.Where(p => p.Locked && !p.Hidden).ToList();
-            if (_renderFramesDiag.Add($"{action}|{frame}"))
-            {
-                var paths = string.Join(",", locked.Select(p =>
-                {
-                    var b = GetBmp(p.PiecePath);
-                    var tail = p.PiecePath.Length > 30 ? p.PiecePath[^30..] : p.PiecePath;
-                    var m = p.Category == "body" ? $" map=[{string.Join(",", p.Map.Take(4).Select(kv => $"{kv.Key}:{kv.Value.x},{kv.Value.y}"))}]" : "";
-                    return $"{p.Category}:{tail}@{b?.Width}x{b?.Height} F=({p.FinalX},{p.FinalY}){m}";
-                }));
-                Console.WriteLine($"[Paperdoll] RenderFrame {action}/{frame}: 可画={locked.Count} [{paths}]");
-            }
             if (locked.Count == 0) return (null, 0, 0, 0, 0);
 
             // 帧位移 move（对齐 MapleSalon2 instruction.move）：WZ 每帧有 move 位移数据，
@@ -249,8 +233,6 @@ public class PaperdollService : IEntityFrameProvider
                 if (mv != null) { mvX = mv.X; mvY = mv.Y; }
             }
             catch { }
-            if (_renderFramesDiag.Add($"{action}|{frame}|mv"))
-                Console.WriteLine($"[Paperdoll] {action}/{frame} move=({mvX},{mvY})");
 
             // 画布原点 = body 锚点（照抄 MapleSalon2 updateCharacterPivotByBodyPiece：bodyFrame.pivot = bodyFrame.ancher）
             var bodyP = locked.FirstOrDefault(p => p.Category == "body");
@@ -325,18 +307,12 @@ public class PaperdollService : IEntityFrameProvider
                 // face 无数字帧号（default/blink 下直接是 piece）：恒用 {root}/{act}，
                 // 避免 body 帧号越界时脸缺失 → 呼吸动画脸闪烁抖动（对齐旧合成图条行为）
                 framePath = $"{root}/{act}";
-                if (_wz.FindNodeByPath(framePath) == null) continue;
+                if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
             }
             else
             {
                 framePath = $"{root}/{act}/{frame}";
-                if (_wz.FindNodeByPath(framePath) == null) continue;
-            }
-
-            if (!_collectFailDiag)
-            {
-                _collectFailDiag = true;
-                Console.WriteLine($"[Paperdoll] Collect diag: {category} root={root} framePath={framePath} 存在={_wz.FindNodeByPath(framePath) != null}");
+                if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
             }
 
             string itemId = GetCategoryItemId(a, category);
@@ -448,29 +424,66 @@ public class PaperdollService : IEntityFrameProvider
         }
     }
 
-    /// <summary>顶→底遍历 zmap 层，每层穿戴部件按 item id 升序把 vslot 槽位占掉；下层同槽被非自身占用则隐藏。</summary>
+    /// <summary>
+    /// 双条件遮挡判定（对齐 MapleSalon2 refreshLock）：部件可见当且仅当 hasSelfLock || hasLayerLock。
+    /// hasSelfLock = 自身 vslot 每个槽在全局锁表中无主或主==自己；
+    /// hasLayerLock = 该层 requireLocks 每个槽无主或主==自己（本服务不读 smap.img，
+    /// 用该层所有实际穿戴部件的 vslot 槽码并集近似）。帽子（cap）强制只用 vslot 判定（MapleSalon2 force Cap using vslot）。
+    /// </summary>
     private void ApplyLocks(string hash, CharacterAppearance a, List<Piece> pieces)
     {
         var locks = BuildLayerLocks(hash, a);
         if (locks == null || locks.Count == 0) return;
+
+        // 层 requireLocks 近似：该层所有实际穿戴部件的 vslot 槽码并集
+        var layerSlots = new Dictionary<string, HashSet<string>>();
+        foreach (var p in pieces)
+        {
+            if (string.IsNullOrEmpty(p.ResolvedLayer)) continue;
+            if (!layerSlots.TryGetValue(p.ResolvedLayer, out var set))
+            {
+                set = new HashSet<string>();
+                layerSlots[p.ResolvedLayer] = set;
+            }
+            foreach (var slot in VslotCodes(GetVslotForCategory(p.Category)))
+                set.Add(slot);
+        }
+
         foreach (var p in pieces)
         {
             if (p.Hidden) continue;
-            if (!locks.TryGetValue(p.ResolvedLayer, out var layerLocks)) continue;
             var vslot = GetVslotForCategory(p.Category);
             if (string.IsNullOrEmpty(vslot)) continue;
-            foreach (var ch in vslot)
+            var slots = VslotCodes(vslot).ToList();
+
+            bool selfOk = SlotsOk(locks, p.ItemId, slots);
+            bool layerOk;
+            if (p.Category == "cap")
             {
-                if (layerLocks.TryGetValue(ch, out var owner) && owner != p.ItemId)
-                {
-                    p.Hidden = true;
-                    break;
-                }
+                // MapleSalon2 force Cap using vslot：帽子的 hasLayerLock 与 hasSelfLock 等价，只判自身 vslot
+                layerOk = false;
             }
+            else if (layerSlots.TryGetValue(p.ResolvedLayer, out var ls))
+            {
+                layerOk = SlotsOk(locks, p.ItemId, ls);
+            }
+            else
+            {
+                layerOk = SlotsOk(locks, p.ItemId, slots);
+            }
+            if (!selfOk && !layerOk) p.Hidden = true;
         }
     }
 
-    private Dictionary<string, Dictionary<char, string>>? BuildLayerLocks(string hash, CharacterAppearance a)
+    /// <summary>
+    /// 全局遮挡锁表：slot 2 字符码 → 占槽部件 id（后写覆盖，对齐 MapleSalon2 buildLock）。
+    /// 建表顺序：每个穿戴类别按 islot 槽位层在 zmap 中的位置（zmap 顶→底 → 倒序处理，后写者占槽），
+    /// 最终槽位归「视觉上层（islot 层 index 小）+ 同层 item id 大」的部件。
+    /// 注意：不能用 CategoryInLayer 的按名分层——本 WZ 的 hairOverHead 层在 cap 层之上，
+    /// 按名分层会让后发覆盖帽子的槽位、帽子反被隐藏；MapleSalon2 用 item.islot.includes(layer) 定位，
+    /// 每个部件只落在其 islot 槽位层（cap→Cp、hair→Hr 等 2 字符层），顺序才与之一致。
+    /// </summary>
+    private Dictionary<string, string>? BuildLayerLocks(string hash, CharacterAppearance a)
     {
         var zmap = GetZmapTopToBottom();
         // 只对实际穿戴的部位建立锁
@@ -482,42 +495,89 @@ public class PaperdollService : IEntityFrameProvider
         }
         if (idMap.Count == 0) return null;
 
-        var result = new Dictionary<string, Dictionary<char, string>>();
-        foreach (var layerName in zmap)
+        // 每个穿戴类别定位到其 islot 槽位层（如 cap→Cp、hair→Hr、cape→Sr；zmap 顶层含这些 2 字符层）。
+        // islot 有多个码（套服 MaPn）时取最靠上（index 最小）的层——其建表顺序等价 MapleSalon2 的多次压入。
+        var placements = new List<(int Index, string Category)>();
+        foreach (var cat in idMap.Keys)
         {
-            var layerCats = idMap.Keys.Where(c => CategoryInLayer(c, layerName)).ToList();
-            if (layerCats.Count == 0) continue;
-            var layerLocks = new Dictionary<char, string>();
-            foreach (var cat in layerCats.OrderBy(c => idMap[c], StringComparer.Ordinal))
+            int best = int.MaxValue;
+            bool found = false;
+            foreach (var code in VslotCodes(GetIslotForCategory(cat)))
             {
-                foreach (var ch in GetVslotForCategory(cat))
-                    if (!layerLocks.ContainsKey(ch)) layerLocks[ch] = idMap[cat];
+                if (_zmapIndex.TryGetValue(code, out var idx) && idx < best)
+                {
+                    best = idx;
+                    found = true;
+                }
             }
-            result[layerName] = layerLocks;
+            if (found) placements.Add((best, cat));
         }
-        return result;
+
+        var locks = new Dictionary<string, string>();
+        // 底→顶（index 大先处理）后写覆盖 → 视觉上层（index 小）占槽；同层按 item id 升序 → id 大者占槽
+        foreach (var (_, cat) in placements
+            .OrderByDescending(p => p.Index)
+            .ThenBy(p => idMap[p.Category], StringComparer.Ordinal))
+        {
+            var id = idMap[cat];
+            foreach (var slot in VslotCodes(GetVslotForCategory(cat)))
+                locks[slot] = id;
+        }
+        return locks;
     }
+
+    /// <summary>槽位是否全部无主或主==自己（对齐 MapleSalon2 hasAllLocks）。</summary>
+    private static bool SlotsOk(Dictionary<string, string> locks, string itemId, IEnumerable<string> slots)
+    {
+        foreach (var s in slots)
+        {
+            if (locks.TryGetValue(s, out var owner) && owner != itemId) return false;
+        }
+        return true;
+    }
+
+    /// <summary>vslot/islot 串按 2 字符切块成槽码（对齐 MapleSalon2 info/vslot.match(/.{1,2}/g)）。</summary>
+    private static IEnumerable<string> VslotCodes(string codes)
+    {
+        for (int i = 0; i + 1 < codes.Length; i += 2)
+        {
+            yield return codes.Substring(i, 2);
+        }
+    }
+
+    /// <summary>类别 → islot 槽位层码（本 WZ 实际数据：cap→Cp、hair→Hr、cape→Sr、上衣→Ma、套服→MaPn、盾→Si、耳环→Ae）。</summary>
+    private static string GetIslotForCategory(string cat) => cat switch
+    {
+        "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc", "earring" => "Ae",
+        "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
+        "glove" => "Gv", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
+        "body" => "Bd", _ => ""
+    };
 
     private static bool CategoryInLayer(string cat, string layerName)
     {
         string def = cat switch
         {
-            "cap" => "cap", "hair" => "hairOverHead", "coat" => "coat", "overall" => "coat",
+            "cap" => "cap", "hair" => "hair", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove", "shield" => "shield",
             "weapon" => "weapon", "cape" => "cape", "face" => "face", "earring" => "accessory",
             "body" => "body", "head" => "head", _ => ""
         };
         if (!string.IsNullOrEmpty(def) && layerName == def) return true;
-        if (cat == "hair" && (layerName.Contains("hair", StringComparison.OrdinalIgnoreCase) || layerName == "backHead")) return true;
+        if (cat == "hair" && (layerName.Contains("hair", StringComparison.OrdinalIgnoreCase) || layerName == "Hr" || layerName == "backHead")) return true;
         if (cat == "earring" && layerName.Contains("accessory", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 
+    /// <summary>
+    /// 类别 → vslot 槽串（按本 WZ 实际数据校准：帽 CpH1H5、披风 Sr、上衣 Ma、套服 MaPn、
+    /// 发型 H1H2H3H4H5H6HfHsHb、盾 Si、手套 GlGw、耳环 Ae、脸 Fc；2 字符成对切块）。
+    /// </summary>
     private static string GetVslotForCategory(string cat) => cat switch
     {
-        "cap" => "Cp", "hair" => "Hd", "head" => "Hd", "face" => "Fa", "earring" => "Er",
-        "coat" => "CpTn", "overall" => "CpTnPn", "pants" => "Pn", "shoe" => "So",
-        "glove" => "Gv", "shield" => "Sd", "weapon" => "Wp", "cape" => "Cp",
+        "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc", "earring" => "Ae",
+        "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
+        "glove" => "GlGw", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
         "body" => "Bd", _ => ""
     };
 
@@ -549,11 +609,31 @@ public class PaperdollService : IEntityFrameProvider
         return p.Category switch
         {
             "body" => "body", "head" => "head", "face" => "face",
-            "hair" => "hairOverHead", "cap" => "cap", "coat" => "coat", "overall" => "coat",
+            // ⚠️ 2026-08-15 修复：发型有两个 canvas——hair（后发，画在 head 之下）与 hairOverHead（前发，画在 head 之上）。
+            // 旧 fallback 一律 "hairOverHead" → 后发被画到最上层，盖住脸/帽子（用户反馈「头发渲染有问题」）。
+            // 对齐 MapleSalon2 resolveUseablePieceName（fallback islot[0]='Hr' 头发专属层）：
+            // 裸 hair / hairBelow* → hairBelowHead（头下），hairOver* → hairOverHead（头上）；zmap 有裸 hair 层则用。
+            "hair" => ResolveHairLayer(p),
+            "cap" => "cap", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove",
             "weapon" => "weapon", "shield" => "shield", "cape" => "cape", "earring" => "accessory",
             _ => p.PieceName
         };
+    }
+
+    /// <summary>发型部件层解析（2026-08-15，对齐 MapleSalon2）：前发 Over 系列 → hairOverHead；后发 → hairBelowHead；zmap 有裸 hair 层优先。</summary>
+    private string ResolveHairLayer(Piece p)
+    {
+        var name = p.PieceName;
+        if (_zmapIndex.ContainsKey(name)) return name;
+        var lower = name.ToLowerInvariant();
+        if (_zmapIndex.ContainsKey(lower)) return lower;
+        if (name.Contains("Over", StringComparison.OrdinalIgnoreCase)) return "hairOverHead";
+        if (name.Contains("Below", StringComparison.OrdinalIgnoreCase)) return "hairBelowHead";
+        // 裸 hair：zmap 有 hair 层（桌宠 WZ 用 slot 缩写 Hr）→ 优先；否则后发默认 head 之下
+        if (_zmapIndex.ContainsKey("hair")) return "hair";
+        if (_zmapIndex.ContainsKey("Hr")) return "Hr";
+        return "hairBelowHead";
     }
 
     /// <summary>
@@ -656,54 +736,56 @@ public class PaperdollService : IEntityFrameProvider
     /// <summary>该 action 全部帧的联合包围盒（union bounds，缓存）。</summary>
     private Bounds GetBounds(string hash, CharacterAppearance a, string action)
     {
-        string key = $"{hash}|{action}";
-        if (_boundsCache.TryGetValue(key, out var cached)) return cached;
-
-        int frameCount = GetActionFrameCount(BodyRoot(a), action);
-        int minX = 0, minY = 0, maxX = 0, maxY = 0;
-        for (int f = 0; f < frameCount; f++)
+        // 整个方法体包进 WithWzLock：内部 GetActionFrameCount/CollectPiecesForFrame/GetMeta/GetBmp
+        // 的 WZ 遍历与读取与后台预热串行化（Monitor 同线程可重入，嵌套锁安全）
+        return _wz.WithWzLock(() =>
         {
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
-            ResolveAnchors(pieces);
-            // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
-            var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
-            int bx = bodyP?.AnchorX ?? 0;
-            int by = bodyP?.AnchorY ?? 0;
-            // 该帧 move（bounds 需容纳位移）
-            int fmvX = 0, fmvY = 0;
-            try
+            string key = $"{hash}|{action}";
+            if (_boundsCache.TryGetValue(key, out var cached)) return cached;
+
+            int frameCount = GetActionFrameCount(BodyRoot(a), action);
+            int minX = 0, minY = 0, maxX = 0, maxY = 0;
+            for (int f = 0; f < frameCount; f++)
             {
-                var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{f}/move")?.GetValueEx<Wz_Vector>(null);
-                if (mv != null) { fmvX = mv.X; fmvY = mv.Y; }
+                var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+                ResolveAnchors(pieces);
+                // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
+                var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
+                int bx = bodyP?.AnchorX ?? 0;
+                int by = bodyP?.AnchorY ?? 0;
+                // 该帧 move（bounds 需容纳位移）
+                int fmvX = 0, fmvY = 0;
+                try
+                {
+                    var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{f}/move")?.GetValueEx<Wz_Vector>(null);
+                    if (mv != null) { fmvX = mv.X; fmvY = mv.Y; }
+                }
+                catch { }
+                foreach (var p in pieces.Where(x => x.Locked))
+                {
+                    var w = GetBmp(p.PiecePath)?.Width ?? 0;
+                    var h = GetBmp(p.PiecePath)?.Height ?? 0;
+                    minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
+                    maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
+                }
             }
-            catch { }
-            foreach (var p in pieces.Where(x => x.Locked))
-            {
-                var w = GetBmp(p.PiecePath)?.Width ?? 0;
-                var h = GetBmp(p.PiecePath)?.Height ?? 0;
-                minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
-                maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
-                if (p.Category == "body" && _boundsFrameDiag.Add($"{action}|{f}"))
-                    Console.WriteLine($"[Paperdoll] {action} 帧{f} body={w}x{h} Final=({p.FinalX},{p.FinalY}) move=({fmvX},{fmvY})");
-            }
-        }
-        var bounds = new Bounds(minX, minY, maxX - minX, maxY - minY);
-        _boundsCache[key] = bounds;
-        if (_boundsDiag.Add(key))
-            Console.WriteLine($"[Paperdoll] GetBounds: key={key} {bounds.W}x{bounds.H}");
-        return bounds;
+            var bounds = new Bounds(minX, minY, maxX - minX, maxY - minY);
+            _boundsCache[key] = bounds;
+            return bounds;
+        });
     }
 
     private PieceMeta? GetMeta(string piecePath)
     {
         if (_metaCache.TryGetValue(piecePath, out var m)) return m;
-        var meta = new PieceMeta
+        // origin/map/z 复合读取一次 WithWzLock 串行化（与后台预热原子）
+        var meta = _wz.WithWzLock(() => new PieceMeta
         {
             Ox = _wz.GetOrigin(piecePath).x,
             Oy = _wz.GetOrigin(piecePath).y,
             Map = _wz.GetPieceMap(piecePath),
             ZField = _wz.GetZField(piecePath) ?? ""
-        };
+        });
         _metaCache[piecePath] = meta;
         return meta;
     }
@@ -711,7 +793,8 @@ public class PaperdollService : IEntityFrameProvider
     private SKBitmap? GetBmp(string piecePath)
     {
         if (_bmpCache.TryGetValue(piecePath, out var b)) return b;
-        var png = _wz.ExtractPng(piecePath);
+        // ExtractPng 在锁内执行（与后台预热串行化）
+        var png = _wz.WithWzLock(() => _wz.ExtractPng(piecePath));
         if (png == null || png.Length == 0) return null;
         var bmp = SKBitmap.Decode(png);
         if (bmp == null) return null;
@@ -809,7 +892,6 @@ public class PaperdollService : IEntityFrameProvider
         {
             // 桌宠 WZ zmap.img 是顶→底（mobEquipFront 顶 … Bd 底），直接用，不 reverse
             // （MapleSalon2 后端 zmap 是底→顶才 reverse，桌宠 WZ 不同源；reverse 会导致层级全反→披风错位）
-            Console.WriteLine($"[Paperdoll] zmap 原始前5=[{string.Join(",", zmap.Take(5))}] 后5=[{string.Join(",", zmap.Skip(Math.Max(0, zmap.Count - 5)))}] 共{zmap.Count}");
         }
         _zmapIndex.Clear();
         for (int i = 0; i < zmap.Count; i++)
@@ -830,17 +912,11 @@ public class PaperdollService : IEntityFrameProvider
                 var node = _wz.FindNodeByPath($"{bodyRoot}/{action}");
                 if (node == null)
                 {
-                    if (_frameCountDiag.Add(action)) Console.WriteLine($"[Paperdoll] GetActionFrameCount: {action} 节点不存在 {bodyRoot}/{action}");
                     return 0;
                 }
                 int count = 0;
                 foreach (Wz_Node child in node.Nodes)
                     if (int.TryParse(child.Text, out _)) count++;
-                if (_frameCountDiag.Add(action))
-                {
-                    var texts = string.Join(",", node.Nodes.Take(40).Select(x => x.Text));
-                    Console.WriteLine($"[Paperdoll] GetActionFrameCount: {action}={count} 节点=[{texts}]");
-                }
                 return count;
             });
         }
@@ -909,13 +985,6 @@ public class PaperdollService : IEntityFrameProvider
         catch { return ExpressionDefault; }
     }
 
-    private static bool _renderFailDiag;
-    private static bool _collectFailDiag;
-    private static readonly HashSet<string> _boundsDiag = new();
-    private static readonly HashSet<string> _frameCountDiag = new();
-    private static readonly HashSet<string> _renderFramesDiag = new();
-    private static readonly HashSet<string> _delayDiag = new();
-    private static readonly HashSet<string> _boundsFrameDiag = new();
     private List<string>? _validActionsCache;
     private readonly ConcurrentDictionary<string, bool> _actionValidCache = new();
 

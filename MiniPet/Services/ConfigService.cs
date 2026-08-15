@@ -83,7 +83,46 @@ namespace MiniPet.Services
                     }
 
                     var json = JsonSerializer.Serialize(settings, GetJsonOptions());
-                    File.WriteAllText(_settingsPath, json);
+                    // 原子写（B3）：先写同目录临时文件，再原子替换目标文件，避免崩溃/断电写坏 settings.json
+                    var tmpPath = _settingsPath + ".tmp";
+                    try
+                    {
+                        File.WriteAllText(tmpPath, json);
+                        if (File.Exists(_settingsPath))
+                        {
+                            // 目标存在：File.Replace 原子替换（同卷 rename）；备份参数传 null 不留 .bak 避免堆积
+                            try
+                            {
+                                File.Replace(tmpPath, _settingsPath, null);
+                            }
+                            catch (Exception ex) when (ex is IOException or PlatformNotSupportedException)
+                            {
+                                // File.Replace 在个别平台/文件系统不可用（含目标刚消失）时，回退 File.Move 覆盖（同卷 move 原子）
+                                File.Move(tmpPath, _settingsPath, true);
+                            }
+                        }
+                        else
+                        {
+                            // 目标不存在：直接 File.Move（同卷 move 原子）
+                            File.Move(tmpPath, _settingsPath, true);
+                        }
+                    }
+                    finally
+                    {
+                        // 清理残留临时文件（写入失败或替换异常时）
+                        if (File.Exists(tmpPath))
+                        {
+                            try
+                            {
+                                File.Delete(tmpPath);
+                            }
+                            catch (IOException)
+                            {
+                                // 忽略清理失败
+                            }
+                        }
+                    }
+
                     _settings = settings;
                     OnSettingsChanged?.Invoke(settings);
                 }

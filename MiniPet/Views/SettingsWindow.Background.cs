@@ -24,6 +24,11 @@ namespace MiniPet.Views;
 /// </summary>
 public partial class SettingsWindow
 {
+    // 自适应：预览图显示缩放（画布坐标 = 图像像素 × 缩放 + 居中偏移；crop 几何随缩放换算）
+    private double _bgImageScale = 1;
+    private double _bgImageOffsetX;
+    private double _bgImageOffsetY;
+
     private Border BuildBackgroundTab()
     {
         try
@@ -35,7 +40,8 @@ public partial class SettingsWindow
 
             // 左：区域树（唯一选择器，叶子=具体地图，选中直接预览）+ 选择历史(F2) + 镜头大小（摄像机专属，独立区域）
             var left = new Grid();
-            left.RowDefinitions.Add(new RowDefinition(GridLength.Auto));    // 区域树（内容高度，最多 380 滚动）
+            // 自适应：区域树行 Auto → Star，左栏总高随窗口伸缩（树内滚动）
+            left.RowDefinitions.Add(new RowDefinition(GridLength.Star));    // 区域树（Star：随窗口伸缩，树内滚动）
             left.RowDefinitions.Add(new RowDefinition(new GridLength(150))); // 选择历史
             left.RowDefinitions.Add(new RowDefinition(GridLength.Auto));    // 镜头大小（摄像机窗口尺寸）
 
@@ -50,22 +56,22 @@ public partial class SettingsWindow
             {
                 Watermark = "搜索地图，树状过滤…",
                 FontSize = 12,
-                Height = 26,
                 Padding = new Thickness(10, 6),
                 Background = Brushes.White,
                 Foreground = Brushes.Black,
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
-                HorizontalAlignment = HorizontalAlignment.Left
+                // 自适应：所在列为 Star，Stretch 填充该列可用宽度（原 Left 只占内容宽度）
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
             _bgRegionTree = new TreeView
             {
                 FontSize = 11,
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                MaxHeight = 380,
-                VerticalAlignment = VerticalAlignment.Top
+                // 自适应：所在行已改 Star，去掉固定 MaxHeight=380 上限，树内滚动随窗口伸缩
+                VerticalAlignment = VerticalAlignment.Stretch
             };
             _bgRegionTree.SelectionChanged += (_, e) => BgOnRegionChanged(e.AddedItems.Count > 0 ? e.AddedItems[0] as WorldMapTreeNode : null);
             // 点击区域行任意位置展开/折叠子节点（箭头除外——箭头走默认 toggle；叶子无子不处理）。胶水规则 2026-08-09。
@@ -121,10 +127,16 @@ public partial class SettingsWindow
             // ── 摄像机镜头大小（独立区域，与静态选区尺寸分开；写 PetSettings.ViewportW/H + 事件应用到窗口）──
             var viewportPanel = new StackPanel { Margin = new Thickness(10, 6, 5, 2), Spacing = 2 };
             viewportPanel.Children.Add(new TextBlock { Text = "🎥 摄像机镜头大小", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim });
-            var viewportRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            var vpW = new TextBox { Text = _settings.ViewportW.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
-            var vpH = new TextBox { Text = _settings.ViewportH.ToString(), Width = 56, Height = 22, FontSize = 10, Padding = new Thickness(4, 1), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
-            var vpBtn = new Button { Content = "应用", FontSize = 9, Padding = new Thickness(8, 2), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3) };
+            var viewportRow = new Grid { ColumnSpacing = 4 };
+            viewportRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // "宽"
+            viewportRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // 宽值（占一半剩余宽度）
+            viewportRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // "高"
+            viewportRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // 高值（占一半剩余宽度）
+            viewportRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 应用
+            var vpW = new TextBox { Text = _settings.ViewportW.ToString(), FontSize = 12, Padding = new Thickness(10, 6), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
+            var vpH = new TextBox { Text = _settings.ViewportH.ToString(), FontSize = 12, Padding = new Thickness(10, 6), Background = Brushes.White, Foreground = Brushes.Black, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
+            var vpBtn = new Button { Content = "应用", FontSize = 9, Padding = new Thickness(8, 2), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center };
+            UiStyle.ApplyHover(vpBtn);
             vpBtn.Click += (_, _) =>
             {
                 try
@@ -141,9 +153,16 @@ public partial class SettingsWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ViewportApply: {ex.Message}"); }
             };
-            viewportRow.Children.Add(new TextBlock { Text = "宽", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+            var vpWLabel = new TextBlock { Text = "宽", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center };
+            var vpHLabel = new TextBlock { Text = "高", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(vpWLabel, 0);
+            Grid.SetColumn(vpW, 1);
+            Grid.SetColumn(vpHLabel, 2);
+            Grid.SetColumn(vpH, 3);
+            Grid.SetColumn(vpBtn, 4);
+            viewportRow.Children.Add(vpWLabel);
             viewportRow.Children.Add(vpW);
-            viewportRow.Children.Add(new TextBlock { Text = "高", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center });
+            viewportRow.Children.Add(vpHLabel);
             viewportRow.Children.Add(vpH);
             viewportRow.Children.Add(vpBtn);
             viewportPanel.Children.Add(viewportRow);
@@ -164,7 +183,8 @@ public partial class SettingsWindow
             right.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
             _bgPreviewCanvas = new Canvas { Background = new SolidColorBrush(Color.FromArgb(255, 20, 20, 26)), Margin = new Thickness(5, 10, 10, 4) };
-            _bgPreviewImage = new Image { Stretch = Stretch.None, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            // 自适应：Uniform 等比缩放 + 居中（尺寸/位置由 BgUpdatePreviewScale 按画布大小计算，替换原 Stretch=None 480×360 固定）
+            _bgPreviewImage = new Image { Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             // 选区框：亮黄描边 + 淡白填充，深色预览底上清晰可辨
             _bgCropRect = new Rectangle { Stroke = new SolidColorBrush(Color.FromArgb(255, 255, 225, 77)), StrokeThickness = 2, Fill = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), IsVisible = false };
             _bgPreviewCanvas.Children.Add(_bgPreviewImage);
@@ -183,6 +203,8 @@ public partial class SettingsWindow
             _bgPreviewCanvas.PointerPressed += BgPreviewPressed;
             _bgPreviewCanvas.PointerMoved += BgPreviewMoved;
             _bgPreviewCanvas.PointerReleased += BgPreviewReleased;
+            // 自适应：画布尺寸变化时重算预览图缩放/偏移，并同步选区框与手柄（crop 几何按图像像素换算）
+            _bgPreviewCanvas.LayoutUpdated += (_, _) => BgUpdatePreviewScale();
             Grid.SetRow(_bgPreviewCanvas, 0);
             right.Children.Add(_bgPreviewCanvas);
 
@@ -199,13 +221,16 @@ public partial class SettingsWindow
             {
                 var captured = (lbl, w, h);
                 var b = new Button { Content = captured.lbl, FontSize = 9, Padding = new Thickness(6, 2), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+                UiStyle.ApplyHover(b);
                 b.Click += (_, _) => BgApplyPresetSize(captured.w, captured.h);
                 presetRow.Children.Add(b);
             }
             var fullBtn = new Button { Content = "整图", FontSize = 9, Padding = new Thickness(6, 2), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+            UiStyle.ApplyHover(fullBtn);
             fullBtn.Click += (_, _) => BgApplyFullMap();
             presetRow.Children.Add(fullBtn);
             var clearBtn = new Button { Content = "✕ 清除", FontSize = 9, Padding = new Thickness(6, 2), Background = BrushInputBg, Foreground = BrushTxtDim, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+            UiStyle.ApplyHover(clearBtn);
             clearBtn.Click += (_, _) => BgClearCrop();
             presetRow.Children.Add(clearBtn);
             bottom.Children.Add(presetRow);
@@ -217,6 +242,7 @@ public partial class SettingsWindow
             {
                 var captured = (dir, dx, dy);
                 var b = new Button { Content = captured.dir, Width = 26, Height = 22, Padding = new Thickness(0), FontSize = 10, Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3) };
+                UiStyle.ApplyHover(b);
                 b.Click += (_, _) => BgNudgeCrop(captured.dx, captured.dy);
                 nudgeRow.Children.Add(b);
             }
@@ -256,10 +282,19 @@ public partial class SettingsWindow
             bottom.Children.Add(layerToggleRow);
 
             var applyBtn = new Button { Content = "✅ 应用到主窗口", FontSize = 12, Padding = new Thickness(20, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Right };
+            UiStyle.ApplyHover(applyBtn);
             applyBtn.Click += (_, _) => BgApplySelection();
             bottom.Children.Add(applyBtn);
-            Grid.SetRow(bottom, 1);
-            right.Children.Add(bottom);
+            // 自适应：底部内容包 ScrollViewer（窗口矮时不被挤没），MaxHeight=210 上限保留预览区空间
+            var bottomScroll = new ScrollViewer
+            {
+                Content = bottom,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                MaxHeight = 210
+            };
+            Grid.SetRow(bottomScroll, 1);
+            right.Children.Add(bottomScroll);
             Grid.SetColumn(right, 2);
             grid.Children.Add(right);
 
@@ -616,6 +651,58 @@ public partial class SettingsWindow
         });
     }
 
+    // ── 自适应：预览图缩放与 crop 坐标换算（画布坐标 = 图像像素 × 缩放 + 居中偏移）──
+    /// <summary>自适应：按画布当前尺寸重算预览图 Uniform 缩放与居中偏移，并同步选区框/手柄位置。</summary>
+    private void BgUpdatePreviewScale()
+    {
+        try
+        {
+            if (_bgPreviewCanvas == null || _bgPreviewImage == null || _bgThumbW <= 0 || _bgThumbH <= 0) return;
+            double cw = _bgPreviewCanvas.Bounds.Width;
+            double ch = _bgPreviewCanvas.Bounds.Height;
+            if (cw <= 0 || ch <= 0) return;
+            // Uniform 等比缩放（上限 2 倍防小图过度放大模糊），居中显示
+            double s = Math.Min(cw / _bgThumbW, ch / _bgThumbH);
+            s = Math.Min(s, 2.0);
+            _bgImageScale = s;
+            _bgImageOffsetX = (cw - _bgThumbW * s) / 2;
+            _bgImageOffsetY = (ch - _bgThumbH * s) / 2;
+            _bgPreviewImage.Width = _bgThumbW * s;
+            _bgPreviewImage.Height = _bgThumbH * s;
+            Canvas.SetLeft(_bgPreviewImage, _bgImageOffsetX);
+            Canvas.SetTop(_bgPreviewImage, _bgImageOffsetY);
+            // 有持久选区：按世界坐标重算画布几何（世界 → 图像像素 → 画布坐标），保持与缩放后的图对齐
+            if (_bgHasCrop && _bgCurrentMap != null && _bgCropW > 0 && _bgCropH > 0)
+            {
+                double ix = (_bgCropX - _bgCurrentMap.MinX) / _bgThumbScale;
+                double iy = (_bgCropY - _bgCurrentMap.MinY) / _bgThumbScale;
+                BgSetCropRectPx(ix, iy, _bgCropW / _bgThumbScale, _bgCropH / _bgThumbScale, false);
+            }
+            else if (_bgCropRect != null && _bgCropRect.IsVisible)
+            {
+                // 拖拽中的临时选区：按图像像素换算现有画布几何
+                double ix = (Canvas.GetLeft(_bgCropRect) - _bgImageOffsetX) / s;
+                double iy = (Canvas.GetTop(_bgCropRect) - _bgImageOffsetY) / s;
+                BgSetCropRectPx(ix, iy, _bgCropRect.Width / s, _bgCropRect.Height / s, false);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgUpdatePreviewScale: {ex.Message}"); }
+    }
+
+    /// <summary>画布坐标 → 图像像素坐标（X）。</summary>
+    private double BgCanvasToImgX(double cx) => _bgImageScale > 0 ? (cx - _bgImageOffsetX) / _bgImageScale : cx;
+    /// <summary>画布坐标 → 图像像素坐标（Y）。</summary>
+    private double BgCanvasToImgY(double cy) => _bgImageScale > 0 ? (cy - _bgImageOffsetY) / _bgImageScale : cy;
+    /// <summary>图像像素坐标 → 画布坐标（X）。</summary>
+    private double BgImgToCanvasX(double ix) => _bgImageOffsetX + ix * _bgImageScale;
+    /// <summary>图像像素坐标 → 画布坐标（Y）。</summary>
+    private double BgImgToCanvasY(double iy) => _bgImageOffsetY + iy * _bgImageScale;
+    /// <summary>以画布坐标设置选区（内部换算为图像像素后走 BgSetCropRectPx，供鼠标交互使用）。</summary>
+    private void BgSetCropRectCanvas(double x, double y, double w, double h, bool persist)
+    {
+        BgSetCropRectPx(BgCanvasToImgX(x), BgCanvasToImgY(y), w / _bgImageScale, h / _bgImageScale, persist);
+    }
+
     // ── F3 crop 选区：像素几何读写 + 手柄定位 ──
     /// <summary>以像素坐标设置选区框（含 clamp + 同步世界坐标 + 手柄），persist=true 时写入 _bgCropX/Y/W/H 与 _bgHasCrop。</summary>
     private void BgSetCropRectPx(double x, double y, double w, double h, bool persist)
@@ -626,10 +713,11 @@ public partial class SettingsWindow
         w = Math.Min(Math.Max(0, w), _bgThumbW - x);
         h = Math.Min(Math.Max(0, h), _bgThumbH - y);
         _bgCropRect.IsVisible = true;
-        Canvas.SetLeft(_bgCropRect, x);
-        Canvas.SetTop(_bgCropRect, y);
-        _bgCropRect.Width = w;
-        _bgCropRect.Height = h;
+        // 自适应：画布坐标 = 图像像素 × 缩放 + 居中偏移（世界坐标换算仍按图像像素，见下方 persist）
+        Canvas.SetLeft(_bgCropRect, BgImgToCanvasX(x));
+        Canvas.SetTop(_bgCropRect, BgImgToCanvasY(y));
+        _bgCropRect.Width = w * _bgImageScale;
+        _bgCropRect.Height = h * _bgImageScale;
         if (persist)
         {
             _bgCropX = _bgCurrentMap.MinX + (int)(x * _bgThumbScale);
@@ -717,16 +805,12 @@ public partial class SettingsWindow
         }
         else
         {
-            // 新建模式：从空白处拖出新选区
+            // 新建模式：从空白处拖出新选区（自适应：画布坐标入参，内部换算图像像素）
             _bgCropMode = "create";
             _bgActiveHandle = null;
             if (_bgCropRect != null)
             {
-                _bgCropRect.IsVisible = true;
-                _bgCropRect.Width = 0;
-                _bgCropRect.Height = 0;
-                Canvas.SetLeft(_bgCropRect, p.X);
-                Canvas.SetTop(_bgCropRect, p.Y);
+                BgSetCropRectCanvas(p.X, p.Y, 0, 0, false);
             }
         }
         // 记录拖拽起始的选区几何（move/resize 用）
@@ -750,14 +834,14 @@ public partial class SettingsWindow
             double y = Math.Min(_bgCropOrigin.Y, p.Y);
             double w = Math.Abs(p.X - _bgCropOrigin.X);
             double h = Math.Abs(p.Y - _bgCropOrigin.Y);
-            BgSetCropRectPx(x, y, w, h, false);
+            BgSetCropRectCanvas(x, y, w, h, false);
             return;
         }
         double dx = p.X - _bgCropOrigin.X;
         double dy = p.Y - _bgCropOrigin.Y;
         if (_bgCropMode == "move")
         {
-            BgSetCropRectPx(_bgCropStartX + dx, _bgCropStartY + dy, _bgCropStartW, _bgCropStartH, false);
+            BgSetCropRectCanvas(_bgCropStartX + dx, _bgCropStartY + dy, _bgCropStartW, _bgCropStartH, false);
         }
         else if (_bgCropMode == "resize" && _bgActiveHandle != null)
         {
@@ -769,7 +853,7 @@ public partial class SettingsWindow
             if (_bgActiveHandle.Contains('s')) bottom = _bgCropStartY + _bgCropStartH + dy;
             double nx = Math.Min(left, right), nw = Math.Abs(right - left);
             double ny = Math.Min(top, bottom), nh = Math.Abs(bottom - top);
-            BgSetCropRectPx(nx, ny, nw, nh, false);
+            BgSetCropRectCanvas(nx, ny, nw, nh, false);
         }
     }
 
@@ -790,7 +874,7 @@ public partial class SettingsWindow
             BgClearCrop();
             return;
         }
-        BgSetCropRectPx(x, y, w, h, true);
+        BgSetCropRectCanvas(x, y, w, h, true);
     }
 
     /// <summary>F3 预设视口尺寸：以当前选区中心（无选区则地图中心）为中心放置 w×h 选区。</summary>

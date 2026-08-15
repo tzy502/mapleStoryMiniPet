@@ -104,6 +104,7 @@ public class WzLoadFailWindow : Window
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center
             };
+            UiStyle.ApplyHover(okBtn);
             okBtn.Click += (_, _) =>
             {
                 try { Close(); }

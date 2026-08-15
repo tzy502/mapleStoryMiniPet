@@ -59,8 +59,8 @@ public partial class SettingsWindow
             {
                 Margin = new Thickness(20, 16, 20, 16),
                 Spacing = 18,
-                MaxWidth = 720,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                // 自适应：去掉 MaxWidth=720 上限，内容随窗口宽度伸缩（阈值行/映射行均 Star 等分，不受影响）
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
 
             // ── 标题 ──
@@ -84,9 +84,10 @@ public partial class SettingsWindow
             // ── 阈值区 ──
             root.Children.Add(BuildAgentSectionHeader("阈值（秒）"));
             var threshGrid = new Grid();
+            // 4 列等分（Star）：阈值输入自适应占满整行宽度
             for (int i = 0; i < 4; i++)
             {
-                threshGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                threshGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
             }
             _agentHermesInterval = new NumericUpDown();
             _agentCCSilence = new NumericUpDown();
@@ -108,10 +109,10 @@ public partial class SettingsWindow
 
             // ── Hermes 连接（api_server） ──
             root.Children.Add(BuildAgentSectionHeader("Hermes 连接（api_server）"));
-            var connPanel = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Left };
+            var connPanel = new StackPanel { Spacing = 10 };
             _agentHermesPort = new NumericUpDown();
             connPanel.Children.Add(MakeAgentNumericBox("端口（0 = 自动发现，默认 8642）", ai.HermesPort, 0, 65535, _agentHermesPort));
-            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
             keyWrap.Children.Add(new TextBlock { Text = "API Server Key（api_server Bearer 本地凭证，仅本机勿备份同步）", FontSize = 10, Foreground = BrushTxtDim });
             _agentHermesApiKey = new TextBox
             {
@@ -125,7 +126,6 @@ public partial class SettingsWindow
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 6),
-                Width = 320,
             };
             keyWrap.Children.Add(_agentHermesApiKey);
             connPanel.Children.Add(keyWrap);
@@ -133,12 +133,13 @@ public partial class SettingsWindow
 
             // ── Hermes Profile（profile 名 + 同步状态显示） ──
             root.Children.Add(BuildAgentSectionHeader("Hermes Profile"));
-            var profileRow = new StackPanel
+            var profileRow = new Grid
             {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                ColumnSpacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
+            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // profile 名输入（占满剩余宽度）
+            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
             _agentHermesProfileInput = new TextBox
             {
                 Watermark = "默认空 = 默认 profile",
@@ -150,7 +151,6 @@ public partial class SettingsWindow
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 6),
-                Width = 240,
             };
             _agentHermesStatusText = new TextBlock
             {
@@ -159,6 +159,8 @@ public partial class SettingsWindow
                 Foreground = BrushTxtDim,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            Grid.SetColumn(_agentHermesProfileInput, 0);
+            Grid.SetColumn(_agentHermesStatusText, 1);
             profileRow.Children.Add(_agentHermesProfileInput);
             profileRow.Children.Add(_agentHermesStatusText);
             root.Children.Add(profileRow);
@@ -194,20 +196,26 @@ public partial class SettingsWindow
                 _agentStateActionInputs[st] = actionTb;
                 _agentStateBalloonInputs[st] = balloonTb;
 
-                var row = new StackPanel
+                var row = new Grid
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 8,
-                    HorizontalAlignment = HorizontalAlignment.Left,
+                    ColumnSpacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
                 };
-                row.Children.Add(new TextBlock
+                row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 状态名
+                row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Action（占一半剩余宽度）
+                row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Balloon（占一半剩余宽度）
+                var stateLabel = new TextBlock
                 {
                     Text = StateDisplayName(st),
                     FontSize = 12,
                     Width = 110,
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = BrushTxtPrimary,
-                });
+                };
+                Grid.SetColumn(stateLabel, 0);
+                Grid.SetColumn(actionTb, 1);
+                Grid.SetColumn(balloonTb, 2);
+                row.Children.Add(stateLabel);
                 row.Children.Add(actionTb);
                 row.Children.Add(balloonTb);
                 root.Children.Add(row);
@@ -249,6 +257,7 @@ public partial class SettingsWindow
                 BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(6),
             };
+            UiStyle.ApplyHover(saveBtn);
             saveBtn.Click += (_, _) => SaveAgentIntegration();
             btnRow.Children.Add(saveBtn);
             root.Children.Add(btnRow);
@@ -293,7 +302,6 @@ public partial class SettingsWindow
         nud.FontSize = 12;
         nud.HorizontalContentAlignment = HorizontalAlignment.Left;
         nud.TextAlignment = TextAlignment.Left;
-        nud.Width = 140;
         nud.Foreground = Brushes.Black;
         nud.Background = Brushes.White;
         // Avalonia NumericUpDown.TextAlignment 属性不保证传递到模板内 PART_TextBox（实测无效），
@@ -315,7 +323,7 @@ public partial class SettingsWindow
             }
         };
 
-        var wrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 14, 0), HorizontalAlignment = HorizontalAlignment.Left };
+        var wrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 14, 0) };
         wrap.Children.Add(new TextBlock { Text = label, FontSize = 10, Foreground = BrushTxtDim });
         wrap.Children.Add(nud);
         return wrap;
@@ -350,7 +358,6 @@ public partial class SettingsWindow
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 6),
-            Width = 220,
         };
     }
 

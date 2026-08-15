@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -311,7 +312,8 @@ public partial class PetWindow
                 Height = 260,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
-                CanResize = false,
+                // 自适应：允许缩放（Agent 状态 10+ 行文本可能超 260 高被裁）
+                CanResize = true,
             };
             var stack = new StackPanel
             {
@@ -338,9 +340,16 @@ public partial class PetWindow
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
                 Padding = new Thickness(20, 6),
             };
+            UiStyle.ApplyHover(closeBtn);
             closeBtn.Click += (_, _) => win.Close();
             stack.Children.Add(closeBtn);
-            win.Content = stack;
+            // 自适应：内容包 ScrollViewer，窗口矮时滚动查看不裁切
+            win.Content = new ScrollViewer
+            {
+                Content = stack,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
             win.Show();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowInfoPopup: {ex.Message}"); }

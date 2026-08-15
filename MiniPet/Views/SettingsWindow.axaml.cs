@@ -265,6 +265,7 @@ public partial class SettingsWindow : Window
 
         var rightPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 20, 0) };
         var wzBtn = new Button { Content = "⚙️ WZ 配置", FontSize = 10, Padding = new Thickness(10, 4), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(wzBtn);
         wzBtn.Click += (_, _) => ShowWzOverlay();
         rightPanel.Children.Add(wzBtn);
 
@@ -416,27 +417,36 @@ public partial class SettingsWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1)));
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
 
-        var sidebar = new DockPanel();
-        var sidebarContent = new StackPanel { Margin = new Thickness(10), Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+        // 自适应：侧栏改 Grid（搜索/按钮/标题 Auto + 列表 Star），收藏/最近列表随窗口伸缩并内部滚动（原无高度约束全展开）
+        var sidebar = new Grid { Margin = new Thickness(10), RowSpacing = 8, VerticalAlignment = VerticalAlignment.Stretch };
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 搜索框
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 浏览素材库
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 重新获取素材
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // ★ 收藏 标题
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Star));   // 收藏列表（Star：随窗口伸缩 + 内部滚动）
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 🕐 最近使用 标题
+        sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Star));   // 最近列表（Star：随窗口伸缩 + 内部滚动）
 
-        var searchPanel = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), Background = Brushes.White, Height = 30 };
+        var searchPanel = new Border { CornerRadius = new CornerRadius(8), Background = Brushes.White };
         var searchGrid = new Grid();
-        var searchIcon = new TextBlock { Text = "🔍", FontSize = 13, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
-        var searchInput = new TextBox { PlaceholderText = "过滤当前列表…", FontSize = 12, Foreground = Brushes.Black, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(30, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Left };
-        // 聚焦高亮与全项目 input 一致：外层 Border 聚焦时变 accent 蓝（内层 TextBox 无边框，需容器承载焦点态）
-        var searchInputBorder = new SolidColorBrush(InputBorder);
-        searchInput.GotFocus += (_, _) => searchPanel.BorderBrush = BrushAccent;
-        searchInput.LostFocus += (_, _) => searchPanel.BorderBrush = searchInputBorder;
-        searchGrid.Children.Add(searchIcon);
+        var searchInput = new TextBox { PlaceholderText = "过滤当前列表…", FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(30, 6, 10, 6), VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Left };
+        // 🔍 图标后添加 → 绘制在 TextBox 之上（白底不遮图标）；Padding 左侧 30 为图标留位；
+        // IsHitTestVisible=false 让点击图标区域仍落到输入框（否则上层 TextBlock 会拦截焦点）
+        var searchIcon = new TextBlock { Text = "🔍", FontSize = 13, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0), IsHitTestVisible = false };
         searchGrid.Children.Add(searchInput);
+        searchGrid.Children.Add(searchIcon);
         searchPanel.Child = searchGrid;
-        sidebarContent.Children.Add(searchPanel);
+        Grid.SetRow(searchPanel, 0);
+        sidebar.Children.Add(searchPanel);
 
         var browseBtn = new Button { Content = "🔍 浏览素材库", FontSize = 11, Padding = new Thickness(0, 6), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(browseBtn);
         browseBtn.Click += (_, _) => OpenMaterialBrowser();
-        sidebarContent.Children.Add(browseBtn);
+        Grid.SetRow(browseBtn, 1);
+        sidebar.Children.Add(browseBtn);
 
         var refreshBtn = new Button { Content = "🔄 重新获取素材", FontSize = 10, Padding = new Thickness(0, 5), Background = BrushInputBg, Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(refreshBtn);
         refreshBtn.Click += (_, _) =>
         {
             try
@@ -453,9 +463,12 @@ public partial class SettingsWindow : Window
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Refresh: {ex.Message}"); }
         };
-        sidebarContent.Children.Add(refreshBtn);
+        Grid.SetRow(refreshBtn, 2);
+        sidebar.Children.Add(refreshBtn);
 
-        sidebarContent.Children.Add(new TextBlock { Text = "★ 收藏", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
+        var favLabel = new TextBlock { Text = "★ 收藏", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) };
+        Grid.SetRow(favLabel, 3);
+        sidebar.Children.Add(favLabel);
         _favoriteList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshFavoriteList();
         _favoriteList.SelectionChanged += (_, _) => { if (_favoriteList.SelectedItem is FavoriteItem fi) SelectPet(fi.Name, fi.Id, fi.Type); };
@@ -484,9 +497,12 @@ public partial class SettingsWindow : Window
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Unfavorite: {ex.Message}"); }
         };
-        sidebarContent.Children.Add(_favoriteList);
+        Grid.SetRow(_favoriteList, 4);
+        sidebar.Children.Add(_favoriteList);
 
-        sidebarContent.Children.Add(new TextBlock { Text = "🕐 最近使用", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
+        var recentLabel = new TextBlock { Text = "🕐 最近使用", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) };
+        Grid.SetRow(recentLabel, 5);
+        sidebar.Children.Add(recentLabel);
         _recentList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
         RefreshRecentList();
         _recentList.SelectionChanged += (_, _) => { if (_recentList.SelectedItem is RecentItem ri) SelectPet(ri.Name, ri.Id, ri.Type); };
@@ -515,9 +531,9 @@ public partial class SettingsWindow : Window
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] DeleteRecent: {ex.Message}"); }
         };
-        sidebarContent.Children.Add(_recentList);
+        Grid.SetRow(_recentList, 6);
+        sidebar.Children.Add(_recentList);
 
-        sidebar.Children.Add(new ScrollViewer { Content = sidebarContent, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         Grid.SetColumn(sidebar, 0);
         grid.Children.Add(sidebar);
 
@@ -525,8 +541,12 @@ public partial class SettingsWindow : Window
         Grid.SetColumn(divider, 1);
         grid.Children.Add(divider);
 
-        var preview = new StackPanel { Margin = new Thickness(14), Spacing = 8 };
-        _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinHeight = 400, MinWidth = 320, VerticalAlignment = VerticalAlignment.Stretch };
+        // 自适应：右栏预览容器 StackPanel → Grid（预览区 Star 行占满剩余高度，参数栏 Auto 固定），让 _previewCanvas 随窗口伸缩
+        var preview = new Grid { Margin = new Thickness(14), RowSpacing = 8 };
+        preview.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+        preview.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        // 自适应：去掉 MinHeight=400 固定下限，改由 Grid Star 行撑满（保留 MinWidth=320 防过窄）
+        _previewCanvas = new Border { CornerRadius = new CornerRadius(8), BorderBrush = new SolidColorBrush(Color.FromArgb(51, 94, 156, 255)), BorderThickness = new Thickness(1), Background = GetCheckerboardBrush(), MinWidth = 320, VerticalAlignment = VerticalAlignment.Stretch };
         var defaultMobId = _config.LoadSettings().CurrentMobId;
         var defaultName = !string.IsNullOrEmpty(defaultMobId) ? _wzService.GetMobName(defaultMobId) : "";
         if (string.IsNullOrEmpty(defaultName))
@@ -536,24 +556,39 @@ public partial class SettingsWindow : Window
             defaultName = !string.IsNullOrEmpty(defaultMobId) ? $"{(det == "Npc" ? "NPC" : "怪物")}_{defaultMobId}" : "";
         }
         UpdatePreviewContent(defaultName, defaultMobId ?? "");
+        Grid.SetRow(_previewCanvas, 0);
         preview.Children.Add(_previewCanvas);
 
-        var paramBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var paramBar = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        paramBar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 宠物名
+        paramBar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // 宠物 id 输入（占满剩余宽度）
+        paramBar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 播放
+        paramBar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 收藏
+        paramBar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 确定应用
         _petNameLabel = new TextBlock { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultName : "未选择宠物", FontSize = 12, FontWeight = FontWeight.Medium, Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(6, 4, 6, 4) };
+        Grid.SetColumn(_petNameLabel, 0);
         paramBar.Children.Add(_petNameLabel);
-        _petIdInput = new TextBox { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultMobId : "", Width = 80, FontSize = 11, FontFamily = new FontFamily("SF Mono, monospace"), Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        _petIdInput = new TextBox { Text = !string.IsNullOrEmpty(defaultMobId) ? defaultMobId : "", FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6), TextAlignment = TextAlignment.Left, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch };
+        Grid.SetColumn(_petIdInput, 1);
         paramBar.Children.Add(_petIdInput);
 
         var playBtn = new Button { Content = "▶ 播放", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(10, 3), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(playBtn);
+        Grid.SetColumn(playBtn, 2);
         paramBar.Children.Add(playBtn);
 
         var favBtn = new Button { Content = "★ 收藏", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(10, 3), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(favBtn);
         favBtn.Click += (_, _) => ToggleFavorite();
+        Grid.SetColumn(favBtn, 3);
         paramBar.Children.Add(favBtn);
 
         var applyBtn = new Button { Content = "确定应用", FontSize = 10, FontWeight = FontWeight.Medium, Padding = new Thickness(14, 3), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(applyBtn);
         applyBtn.Click += (_, _) => ApplyCurrentPet(applyBtn);
+        Grid.SetColumn(applyBtn, 4);
         paramBar.Children.Add(applyBtn);
+        Grid.SetRow(paramBar, 1);
         preview.Children.Add(paramBar);
 
         Grid.SetColumn(preview, 2);
@@ -658,12 +693,15 @@ public partial class SettingsWindow : Window
 
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0) };
         _wzRefreshBtn = new Button { Content = "刷新当前素材", FontSize = 11, Padding = new Thickness(20, 8), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(_wzRefreshBtn);
         _wzRefreshBtn.Click += async (_, _) => await RefreshWzMaterialAsync();
         btnRow.Children.Add(_wzRefreshBtn);
         var cancelBtn = new Button { Content = "取消", FontSize = 11, Padding = new Thickness(20, 8), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(cancelBtn);
         cancelBtn.Click += (_, _) => HideWzOverlay();
         btnRow.Children.Add(cancelBtn);
         var saveBtn = new Button { Content = "保存", FontSize = 11, Padding = new Thickness(20, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(6), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(saveBtn);
         saveBtn.Click += (_, _) => SaveWzConfig();
         btnRow.Children.Add(saveBtn);
         form.Children.Add(btnRow);
@@ -693,9 +731,9 @@ public partial class SettingsWindow : Window
         header.Children.Add(new TextBlock { Text = hint, FontSize = 9, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Right });
         row.Children.Add(header);
         var inputRow = new DockPanel();
-        input = new TextBox { PlaceholderText = $"选择 {label}…", Height = 32, FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 0), TextAlignment = TextAlignment.Left };
-        inputRow.Children.Add(input);
+        input = new TextBox { PlaceholderText = $"选择 {label}…", FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 6), TextAlignment = TextAlignment.Left };
         var browseBtn = new Button { Content = "浏览…", FontSize = 10, Height = 28, Padding = new Thickness(10, 0), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), VerticalAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(browseBtn);
         DockPanel.SetDock(browseBtn, Dock.Right);
         var capturedInput = input;
         browseBtn.Click += async (sender, _) =>
@@ -727,7 +765,9 @@ public partial class SettingsWindow : Window
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Browse: {ex.Message}"); }
         };
+        // 先挂浏览按钮（Dock.Right），输入框作为最后一个子元素填充剩余宽度（DockPanel LastChildFill）
         inputRow.Children.Add(browseBtn);
+        inputRow.Children.Add(input);
         row.Children.Add(inputRow);
         return row;
     }
@@ -1017,10 +1057,15 @@ public partial class SettingsWindow : Window
         try
         {
             if (_previewCanvas == null) return;
-            var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 10 };
+            // 自适应：预览内容 StackPanel → Grid（动作行 Auto / 预览图 Star / 名称 Auto），预览图随预览区伸缩
+            var stack = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, RowSpacing = 10 };
+            stack.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            stack.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+            stack.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
             // 动画预览区域
-            var previewFigure = new Border { Width = 280, Height = 280, CornerRadius = new CornerRadius(10), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Center, ClipToBounds = true };
+            // 自适应：去掉固定 280×280，Star 行内填满（MaxWidth/MaxHeight 保留上限防过大）
+            var previewFigure = new Border { MaxWidth = 560, MaxHeight = 560, CornerRadius = new CornerRadius(10), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, ClipToBounds = true };
 
             if (_wzService.IsLoaded)
             {
@@ -1056,13 +1101,14 @@ public partial class SettingsWindow : Window
                         HorizontalContentAlignment = HorizontalAlignment.Center,
                         VerticalContentAlignment = VerticalAlignment.Center
                     };
+                    UiStyle.ApplyHover(btn);
                     btn.Click += (_, _) =>
                     {
                         _previewAction = capturedAct;
                         LoadPreviewAction(mobId, capturedAct);
                         StartPreviewAnimation();
-                        // 增量更新预览图，不重建面板
-                        if (_previewCanvas?.Child is StackPanel sp)
+                        // 增量更新预览图，不重建面板（预览内容已改 Grid，故用 Panel 判断）
+                        if (_previewCanvas?.Child is Panel sp)
                         {
                             foreach (var c in sp.Children)
                             {
@@ -1091,9 +1137,11 @@ public partial class SettingsWindow : Window
                     };
                     actionRow.Children.Add(btn);
                 }
+                Grid.SetRow(actionRow, 0);
                 stack.Children.Add(actionRow);
 
-                var spriteImage = new Image { Stretch = Stretch.Uniform, Width = 260, Height = 260, Margin = new Thickness(10) };
+                // 自适应：去掉固定 260×260，随预览图填满并等比缩放（帧由 CroppedBitmap 逐帧替换）
+                var spriteImage = new Image { Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, Margin = new Thickness(10) };
                 spriteImage.Tag = "previewSprite";
                 spriteImage.Name = "previewSprite";
                 _previewSpriteImage = spriteImage;
@@ -1104,9 +1152,12 @@ public partial class SettingsWindow : Window
                 previewFigure.Child = new TextBlock { Text = "请先配置 WZ 路径", Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 };
             }
 
+            Grid.SetRow(previewFigure, 1);
             stack.Children.Add(previewFigure);
 
-            stack.Children.Add(new TextBlock { Text = name, FontSize = 14, FontWeight = FontWeight.Bold, Foreground = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)), HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center });
+            var nameBlock = new TextBlock { Text = name, FontSize = 14, FontWeight = FontWeight.Bold, Foreground = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)), HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center };
+            Grid.SetRow(nameBlock, 2);
+            stack.Children.Add(nameBlock);
             _previewCanvas.Child = stack;
 
             // 启动预览动画

@@ -221,18 +221,13 @@ public partial class MaterialBrowserWindow
                     using var ms = new MemoryStream(pngData);
                     var bmp = new Bitmap(ms);
 
-                    var strip = _wzService.ExportSpriteStrip(entry.Id, action, category).Item1;
-                    int frameW = strip?.FrameWidth ?? bmp.PixelSize.Width;
-                    int frameH = strip?.FrameHeight ?? bmp.PixelSize.Height;
-
+                    // 自适应：去掉固定帧尺寸约束，随预览框（Star 行）填满并等比缩放（纵横比不裁切）
                     var image = new Image
                     {
                         Source = bmp,
-                        Width = frameW,
-                        Height = frameH,
                         Stretch = Stretch.Uniform,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        VerticalAlignment = VerticalAlignment.Stretch
                     };
 
                     _previewBox.Child = image;
@@ -291,14 +286,13 @@ public partial class MaterialBrowserWindow
             }
             using var ms = new MemoryStream(png);
             var bmp = new Bitmap(ms);
+            // 自适应：去掉 MaxWidth=220/MaxHeight=260 约束，随预览框填满并等比缩放
             _previewBox!.Child = new Image
             {
                 Source = bmp,
                 Stretch = Stretch.Uniform,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                MaxWidth = 220,
-                MaxHeight = 260
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
         }
         catch (Exception ex)
@@ -387,7 +381,7 @@ public partial class MaterialBrowserWindow
         {
             using var ms = new MemoryStream(png);
             var bmp = new Bitmap(ms);
-            _previewBox.Child = new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 220, MaxHeight = 260 };
+            _previewBox.Child = new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
         }
     }
 
@@ -422,14 +416,17 @@ public partial class MaterialBrowserWindow
     // ═══════════════════════════════════════════
     // 分页
     // ═══════════════════════════════════════════
-    private void GoPage(int delta)
+    /// <summary>绝对跳页：clamp 到 [1, _totalPages] 后刷新列表与分页显示（UpdatePager 同时恢复页码框文本）。</summary>
+    private void GoToPage(int page)
     {
-        var newPage = _currentPage + delta;
-        if (newPage < 1 || newPage > _totalPages) return;
-        _currentPage = newPage;
+        if (page < 1) page = 1;
+        if (page > _totalPages) page = _totalPages;
+        _currentPage = page;
         RefreshList();
         UpdatePager();
     }
+
+    private void GoPage(int delta) => GoToPage(_currentPage + delta);
 
     private void UpdatePager()
     {

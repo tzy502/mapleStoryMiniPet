@@ -34,8 +34,16 @@ public partial class SettingsWindow
             grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1)));
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
 
-            var sidebar = new StackPanel { Margin = new Thickness(10), Spacing = 8 };
-            sidebar.Children.Add(new TextBlock { Text = "💬 气泡样式", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 0, 0, 0) });
+            // 自适应：侧栏改 Grid（标题/搜索 Auto + 列表 Star + 底部 Auto），列表随窗口伸缩并内部滚动；
+            // 不包外层 ScrollViewer —— ScrollViewer 给无限高度会使 Star 行塌缩，Star 行 + ListBox 内部滚动等效保护短窗口
+            var sidebar = new Grid { Margin = new Thickness(10), RowSpacing = 8, VerticalAlignment = VerticalAlignment.Stretch };
+            sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 标题
+            sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 搜索框
+            sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Star));   // 气泡列表（Star：随窗口伸缩 + 内部滚动）
+            sidebar.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 应用按钮 + 提示
+            var sidebarTitle = new TextBlock { Text = "💬 气泡样式", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 0, 0, 0) };
+            Grid.SetRow(sidebarTitle, 0);
+            sidebar.Children.Add(sidebarTitle);
 
             // 素材库式：搜索框（ID/名称过滤）
             var balloonSearch = new TextBox
@@ -48,13 +56,14 @@ public partial class SettingsWindow
                 BorderBrush = new SolidColorBrush(InputBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
-                HorizontalAlignment = HorizontalAlignment.Left
+                // 自适应：Left → Stretch，搜索框占满侧栏宽度
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
+            Grid.SetRow(balloonSearch, 1);
             sidebar.Children.Add(balloonSearch);
 
-            // ⚠️ MaxHeight 必须有：StackPanel 内 ListBox 无高度约束会按 461 项全展开 →
-            // 滚动失效 + 「应用气泡」按钮被挤出窗口（胶水截图实证 2026-08-08）
-            var balloonListBox = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0), MaxHeight = 300 };
+            // 自适应：列表改 Grid Star 行（有界高度）→ ListBox 内部滚动，天然防 461 项全展开（原 MaxHeight=300 固定已移除）
+            var balloonListBox = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(-10, 0, -10, 0) };
             // 分组列表：string = 组头（🕘最近使用 / 📋全部气泡），ValueTuple = 气泡项 → 历史与可筛选明显区分
             balloonListBox.ItemTemplate = new FuncDataTemplate<object>((data, _) =>
             {
@@ -135,17 +144,21 @@ public partial class SettingsWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BalloonListPost: {ex.Message}"); }
             }), TaskScheduler.Default);
+            Grid.SetRow(balloonListBox, 2);
             sidebar.Children.Add(balloonListBox);
 
-            // 确认切换：应用按钮（选中后点击应用）或双击列表项
+            // 确认切换：应用按钮（选中后点击应用）或双击列表项；按钮+提示同处底部 Auto 行
+            var balloonFooter = new StackPanel { Spacing = 6 };
             var applyBtn = MakeSmallBtn("✔ 应用气泡", () =>
             {
                 if (balloonListBox.SelectedItem is ValueTuple<int, string> sel)
                     ApplyBalloonSelection(sel);
             });
-            sidebar.Children.Add(applyBtn);
+            balloonFooter.Children.Add(applyBtn);
             _balloonApplyHint = new TextBlock { Text = "点击预览，双击或「应用」确认切换", FontSize = 10, Foreground = BrushTxtDim, TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Center };
-            sidebar.Children.Add(_balloonApplyHint);
+            balloonFooter.Children.Add(_balloonApplyHint);
+            Grid.SetRow(balloonFooter, 3);
+            sidebar.Children.Add(balloonFooter);
             Grid.SetColumn(sidebar, 0);
             grid.Children.Add(sidebar);
 
@@ -298,6 +311,7 @@ public partial class SettingsWindow
     private static Button MakeSmallBtn(string text, Action onClick)
     {
         var btn = new Button { Content = text, FontSize = 10, Padding = new Thickness(10, 4), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(btn);
         btn.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Btn {text}: {ex.Message}"); } };
         return btn;
     }
@@ -348,7 +362,8 @@ public partial class SettingsWindow
         try
         {
             if (_previewCanvas == null || _previewStrip == null || _previewSourceBitmap == null) return;
-            if (_previewCanvas.Child is StackPanel stack)
+            // 预览内容已改 Grid（自适应），用 Panel 判断兼容
+            if (_previewCanvas.Child is Panel stack)
             {
                 foreach (var child in stack.Children)
                 {

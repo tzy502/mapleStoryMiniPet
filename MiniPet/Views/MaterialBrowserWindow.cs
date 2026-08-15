@@ -147,6 +147,9 @@ public partial class MaterialBrowserWindow : Window
         Title = "素材浏览";
         Width = 860;
         Height = 600;
+        // 自适应：加最小尺寸，防拖太小布局错乱
+        MinWidth = 640;
+        MinHeight = 480;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = BrushBg;
 
@@ -316,18 +319,23 @@ public partial class MaterialBrowserWindow : Window
             BorderThickness = new Thickness(1)
         };
 
+        // 自适应：详情面板改 Grid（预览区 Star 随面板伸缩，下方文字/按钮 Auto 行内滚动）
+        var detailGrid = new Grid();
+        detailGrid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+        detailGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         var stack = new StackPanel { Margin = new Thickness(14, 16), Spacing = 10 };
 
         // 预览区（独立字段：LoadPreview 只替换预览框内容，保留下方标题/信息/按钮行）
+        // 自适应：去掉固定 Height=180，改 Star 行填满 + 图片 Uniform 等比缩放
         var previewBox = new Border
         {
-            Height = 180,
+            Margin = new Thickness(14, 16, 14, 4),
             CornerRadius = new CornerRadius(8),
             Background = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255)),
             BorderBrush = new SolidColorBrush(Color.FromArgb(40, 94, 156, 255)),
             BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Top,
+            VerticalAlignment = VerticalAlignment.Stretch,
             ClipToBounds = true
         };
         _previewBox = previewBox;
@@ -343,7 +351,6 @@ public partial class MaterialBrowserWindow : Window
             LineHeight = 1.5
         };
         previewBox.Child = placeholder;
-        stack.Children.Add(previewBox);
 
         // 详情信息
         _detailTitle = new TextBlock
@@ -390,6 +397,7 @@ public partial class MaterialBrowserWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center
         };
+        UiStyle.ApplyHover(_selectBtn);
         _selectBtn.Click += (_, _) =>
         {
             if (_itemList?.SelectedItem is not MaterialEntry entry) return;
@@ -420,13 +428,17 @@ public partial class MaterialBrowserWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center
         };
+        UiStyle.ApplyHover(cancelBtn);
         cancelBtn.Click += (_, _) => Close();
         btnRow.Children.Add(cancelBtn);
 
         stack.Children.Add(btnRow);
 
         // 搭配管理（纸娃娃草稿保存/加载，走 SavedPaperdolls 磁盘存档）
-        var outfitRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
+        // 搭配行改用两列 Grid：保存按钮列 Auto 自适应，下拉列 Star 填充剩余宽度（原 StackPanel 无法拉伸子项）
+        var outfitRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        outfitRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        outfitRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         var saveOutfitBtn = new Button
         {
             Content = "💾 保存搭配",
@@ -439,26 +451,40 @@ public partial class MaterialBrowserWindow : Window
             CornerRadius = new CornerRadius(5),
             HorizontalAlignment = HorizontalAlignment.Left
         };
+        UiStyle.ApplyHover(saveOutfitBtn);
         saveOutfitBtn.Click += (_, _) => { try { SaveDraftOutfit(); } catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] SaveOutfit: {ex.Message}"); } };
         outfitRow.Children.Add(saveOutfitBtn);
         _outfitCombo = new ComboBox
         {
-            Width = 130,
             Height = 26,
-            FontSize = 11,
+            FontSize = 12,
             Foreground = Brushes.Black,
             Background = Brushes.White,
             BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
+            Margin = new Thickness(6, 0, 0, 0),
             PlaceholderText = "加载搭配"
         };
         _outfitCombo.SelectionChanged += (_, _) => { try { LoadDraftOutfit(); } catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] LoadOutfit: {ex.Message}"); } };
+        Grid.SetColumn(_outfitCombo, 1);
         outfitRow.Children.Add(_outfitCombo);
         stack.Children.Add(outfitRow);
         RefreshOutfitList();
 
-        _previewPanel.Child = stack;
+        // 自适应：下方文字/按钮区包 ScrollViewer（窗口矮时不被挤没），预览区仍占 Star 行
+        var stackScroll = new ScrollViewer
+        {
+            Content = stack,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = 240
+        };
+        Grid.SetRow(previewBox, 0);
+        detailGrid.Children.Add(previewBox);
+        Grid.SetRow(stackScroll, 1);
+        detailGrid.Children.Add(stackScroll);
+        _previewPanel.Child = detailGrid;
         return _previewPanel;
     }
 
@@ -475,13 +501,9 @@ public partial class MaterialBrowserWindow : Window
         bar.Background = new SolidColorBrush(Color.FromArgb(255, 22, 22, 28));
         bar.Margin = new Thickness(0);
 
-        // 搜索框
+        // 搜索框：标准 input 样式（白底黑字、InputBorder 边框、圆角 6），TextBox 自带边框圆角，外层仅做定位容器
         var searchPanel = new Border
         {
-            CornerRadius = new CornerRadius(6),
-            BorderBrush = InputBorder,
-            BorderThickness = new Thickness(1),
-            Background = Brushes.White,
             Height = 30,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0)
@@ -493,6 +515,8 @@ public partial class MaterialBrowserWindow : Window
             FontSize = 12,
             Foreground = BrushTxtDim,
             VerticalAlignment = VerticalAlignment.Center,
+            // 图标不拦截鼠标事件，点击放大镜区域透传给下层输入框聚焦
+            IsHitTestVisible = false,
             Margin = new Thickness(8, 0, 0, 0)
         };
         _searchInput = new TextBox
@@ -500,19 +524,19 @@ public partial class MaterialBrowserWindow : Window
             PlaceholderText = "按名称 / ID 搜索…",
             FontSize = 12,
             Foreground = Brushes.Black,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(28, 0, 8, 0),
+            Background = Brushes.White,
+            BorderBrush = InputBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            // 左侧留 30 给放大镜图标（图标 Margin 左 8 + 字形宽约 14，30 足够不压字），右侧 10 为标准 padding
+            Padding = new Thickness(30, 6, 10, 6),
             VerticalAlignment = VerticalAlignment.Center
         };
         _searchInput.TextChanged += OnSearchChanged;
-        // 聚焦高亮与全项目 input 一致：外层 Border 聚焦时变 accent 蓝（内层 TextBox 无边框，需容器承载焦点态）
-        var searchPanelBorder = new SolidColorBrush(InputBorder.Color);
-        _searchInput.GotFocus += (_, _) => searchPanel.BorderBrush = BrushAccent;
-        _searchInput.LostFocus += (_, _) => searchPanel.BorderBrush = searchPanelBorder;
 
-        searchGrid.Children.Add(searchIcon);
+        // 先加输入框再加图标：Grid 后加的子项绘制在上层，保证 🔍 不被白底 TextBox 盖住
         searchGrid.Children.Add(_searchInput);
+        searchGrid.Children.Add(searchIcon);
         searchPanel.Child = searchGrid;
 
         Grid.SetColumn(searchPanel, 0);
@@ -543,6 +567,7 @@ public partial class MaterialBrowserWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center
         };
+        UiStyle.ApplyHover(_prevBtn);
         _prevBtn.Click += (_, _) => GoPage(-1);
         pager.Children.Add(_prevBtn);
 
@@ -554,7 +579,6 @@ public partial class MaterialBrowserWindow : Window
             FontSize = 12,
             Foreground = Brushes.Black,
             VerticalAlignment = VerticalAlignment.Center,
-            Width = 80,
             TextAlignment = TextAlignment.Center,
             Background = Brushes.White,
             BorderBrush = InputBorder,
@@ -567,11 +591,23 @@ public partial class MaterialBrowserWindow : Window
             if (e.Key != Key.Enter) return;
             var t = _pageLabel.Text ?? "";
             var num = t.Split('/')[0].Trim();
-            if (int.TryParse(num, out var p) && p >= 1 && p <= _totalPages)
+            // 绝对跳页：越界由 GoToPage clamp，成功后 UpdatePager 统一恢复 "当前页/总页数" 显示
+            if (int.TryParse(num, out var p))
             {
-                _currentPage = p;
-                RefreshList();
-                UpdatePager();
+                GoToPage(p);
+                return;
+            }
+            // 解析失败：恢复当前页显示，防误导
+            _pageLabel.Text = $"{_currentPage}/{_totalPages}";
+        };
+        // 失焦：解析失败或越界时把文本恢复为当前页显示（未按 Enter 的无效输入不留存）
+        _pageLabel.LostFocus += (_, _) =>
+        {
+            var t = _pageLabel.Text ?? "";
+            var num = t.Split('/')[0].Trim();
+            if (!int.TryParse(num, out var p) || p < 1 || p > _totalPages)
+            {
+                _pageLabel.Text = $"{_currentPage}/{_totalPages}";
             }
         };
         pager.Children.Add(_pageLabel);
@@ -592,6 +628,7 @@ public partial class MaterialBrowserWindow : Window
             VerticalContentAlignment = VerticalAlignment.Center,
             IsEnabled = false
         };
+        UiStyle.ApplyHover(_nextBtn);
         _nextBtn.Click += (_, _) => GoPage(+1);
         pager.Children.Add(_nextBtn);
 
