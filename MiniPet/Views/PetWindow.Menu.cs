@@ -174,6 +174,15 @@ public partial class PetWindow
             };
             cm.Items.Add(chatItem);
 
+            // ── DSH 对话（DeepSeek Harness 桥接，feat/dsh-bridge；单例，已开则 Activate/聚焦） ──
+            var dshChatItem = new MenuItem { Header = "🤖 DSH 对话" };
+            dshChatItem.Click += (_, _) =>
+            {
+                try { DshChatWindow.OpenOrActivate(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshChat: {ex.Message}"); }
+            };
+            cm.Items.Add(dshChatItem);
+
             // ── 设置中心 ──
             var settingsItem = new MenuItem { Header = "设置中心" };
             settingsItem.Click += (_, _) =>
