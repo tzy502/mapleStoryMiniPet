@@ -10,7 +10,7 @@ namespace MiniPet.Services
     ///
     /// 反映态规则：
     ///   活动级 Failed ≈ Run > Review > Waiting > Wave > Idle
-    ///   （Failed 与 Run 同级时 Failed 胜；同级 tiebreak Hermes > ClaudeCode > Codex）
+    ///   （Failed 与 Run 同级时 Failed 胜；同级 tiebreak DSH > Hermes > ClaudeCode > Codex）
     ///   Jump 为一次性庆祝（不进 last-state-wins），固定时长后衰减 Wave→Idle
     ///
     /// staleness：DispatcherTimer 周期检查，某 AgentId 超 StalenessSeconds 无事件
@@ -149,7 +149,7 @@ namespace MiniPet.Services
 
         /// <summary>
         /// 重算反映态并发布（仅变化时发）：
-        /// 活动级 Failed ≈ Run > Review > Waiting > Wave > Idle；同级 tiebreak Hermes > CC > Codex；
+        /// 活动级 Failed ≈ Run > Review > Waiting > Wave > Idle；同级 tiebreak DSH > Hermes > CC > Codex；
         /// Jump 优先（任何源庆祝中 → 反映 Jump）。
         /// </summary>
         private void RecomputeAndPublish()
@@ -204,7 +204,7 @@ namespace MiniPet.Services
         /// <summary>
         /// 比较 (sA, idA) 是否优于 (sB, idB)：
         /// 活动级 Failed ≈ Run > Review > Waiting > Wave > Idle；Failed 与 Run 同级 Failed 胜；
-        /// 同级 tiebreak Hermes > ClaudeCode > Codex。
+        /// 同级 tiebreak DSH > Hermes > ClaudeCode > Codex。
         /// 返回 &gt;0 表示 A 优，&lt;0 表示 B 优，0 相等。
         /// </summary>
         private static int CompareActivity(AgentState sA, AgentId idA, AgentState sB, AgentId idB)
@@ -241,9 +241,10 @@ namespace MiniPet.Services
 
         private static bool IsFailedRun(AgentState s) => s == AgentState.Failed || s == AgentState.Run;
 
-        // tiebreak：Hermes > ClaudeCode > Codex（其它按字符串稳定回退）
+        // tiebreak：DSH > Hermes > ClaudeCode > Codex（其它按字符串稳定回退）
         private static int SourceTiebreak(AgentId id)
         {
+            if (id == AgentId.Dsh) return 4;
             if (id == AgentId.Hermes) return 3;
             if (id == AgentId.ClaudeCode) return 2;
             if (id == AgentId.Codex) return 1;

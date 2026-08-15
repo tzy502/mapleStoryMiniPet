@@ -19,10 +19,12 @@ namespace MiniPet.Services
 
     /// <summary>
     /// Agent 标识。Key 大小写敏感，作为 Aggregator 各源流的 key。
-    /// 提供静态常量便于 adapter 与 Aggregator 引用（tiebreak Hermes > ClaudeCode > Codex）。
+    /// 提供静态常量便于 adapter 与 Aggregator 引用（tiebreak DSH > Hermes > ClaudeCode > Codex，
+    /// 2026-08-15 起 DSH 最优先：本机主 harness，状态信号最权威，见 RESEARCH-dsh-http-bridge.md §5）。
     /// </summary>
     public readonly record struct AgentId(string Key)
     {
+        public static readonly AgentId Dsh = new("dsh");
         public static readonly AgentId Hermes = new("hermes");
         public static readonly AgentId ClaudeCode = new("claude-code");
         public static readonly AgentId Codex = new("codex");

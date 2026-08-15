@@ -132,6 +132,14 @@ public partial class App : Application
                         _agentAdapters.Add(codex);
                         codex.Start();
                     }
+                    if (ai.DshEnabled)
+                    {
+                        // DSH（DeepSeek Harness，本机 3080）：WS events.mux 纯观察 + 对话 RPC。
+                        // 传 ai（DshHost/DshPort/DshWorkspace 生效；loopback 免鉴权）。
+                        var dsh = new DshAdapter(eventBus, ai);
+                        _agentAdapters.Add(dsh);
+                        dsh.Start();
+                    }
                 }
             }
             catch (Exception ex)
