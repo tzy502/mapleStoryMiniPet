@@ -359,7 +359,7 @@ public partial class PetWindow
     {
         try
         {
-            if (ContextMenu == null) return;
+            if (ContextMenu == null) { return; }
 
             MenuItem? animationMenu = null;
             foreach (var entry in ContextMenu.Items)
@@ -370,7 +370,7 @@ public partial class PetWindow
                     break;
                 }
             }
-            if (animationMenu == null) return;
+            if (animationMenu == null) { return; }
 
             animationMenu.Items.Clear();
             var mobId = _animService.GetCurrentMobId();
@@ -442,9 +442,9 @@ public partial class PetWindow
         var priority = new[] { "walk1", "walk2", "fly", "stand1", "stand2", "alert", "heal", "jump", "sit", "ladder", "rope", "prone", "proneStab" };
         var result = new List<string>();
         foreach (var p in priority)
-            if (actions.Contains(p)) result.Add(p);
+            if (actions.Contains(p)) { result.Add(p); }
         foreach (var a in actions)
-            if (!result.Contains(a)) result.Add(a);
+            if (!result.Contains(a)) { result.Add(a); }
         return result;
     }
 
@@ -454,7 +454,7 @@ public partial class PetWindow
 
     private void RebuildBgMenu()
     {
-        if (_bgMenu == null) return;
+        if (_bgMenu == null) { return; }
         try
         {
             _bgMenu.Items.Clear();

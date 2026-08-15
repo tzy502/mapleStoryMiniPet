@@ -12,6 +12,7 @@ using Avalonia.Layout;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
@@ -31,6 +32,21 @@ public partial class SettingsWindow
     private bool _skinRefreshHooked;
     /// <summary>预览合成版本号：防旧 Task 合成结果覆盖新预览。</summary>
     private int _previewSeq;
+    /// <summary>「✅ 应用到主窗口」按钮（点击后禁用 + 合成中文案，PetWindow 后台构建完成回调恢复）。</summary>
+    private Button? _applyMainBtn;
+    /// <summary>纸娃娃预览当前动作（动作切换按钮组点选后按该动作合成）。</summary>
+    private string _paperdollPreviewAction = "stand1";
+    /// <summary>纸娃娃预览固定动作集（显示名 → 动作名，对齐 REVIEW-FINDINGS 九-C）。</summary>
+    private static readonly (string Label, string Action)[] PaperdollPreviewActions =
+    {
+        ("站立", "stand1"), ("行走", "walk1"), ("跳跃", "jump"), ("攻击", "swingOF"), ("警戒", "alert"),
+    };
+    /// <summary>装备按钮边框闪烁计时器（素材选件应用后的短暂高亮反馈，0.6s 还原）。</summary>
+    private DispatcherTimer? _flashTimer;
+    private Button? _flashBtn;
+    private IBrush? _flashBtnOriginBrush;
+    /// <summary>「✅ 已应用」短暂提示计时器（按钮恢复后闪一下再还原文案）。</summary>
+    private DispatcherTimer? _revertApplyBtnTimer;
 
     private sealed class SkinItem
     {
@@ -41,7 +57,7 @@ public partial class SettingsWindow
     private static int EarIndex(string ear)
     {
         for (int i = 0; i < PaperdollService.AllEarTypes.Length; i++)
-            if (PaperdollService.AllEarTypes[i] == ear) return i;
+            if (PaperdollService.AllEarTypes[i] == ear) { return i; }
         return 0;
     }
 
@@ -82,7 +98,7 @@ public partial class SettingsWindow
     {
         try
         {
-            if (_wzService == null || !_wzService.IsLoaded) return null;
+            if (_wzService == null || !_wzService.IsLoaded) { return null; }
             var idStr = bodyId.ToString();
             var pad = bodyId.ToString("D8");
             // 一级：Character/Body.img（桌宠 WZ 的 String.wz 为空，真实皮肤名只能在此找）
@@ -91,11 +107,11 @@ public partial class SettingsWindow
             {
                 var root = bodyImg;
                 var img = bodyImg.GetValue<Wz_Image>();
-                if (img != null && img.TryExtract()) root = img.Node;
+                if (img != null && img.TryExtract()) { root = img.Node; }
                 foreach (var key in new[] { idStr, pad })
                 {
                     var n = root.FindNodeByPath($"{key}/info/name")?.GetValueEx<string>(null);
-                    if (!string.IsNullOrEmpty(n)) return n;
+                    if (!string.IsNullOrEmpty(n)) { return n; }
                 }
             }
             // 二级：String/Eqp.img/Eqp/Skin/{key}/name（启动日志实证 String.wz 有数据且 Eqp 子节点含
@@ -105,16 +121,16 @@ public partial class SettingsWindow
             {
                 var sRoot = skinImg;
                 var sImg = skinImg.GetValue<Wz_Image>();
-                if (sImg != null && sImg.TryExtract()) sRoot = sImg.Node;
+                if (sImg != null && sImg.TryExtract()) { sRoot = sImg.Node; }
                 foreach (var key in new[] { idStr, pad })
                 {
                     var n = sRoot.FindNodeByPath($"Eqp/Skin/{key}/name")?.GetValueEx<string>(null);
-                    if (!string.IsNullOrEmpty(n)) return n;
+                    if (!string.IsNullOrEmpty(n)) { return n; }
                 }
             }
             // 三级：String.wz 通用名称（GetItemName 已含 9 条路径探测）
             var cn = _wzService.GetItemName("Body", idStr);
-            if (!string.IsNullOrEmpty(cn)) return cn;
+            if (!string.IsNullOrEmpty(cn)) { return cn; }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TryGetSkinName({bodyId}): {ex.Message}"); }
         return null;
@@ -123,7 +139,7 @@ public partial class SettingsWindow
     /// <summary>WZ 素材刷新成功后重建皮肤下拉（名称数据随 WZ 路径可能变化）：清名称缓存 → 重建 ItemsSource → 恢复当前选择。挂在 OnWzRefreshed 上（配置保存自动刷新也走该事件）。</summary>
     private void RebuildSkinCombo()
     {
-        if (_skinCombo == null) return;
+        if (_skinCombo == null) { return; }
         try
         {
             var prevId = _skinCombo.SelectedItem is SkinItem si ? si.Id : _paperdollCurrent.BodyId;
@@ -136,7 +152,7 @@ public partial class SettingsWindow
 
     private int SkinIndex(int bodyId)
     {
-        if (_skinCombo?.ItemsSource is not IReadOnlyList<SkinItem> list) return -1;
+        if (_skinCombo?.ItemsSource is not IReadOnlyList<SkinItem> list) { return -1; }
         for (int i = 0; i < list.Count; i++) if (list[i].Id == bodyId) return i;
         return -1;
     }
@@ -217,6 +233,19 @@ public partial class SettingsWindow
 
         // 自适应：预设列表改随内容 Auto + MaxHeight 上限 200（原固定 Height=100 不随预设数伸缩；超限内部滚动）
         _presetListBox = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), MaxHeight = 200, Margin = new Thickness(-10, 0, -10, 0) };
+        // 选中态强化（暗色主题默认选中高亮不明显）：选中项文字 accent + 背景微亮（体验 A-3）
+        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+        {
+            Setters = { new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent) }
+        });
+        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Class(":selected"))
+        {
+            Setters = { new Setter(ListBoxItem.BackgroundProperty, new SolidColorBrush(Color.FromArgb(64, 94, 156, 255))) }
+        });
+        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Class(":selected").Descendant().OfType<TextBlock>())
+        {
+            Setters = { new Setter(TextBlock.ForegroundProperty, BrushAccent) }
+        });
         RefreshPresetList();
         content.Children.Add(_presetListBox);
 
@@ -286,10 +315,10 @@ public partial class SettingsWindow
         applyBtn.Click += (_, _) => { try { SyncPaperdollFromInputs(); UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPaperdoll: {ex.Message}"); } };
         content.Children.Add(applyBtn);
 
-        var applyMainBtn = new Button { Content = "✅ 应用到主窗口", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 4, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
-        UiStyle.ApplyHover(applyMainBtn);
-        applyMainBtn.Click += (_, _) => { try { ApplyPaperdoll(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyMain: {ex.Message}"); } };
-        content.Children.Add(applyMainBtn);
+        _applyMainBtn = new Button { Content = "✅ 应用到主窗口", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 4, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(_applyMainBtn);
+        _applyMainBtn.Click += (_, _) => { try { ApplyPaperdoll(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyMain: {ex.Message}"); } };
+        content.Children.Add(_applyMainBtn);
 
         // 用默认外观填充输入框
         SyncInputsFromPaperdoll();
@@ -340,6 +369,7 @@ public partial class SettingsWindow
                 {
                     ApplyDraftPartToCurrent(category, appearance);
                     btn.Content = CategoryDisplayName(category);
+                    FlashEquipButton(btn); // 选件应用后边框闪 accent 蓝 0.6s（体验 A-2）
                     UpdatePaperdollPreview();
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] EquipPick {category}: {ex.Message}"); }
@@ -394,9 +424,9 @@ public partial class SettingsWindow
     private string CategoryDisplayName(string category)
     {
         var id = CategoryCurrentId(category);
-        if (string.IsNullOrEmpty(id)) return "选择…";
+        if (string.IsNullOrEmpty(id)) { return "选择…"; }
         var folder = CategoryFolder(category);
-        if (string.IsNullOrEmpty(folder)) return id;
+        if (string.IsNullOrEmpty(folder)) { return id; }
         var cn = _wzService != null && _wzService.IsLoaded ? _wzService.GetItemName(folder, id) : "";
         return string.IsNullOrEmpty(cn) ? id : $"{cn} [{id}]";
     }
@@ -429,7 +459,7 @@ public partial class SettingsWindow
         try
         {
             _paperdollCurrent.Gender = _genderCombo?.SelectedIndex ?? 0;
-            if (_skinCombo?.SelectedItem is SkinItem si) _paperdollCurrent.BodyId = si.Id;
+            if (_skinCombo?.SelectedItem is SkinItem si) { _paperdollCurrent.BodyId = si.Id; }
             _paperdollCurrent.Ear = EarTypeAt(_earCombo?.SelectedIndex ?? 0);
             // 装备部位由素材选择器直接改 _paperdollCurrent（按钮点击 → 选件应用），此处无需同步
         }
@@ -474,6 +504,7 @@ public partial class SettingsWindow
                 if (p.Name == name)
                 {
                     _presetListBox.SelectedItem = p;
+                    _presetListBox.ScrollIntoView(p); // 新建后滚动到可见（体验 A-1：预设多时不盲选）
                     break;
                 }
             }
@@ -531,22 +562,22 @@ public partial class SettingsWindow
     {
         try
         {
-            if (_genderCombo != null) _genderCombo.SelectedIndex = _paperdollCurrent.Gender;
-            if (_skinCombo != null) _skinCombo.SelectedIndex = SkinIndex(_paperdollCurrent.BodyId);
-            if (_hairIdInput != null) _hairIdInput.Content = CategoryDisplayName("发型");
-            if (_faceIdInput != null) _faceIdInput.Content = CategoryDisplayName("脸型");
-            if (_capIdInput != null) _capIdInput.Content = CategoryDisplayName("帽子");
-            if (_capeIdInput != null) _capeIdInput.Content = CategoryDisplayName("披风");
-            if (_coatIdInput != null) _coatIdInput.Content = CategoryDisplayName("上衣");
-            if (_overallIdInput != null) _overallIdInput.Content = CategoryDisplayName("长袍");
-            if (_pantsIdInput != null) _pantsIdInput.Content = CategoryDisplayName("裤子");
-            if (_shoesIdInput != null) _shoesIdInput.Content = CategoryDisplayName("鞋子");
-            if (_gloveIdInput != null) _gloveIdInput.Content = CategoryDisplayName("手套");
-            if (_weaponIdInput != null) _weaponIdInput.Content = CategoryDisplayName("武器");
-            if (_shieldIdInput != null) _shieldIdInput.Content = CategoryDisplayName("盾牌");
-            if (_earringIdInput != null) _earringIdInput.Content = CategoryDisplayName("饰品");
-            if (_mountIdInput != null) _mountIdInput.Content = CategoryDisplayName("坐骑");
-            if (_chairIdInput != null) _chairIdInput.Content = CategoryDisplayName("椅子");
+            if (_genderCombo != null) { _genderCombo.SelectedIndex = _paperdollCurrent.Gender; }
+            if (_skinCombo != null) { _skinCombo.SelectedIndex = SkinIndex(_paperdollCurrent.BodyId); }
+            if (_hairIdInput != null) { _hairIdInput.Content = CategoryDisplayName("发型"); }
+            if (_faceIdInput != null) { _faceIdInput.Content = CategoryDisplayName("脸型"); }
+            if (_capIdInput != null) { _capIdInput.Content = CategoryDisplayName("帽子"); }
+            if (_capeIdInput != null) { _capeIdInput.Content = CategoryDisplayName("披风"); }
+            if (_coatIdInput != null) { _coatIdInput.Content = CategoryDisplayName("上衣"); }
+            if (_overallIdInput != null) { _overallIdInput.Content = CategoryDisplayName("长袍"); }
+            if (_pantsIdInput != null) { _pantsIdInput.Content = CategoryDisplayName("裤子"); }
+            if (_shoesIdInput != null) { _shoesIdInput.Content = CategoryDisplayName("鞋子"); }
+            if (_gloveIdInput != null) { _gloveIdInput.Content = CategoryDisplayName("手套"); }
+            if (_weaponIdInput != null) { _weaponIdInput.Content = CategoryDisplayName("武器"); }
+            if (_shieldIdInput != null) { _shieldIdInput.Content = CategoryDisplayName("盾牌"); }
+            if (_earringIdInput != null) { _earringIdInput.Content = CategoryDisplayName("饰品"); }
+            if (_mountIdInput != null) { _mountIdInput.Content = CategoryDisplayName("坐骑"); }
+            if (_chairIdInput != null) { _chairIdInput.Content = CategoryDisplayName("椅子"); }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SyncInputs: {ex.Message}"); }
     }
@@ -565,13 +596,29 @@ public partial class SettingsWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPresetsPersist: {ex.Message}"); }
             }
-            if (_presetListBox == null) return;
+            if (_presetListBox == null) { return; }
             // 刷新前记录选中项名称（ItemsSource 重建后 SelectedItem 是新元组实例，按 Name 恢复）
             var prevName = _presetListBox.SelectedItem is ValueTuple<string, CharacterAppearance> prevSelected ? prevSelected.Item1 : null;
             _presetListBox.ItemsSource = null;
             _presetListBox.ItemsSource = _paperdollPresets;
-            _presetListBox.ItemTemplate = new FuncDataTemplate<(string Name, CharacterAppearance Data)>((_, _) =>
-                new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, Foreground = BrushTxtSecondary, Padding = new Thickness(4, 3) });
+            // 预设项：文字颜色交给样式（选中态 accent 由 :selected 样式覆写，见 BuildPaperdollSidebar）；
+            // 右键菜单：删除 / 重命名 / 复制（REVIEW-FINDINGS I1 缺失项）
+            _presetListBox.ItemTemplate = new FuncDataTemplate<(string Name, CharacterAppearance Data)>((item, _) =>
+            {
+                var tb = new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, Padding = new Thickness(4, 3) };
+                var menu = new ContextMenu();
+                var del = new MenuItem { Header = "🗑️ 删除" };
+                del.Click += (_, _) => { try { DeletePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetDelete: {ex.Message}"); } };
+                menu.Items.Add(del);
+                var rename = new MenuItem { Header = "✏️ 重命名" };
+                rename.Click += (_, _) => { try { RenamePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetRename: {ex.Message}"); } };
+                menu.Items.Add(rename);
+                var copy = new MenuItem { Header = "📋 复制" };
+                copy.Click += (_, _) => { try { DuplicatePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetCopy: {ex.Message}"); } };
+                menu.Items.Add(copy);
+                tb.ContextMenu = menu;
+                return tb;
+            });
             if (prevName != null)
             {
                 foreach (var p in _paperdollPresets)
@@ -591,11 +638,36 @@ public partial class SettingsWindow
     {
         try
         {
-            if (_paperdollPreviewCanvas == null) return;
+            if (_paperdollPreviewCanvas == null) { return; }
             int seq = ++_previewSeq;
             var panel = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 12 };
 
-            var figure = new Border { Width = 160, Height = 200, CornerRadius = new CornerRadius(12), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Center, Child = new TextBlock { Text = "🧑", FontSize = 60, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+            // 动作切换按钮组（体验 C-1：stand1/walk1/jump/swingOF/alert，当前动作高亮 accent）
+            var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
+            foreach (var (label, action) in PaperdollPreviewActions)
+            {
+                var captured = action;
+                var btn = new Button
+                {
+                    Content = label,
+                    FontSize = 9,
+                    Padding = new Thickness(8, 3),
+                    Background = action == _paperdollPreviewAction ? BrushAccent : new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)),
+                    Foreground = action == _paperdollPreviewAction ? Brushes.White : BrushTxtSecondary,
+                    BorderThickness = new Thickness(0),
+                    CornerRadius = new CornerRadius(4),
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center
+                };
+                UiStyle.ApplyHover(btn);
+                btn.Click += (_, _) => { try { _paperdollPreviewAction = captured; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PreviewAction: {ex.Message}"); } };
+                actionRow.Children.Add(btn);
+            }
+            panel.Children.Add(actionRow);
+
+            // 合成中占位（体验 C-2）：Task 启动前设，完成替换为图；WZ 未加载时保持 🧑 占位
+            var figure = new Border { Width = 160, Height = 200, CornerRadius = new CornerRadius(12), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Center, Child = new TextBlock { Text = _wzService.IsLoaded ? "⏳ 合成中…" : "🧑", FontSize = _wzService.IsLoaded ? 13 : 60, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
             panel.Children.Add(figure);
 
             panel.Children.Add(new TextBlock { Text = _paperdollCurrent.Gender == 0 ? "♂ 男性" : "♀ 女性", FontSize = 13, FontWeight = FontWeight.Bold, Foreground = BrushTxtPrimary, HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center });
@@ -620,21 +692,23 @@ public partial class SettingsWindow
             panel.Children.Add(equipSummary);
             _paperdollPreviewCanvas.Child = panel;
 
-            // 后台合成 stand1 第 0 帧真实预览
+            // 后台合成当前预览动作第 0 帧真实预览（_previewSeq 防旧 Task 串台；动作无帧时回退 stand1）
             var snapshot = CloneAppearance(_paperdollCurrent);
+            var previewAction = _paperdollPreviewAction;
             var figureRef = figure;
             System.Threading.Tasks.Task.Run(() =>
             {
                 try
                 {
-                    if (!_wzService.IsLoaded) return;
-                    var png = _paperdollSvc.CompositeFrame(snapshot, "stand1", 0);
-                    if (png == null) return;
+                    if (!_wzService.IsLoaded) { return; }
+                    var png = _paperdollSvc.CompositeFrame(snapshot, previewAction, 0);
+                    if (png == null) { png = _paperdollSvc.CompositeFrame(snapshot, "stand1", 0); }
+                    if (png == null) { return; }
                     Dispatcher.UIThread.Post(() =>
                     {
                         try
                         {
-                            if (seq != _previewSeq) return;
+                            if (seq != _previewSeq) { return; }
                             using var ms = new MemoryStream(png);
                             figureRef.Child = new Image { Source = new Bitmap(ms), Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                         }
@@ -647,16 +721,232 @@ public partial class SettingsWindow
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] UpdatePaperdollPreview: {ex.Message}"); }
     }
 
+    /// <summary>应用到主窗口：点击后禁用按钮 + 合成中文案 → 触发 OnPaperdollApplied（PetWindow 后台构建完成后 SetPaperdollApplyBusy(false) 恢复，体验 B）。</summary>
     private void ApplyPaperdoll()
     {
         try
         {
             SyncPaperdollFromInputs();
             UpdatePaperdollPreview();
+            SetPaperdollApplyBusy(true);
             OnPaperdollApplied?.Invoke(CloneAppearance(_paperdollCurrent));
-            if (_statusBarText != null) _statusBarText.Text = "纸娃娃已应用到主窗口";
+            if (_statusBarText != null) { _statusBarText.Text = "⏳ 正在合成，请稍候…"; }
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPaperdoll: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            SetPaperdollApplyBusy(false);
+            Console.Error.WriteLine($"[SettingsWindow] ApplyPaperdoll: {ex.Message}");
+        }
+    }
+
+    /// <summary>「应用到主窗口」按钮忙碌状态切换：busy=禁用 + 合成中；完成=恢复 + 「✅ 已应用」闪 1.2s 再还原文案（PetWindow 后台构建完成回调调用）。</summary>
+    public void SetPaperdollApplyBusy(bool busy)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                if (_applyMainBtn == null) { return; }
+                _applyMainBtn.IsEnabled = !busy;
+                _applyMainBtn.Opacity = busy ? 0.7 : 1.0;
+                _applyMainBtn.Content = busy ? "⏳ 合成中…" : "✅ 已应用";
+                if (busy)
+                {
+                    _revertApplyBtnTimer?.Stop();
+                }
+                else
+                {
+                    if (_statusBarText != null) { _statusBarText.Text = "✅ 已应用到主窗口"; }
+                    _revertApplyBtnTimer?.Stop();
+                    _revertApplyBtnTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
+                    _revertApplyBtnTimer.Tick += (_, _) =>
+                    {
+                        try
+                        {
+                            _revertApplyBtnTimer?.Stop();
+                            if (_applyMainBtn != null) { _applyMainBtn.Content = "✅ 应用到主窗口"; }
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RevertApplyBtn: {ex.Message}"); }
+                    };
+                    _revertApplyBtnTimer.Start();
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SetPaperdollApplyBusy: {ex.Message}"); }
+        });
+    }
+
+    /// <summary>装备按钮短暂高亮反馈：边框闪 accent 蓝 0.6s 后还原（提示该部位已更新，体验 A-2）。</summary>
+    private void FlashEquipButton(Button btn)
+    {
+        if (btn == null) { return; }
+        _flashBtn = btn;
+        _flashBtnOriginBrush = btn.BorderBrush;
+        btn.BorderBrush = BrushAccent;
+        if (_flashTimer == null)
+        {
+            _flashTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _flashTimer.Tick += (_, _) =>
+            {
+                try
+                {
+                    _flashTimer?.Stop();
+                    if (_flashBtn != null)
+                    {
+                        _flashBtn.BorderBrush = _flashBtnOriginBrush ?? BrushBorder;
+                    }
+                    _flashBtn = null;
+                    _flashBtnOriginBrush = null;
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] FlashEquipBtn: {ex.Message}"); }
+            };
+        }
+        _flashTimer.Stop();
+        _flashTimer.Start();
+    }
+
+    // ═══════════════════════════════════════════
+    // 预设管理：删除 / 重命名 / 复制（REVIEW-FINDINGS I1 缺失项，右键菜单入口，列表 + 磁盘 SavedPaperdolls 同步）
+    // ═══════════════════════════════════════════
+
+    private void DeletePaperdollPreset((string Name, CharacterAppearance Data) preset)
+    {
+        try
+        {
+            var name = preset.Name;
+            _paperdollPresets.RemoveAll(p => p.Name == name);
+            try
+            {
+                var s = _config.LoadSettings();
+                s.SavedPaperdolls.Remove(name);
+                _config.SaveSettings(s);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] DeletePresetPersist: {ex.Message}"); }
+            RefreshPresetList();
+            if (_statusBarText != null) { _statusBarText.Text = $"已删除预设: {name}"; }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] DeletePreset: {ex.Message}"); }
+    }
+
+    private void RenamePaperdollPreset((string Name, CharacterAppearance Data) preset)
+    {
+        var oldName = preset.Name;
+        var win = new Window
+        {
+            Title = "重命名预设",
+            Width = 340,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
+            CanResize = false,
+        };
+        try
+        {
+            var stack = new StackPanel { Margin = new Thickness(18), Spacing = 12 };
+            stack.Children.Add(new TextBlock { Text = "输入新的预设名称：", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 240, 244)) });
+            var input = new TextBox
+            {
+                Text = oldName,
+                FontSize = 12,
+                Foreground = Brushes.Black,
+                Background = Brushes.White,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            stack.Children.Add(input);
+            var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+            var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
+            var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+            UiStyle.ApplyHover(okBtn);
+            UiStyle.ApplyHover(cancelBtn);
+            okBtn.Click += (_, _) =>
+            {
+                try
+                {
+                    var newName = input.Text?.Trim() ?? "";
+                    if (string.IsNullOrEmpty(newName) || newName == oldName)
+                    {
+                        win.Close();
+                        return;
+                    }
+                    if (_paperdollPresets.Any(p => p.Name == newName))
+                    {
+                        if (_statusBarText != null) { _statusBarText.Text = $"预设名已存在: {newName}"; }
+                        win.Close();
+                        return;
+                    }
+                    var idx = _paperdollPresets.FindIndex(p => p.Name == oldName);
+                    if (idx >= 0)
+                    {
+                        _paperdollPresets[idx] = (newName, preset.Data);
+                    }
+                    try
+                    {
+                        var s = _config.LoadSettings();
+                        s.SavedPaperdolls.Remove(oldName);
+                        s.SavedPaperdolls[newName] = preset.Data;
+                        _config.SaveSettings(s);
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RenamePresetPersist: {ex.Message}"); }
+                    RefreshPresetList();
+                    // 重命名后重新选中新名并滚动到可见（避免刷新后选中丢失）
+                    foreach (var p in _paperdollPresets)
+                    {
+                        if (p.Name == newName)
+                        {
+                            _presetListBox.SelectedItem = p;
+                            _presetListBox.ScrollIntoView(p);
+                            break;
+                        }
+                    }
+                    if (_statusBarText != null) { _statusBarText.Text = $"已重命名: {oldName} → {newName}"; }
+                    win.Close();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SettingsWindow] RenamePreset: {ex.Message}");
+                    win.Close();
+                }
+            };
+            cancelBtn.Click += (_, _) => win.Close();
+            btnRow.Children.Add(cancelBtn);
+            btnRow.Children.Add(okBtn);
+            stack.Children.Add(btnRow);
+            win.Content = stack;
+            win.ShowDialog(this);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RenamePresetWin: {ex.Message}"); }
+    }
+
+    private void DuplicatePaperdollPreset((string Name, CharacterAppearance Data) preset)
+    {
+        try
+        {
+            var clone = CloneAppearance(preset.Data);
+            var name = NextPresetName();
+            _paperdollPresets.Add((name, clone));
+            try
+            {
+                var s = _config.LoadSettings();
+                s.SavedPaperdolls[name] = clone;
+                _config.SaveSettings(s);
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] CopyPresetPersist: {ex.Message}"); }
+            RefreshPresetList();
+            // 选中新副本并滚动到可见
+            foreach (var p in _paperdollPresets)
+            {
+                if (p.Name == name)
+                {
+                    _presetListBox.SelectedItem = p;
+                    _presetListBox.ScrollIntoView(p);
+                    break;
+                }
+            }
+            if (_statusBarText != null) { _statusBarText.Text = $"已复制为: {name}"; }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] CopyPreset: {ex.Message}"); }
     }
 
     /// <summary>默认外观：男体 + 默认发型/脸型（参考 MapleSalon2 生产默认 body 2000 / head 12000）。</summary>

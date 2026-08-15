@@ -38,9 +38,6 @@ public partial class PetWindow : Window
     private AgentState _agentReflect = AgentState.Idle;   // 最近一次 Agent 反映态（PetReflectStateChanged 订阅，随机气泡仅在 Idle 触发）
     private int _paperdollGen;
     private int _petSwitchGen;
-    private PixelPoint _lastDiagPos;
-    private int _lastDiagW = -1;
-    private int _lastDiagH = -1;
     private static readonly string[] _randomLines = {
         "今天天气真好~", "加油！", "记得喝水哦", "嘿嘿~", "我在看着你呢",
         "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？",
@@ -86,9 +83,6 @@ public partial class PetWindow : Window
     private string? _anchorMobId;        // 锚点对应的 mobId（变了才重算）
     private double _anchorFrameW;        // 基准动作帧宽（物理像素，未乘 scale）
     private double _anchorFrameH;        // 基准动作帧高（物理像素，未乘 scale）
-    private double _anchorOriginX;       // 纸娃娃基准动作画布 origin（角色最高点相对锚点，气泡定位用）
-    private double _anchorOriginY;
-    private string? _lastLogAction;      // 诊断日志：上次打印的动作名
     private double _balloonAnchorX;      // 气泡锚点基准 X（屏幕像素，拖拽结束更新 → 动画切换气泡不动）
     private double _balloonAnchorY;      // 气泡锚点基准 Y（屏幕像素）
     private bool _balloonWasVisible;     // 拖拽前气泡是否可见（移动时隐藏，释放后恢复）
@@ -260,7 +254,7 @@ public partial class PetWindow : Window
             {
                 try
                 {
-                    if (IsSentinelActive()) _animService.Play("stand1", PlayMode.Loop);
+                    if (IsSentinelActive()) { _animService.Play("stand1", PlayMode.Loop); }
                     else _animService.SwitchTo("stand");
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DragEnd anim: {ex.Message}"); }
@@ -425,7 +419,7 @@ public partial class PetWindow : Window
                 {
                     try
                     {
-                        if (png == null) return;
+                        if (png == null) { return; }
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
                         TimeSpan? autoHide = durationMs.HasValue ? TimeSpan.FromMilliseconds(durationMs.Value) : null;
@@ -458,10 +452,10 @@ public partial class PetWindow : Window
 
             // 常驻模式：不限制动画动作，每次定时器触发都换气泡文本
             var balloonId = _configService.LoadSettings().BalloonId;
-            if (string.IsNullOrEmpty(balloonId)) balloonId = "560";
+            if (string.IsNullOrEmpty(balloonId)) { balloonId = "560"; }
             var data = _balloonService.LoadBalloon(balloonId);
             Console.WriteLine($"[PetWindow] TryShowRandomBalloon: id={balloonId}, data={(data != null ? "ok" : "null(种子中)")}");
-            if (data == null) return; // 缓存未就绪，后台种子中，下一轮再试
+            if (data == null) { return; } // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
             Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
             await _balloonService.Show(line, data);
@@ -490,9 +484,9 @@ public partial class PetWindow : Window
         try
         {
             var balloonId = _configService.LoadSettings().BalloonId;
-            if (string.IsNullOrEmpty(balloonId)) balloonId = "560";
+            if (string.IsNullOrEmpty(balloonId)) { balloonId = "560"; }
             var data = _balloonService.LoadBalloon(balloonId);
-            if (data == null) return;
+            if (data == null) { return; }
             await _balloonService.Show(text, data);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowBalloonNow: {ex.Message}"); }
@@ -595,7 +589,7 @@ public partial class PetWindow : Window
                         _windowStartPos = Position;
                         // 移动时默认气泡关闭（胶水规则 2026-08-08）：拖拽期间隐藏气泡，释放后恢复
                         _balloonWasVisible = _balloonWindow.IsVisible;
-                        if (_balloonWasVisible) _balloonWindow.HideBalloonWindow();
+                        if (_balloonWasVisible) { _balloonWindow.HideBalloonWindow(); }
                         _eventBus.Publish(EventType.UserDragStart);
                         return;
                     }
@@ -607,7 +601,7 @@ public partial class PetWindow : Window
                 double dy = (Position.Y + p2.Y * rs2) - (_windowStartPos.Y + _dragStart.Y * rs2);
                 // 贴顶 clamp：窗口顶 ≥ 0（大素材 8880837 按下偏移大，不 clamp 会推到屏外看似拖不到顶，胶水反馈 2026-08-09）
                 int ny = _windowStartPos.Y + (int)dy;
-                if (ny < 0) ny = 0;
+                if (ny < 0) { ny = 0; }
                 Position = new PixelPoint(_windowStartPos.X + (int)dx, ny);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerMoved: {ex.Message}"); }
@@ -617,7 +611,7 @@ public partial class PetWindow : Window
             try
             {
                 _dragCandidate = false;
-                if (!_isDragging) return;
+                if (!_isDragging) { return; }
                 _isDragging = false;
                 _eventBus.Publish(EventType.UserDragEnd);
                 // 气泡锚点基准 = 拖拽结束时的角色锚点（动画切换气泡位置不动）
@@ -630,7 +624,7 @@ public partial class PetWindow : Window
                 _syncOriginOnNextFrame = true;
                 Console.WriteLine($"[PetWindow] DragEnd: anchor=({_balloonAnchorX},{_balloonAnchorY})");
                 // 移动结束恢复气泡（若拖拽前可见）
-                if (_balloonWasVisible) _balloonWindow.ShowBalloonWindow();
+                if (_balloonWasVisible) { _balloonWindow.ShowBalloonWindow(); }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PointerReleased: {ex.Message}"); }
         };
@@ -645,8 +639,8 @@ public partial class PetWindow : Window
             var delta = elapsed - _lastElapsed;
             _lastElapsed = elapsed;
 
-            if (delta <= 0) delta = 33;
-            if (delta > 500) delta = 33; // 防止大跳跃（窗口失焦后恢复）
+            if (delta <= 0) { delta = 33; }
+            if (delta > 500) { delta = 33; } // 防止大跳跃（窗口失焦后恢复）
 
             var fr = _animService.Tick(delta);
             byte[]? pngData = null;
@@ -787,26 +781,10 @@ public partial class PetWindow : Window
                     _balloonWindow.Position = new PixelPoint(
                         (int)bx,
                         (int)by);
-                    Console.WriteLine($"[PetWindow] Bubble: anchor=({_balloonAnchorX},{_balloonAnchorY}) win={Position} oy={oyScaled} bub={_balloonWindow.Position} hm={(IsSentinelActive() ? 60 : (int)(ah * (ratio <= 1.8 ? 0.75 : -0.5)))}");
                 }
             }
             var action = _animService.GetCurrentAction();
             _infoText.Text = $"{action} #{_tickCount}";
-            // 抖动诊断：记忆每帧坐标/尺寸，变化即打印（定位抖动源）
-            if (Position != _lastDiagPos || (int)Width != _lastDiagW || (int)Height != _lastDiagH)
-            {
-                Console.WriteLine($"[Diag] t={_tickCount} pos={Position} size={(int)Width}x{(int)Height} fw={fw} fh={fh} ox={ox} oy={oy} action={action} drag={_isDragging}");
-                _lastDiagPos = Position;
-                _lastDiagW = (int)Width;
-                _lastDiagH = (int)Height;
-            }
-            // 诊断日志：动画切换/每60帧打印一次，实证锚点(Position+oy)是否恒定
-            if (action != _lastLogAction || _tickCount % 300 == 0)
-            {
-                var strip2 = _spriteService.GetCachedStrip(_animService.GetCurrentMobId(), action).Item1;
-                Console.WriteLine($"[PetWindow] TickLog: action={action} pos={Position} w={(int)Width} h={(int)Height} fw={fw} fh={fh} drag={_isDragging}");
-                _lastLogAction = action;
-            }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
     }
@@ -822,22 +800,20 @@ public partial class PetWindow : Window
         try
         {
             var mobId = _animService.GetCurrentMobId();
-            if (string.IsNullOrEmpty(mobId)) return;
+            if (string.IsNullOrEmpty(mobId)) { return; }
             if (mobId == PaperdollService.SentinelMobId)
             {
                 // 纸娃娃锚点基准固定 stand1（站姿 union），不随 BalloonAnchorPriority 找错动作 → 窗口/气泡稳定
-                if (_anchorMobId == mobId && _anchorActionName != null) return;
+                if (_anchorMobId == mobId && _anchorActionName != null) { return; }
                 _anchorActionName = "stand1";
                 _anchorMobId = mobId;
-                var (aw, ah, ax, ay) = _paperdoll.GetActionBounds("stand1");
+                var (aw, ah, _, _) = _paperdoll.GetActionBounds("stand1");
                 _anchorFrameW = aw;
                 _anchorFrameH = ah;
-                _anchorOriginX = ax;
-                _anchorOriginY = ay;
                 Console.WriteLine($"[PetWindow] EnsureBalloonAnchor: 纸娃娃 anchor=stand1 frame={_anchorFrameW}x{_anchorFrameH}");
                 return;
             }
-            if (_anchorMobId == mobId && _anchorActionName != null) return; // 同 mob 已解析
+            if (_anchorMobId == mobId && _anchorActionName != null) { return; } // 同 mob 已解析
 
             List<string> actions;
             try
@@ -854,7 +830,7 @@ public partial class PetWindow : Window
                 if (actions.Contains(a)) { anchor = a; break; }
             }
             anchor ??= actions.Count > 0 ? actions[0] : null;
-            if (anchor == null) return;
+            if (anchor == null) { return; }
 
             var strip = _spriteService.GetCachedStrip(mobId, anchor).Item1;
             // ⚠️ 锚点动作未缓存 → strip null → FrameH=0 → headMargin fallback 当前帧高（随动画变 → 气泡跳）。
@@ -884,14 +860,14 @@ public partial class PetWindow : Window
             var cacheDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "Library", "Caches", "MiniPet", "v1", "sprites", mobId);
-            if (!Directory.Exists(cacheDir)) return result;
+            if (!Directory.Exists(cacheDir)) { return result; }
 
             foreach (var file in Directory.GetFiles(cacheDir, "*.json"))
             {
                 var action = Path.GetFileNameWithoutExtension(file);
-                if (string.IsNullOrEmpty(action) || action == "config") continue;
+                if (string.IsNullOrEmpty(action) || action == "config") { continue; }
                 // 跳过无有效画面的空动作（FrameWidth<=1）
-                if (IsBlankCachedAction(file, action)) continue;
+                if (IsBlankCachedAction(file, action)) { continue; }
                 result.Add(action);
             }
             result.Sort(StringComparer.Ordinal);
@@ -950,10 +926,12 @@ public partial class PetWindow : Window
                     {
                         try
                         {
-                            if (gen != _paperdollGen) return; // 被更新的选择覆盖
+                            if (gen != _paperdollGen) { return; } // 被更新的选择覆盖
                             _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
                             _animService.Play("stand1", PlayMode.Loop);
                             _trayService.SetTooltip("MiniPet - 纸娃娃");
+                            // 后台构建完成：恢复设置窗口「应用到主窗口」按钮（合成中 → ✅ 已应用，体验 B）
+                            _settingsWindow?.SetPaperdollApplyBusy(false);
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollApply: {ex.Message}"); }
                     });
@@ -967,10 +945,10 @@ public partial class PetWindow : Window
     /// <summary>显示/隐藏切换桌宠 loading（进度条 + 文本，覆盖动画区）。</summary>
     private void ShowPetLoading(bool show, string? name = null)
     {
-        if (_loadingBar == null || _loadingText == null) return;
+        if (_loadingBar == null || _loadingText == null) { return; }
         _loadingBar.IsVisible = show;
         _loadingText.IsVisible = show;
-        if (show && !string.IsNullOrEmpty(name)) _loadingText.Text = $"切换中: {name}…";
+        if (show && !string.IsNullOrEmpty(name)) { _loadingText.Text = $"切换中: {name}…"; }
     }
 
     /// <summary>
@@ -1003,9 +981,9 @@ public partial class PetWindow : Window
                     {
                         try
                         {
-                            if (gen != _petSwitchGen) return; // 被更新的切换覆盖
+                            if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖
                             ShowPetLoading(false);
-                            if (!ok) return;
+                            if (!ok) { return; }
                             _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
                             _lastFrameW = 0; _lastFrameH = 0;
                             _animService.SetCurrentMobId(id);
@@ -1025,7 +1003,7 @@ public partial class PetWindow : Window
     /// <summary>把记录里的类型归一化成 WZ 目录名（Mob/Npc）。</summary>
     private static string NormalizeEntityType(string? type)
     {
-        if (string.IsNullOrEmpty(type)) return "Mob";
+        if (string.IsNullOrEmpty(type)) { return "Mob"; }
         return type.Equals("Npc", StringComparison.OrdinalIgnoreCase) ? "Npc" : "Mob";
     }
 
