@@ -14,3 +14,6 @@ obj/
 *.DotSettings.user
 .vs/
 *.log
+
+# worktree 工作树（并行开发隔离）
+.worktrees/
