@@ -108,13 +108,14 @@ public partial class PetWindow : Window
         // #6：渲染（裁紧）完成后再落地——同步时 EffectiveCrop* 尚未就绪。
         _backgroundWindow.MapRendered += () => Dispatcher.UIThread.Post(OnMapRendered);
         // 静态图渲染完成 → 落盘 PNG 缓存（无 WZ 时背景可离线显示）
-        _backgroundWindow.OnMapRenderCached = (png, cx, cy, cw, ch) =>
+        // M6：追加裁紧后世界原点（trimWorldX/Y）随 sidecar 持久化——离线恢复时 EffectiveCrop 对齐裁紧图左上角，宠物落地不偏移
+        _backgroundWindow.OnMapRenderCached = (png, cx, cy, cw, ch, trimWorldX, trimWorldY) =>
         {
             try
             {
                 var s = _configService.LoadSettings();
                 if (!string.IsNullOrEmpty(s.MapId))
-                    _cacheManager.SaveMapPng(s.MapId, cx, cy, cw, ch, png);
+                    _cacheManager.SaveMapPng(s.MapId, cx, cy, cw, ch, png, trimWorldX, trimWorldY);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CacheMapPng: {ex.Message}"); }
         };
@@ -1040,7 +1041,14 @@ public partial class PetWindow : Window
                 _settingsWindow.OnLayerTogglesChanged += () => Dispatcher.UIThread.Post(ReRenderBackground);
                 _settingsWindow.OnWzRefreshed += () =>
                 {
-                    try { LoadDefaultPet(_wzService); }
+                    try
+                    {
+                        // M14：WZ 热更新后清地图精灵缓存（含负缓存——缺失 sprite 的 null 条目）+ 整图缓存，
+                        // 否则热更新新增/修复的资源仍显示「缺失」，整图仍显示旧 WZ 渲染结果。
+                        _mapService.ClearSpriteCache();
+                        _mapService.InvalidateFullRenderCache();
+                        LoadDefaultPet(_wzService);
+                    }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnWzRefreshed: {ex.Message}"); }
                 };
             }

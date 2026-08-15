@@ -33,6 +33,16 @@ public class MapViewportWindow : Window
     private int _rendering; // 0=idle, 1=busy（防后台渲染堆积）
     private readonly DispatcherTimer _timer;
 
+    // M10：脏标记——相机/缩放/尺寸变化（_needsRender）或地图存在滚动 back（_hasScrollBack）才重渲；
+    // 无滚动 back 且相机静止时 timer tick 不再重渲逐字节相同的帧（纯烧 CPU）。
+    private bool _needsRender = true;
+    private bool _hasScrollBack;
+
+    // M11：SKBitmap/WriteableBitmap 双缓冲复用（每帧不再 new ≈1.9MB+1.9MB）。仅在渲染任务内（_rendering 串行）访问。
+    private SKBitmap? _renderBmpA, _renderBmpB;
+    private WriteableBitmap? _wbA, _wbB;
+    private int _wbSlot;
+
     // 左键拖动状态（屏幕坐标 → camCenter 增量）
     private bool _dragging;
     private Point _dragStart;
@@ -100,6 +110,8 @@ public class MapViewportWindow : Window
         _viewTimeMs = 0;
         _image.Source = null;
         _renderGen++; // 让上一张地图在途的后台渲染结果失效
+        _needsRender = true;                       // M10：换图强制首帧重渲
+        _hasScrollBack = MapService.HasScrollingBacks(map); // M10：存在滚动 back 才每 tick 重渲
         if (!_timer.IsEnabled) _timer.Start();
     }
 
@@ -114,19 +126,22 @@ public class MapViewportWindow : Window
 
     private void OnTimerTick(object? sender, EventArgs e)
     {
-        // timer 仅推进 viewTimeMs（back 自动滚动动画）；拖动跟手由 PointerMoved → KickRender 即时触发。
+        // M10：timer 推进 viewTimeMs（back 自动滚动动画）；仅当存在滚动 back 或有待渲染变化才 KickRender。
+        // 无滚动 back 且相机静止时不再每帧重渲逐字节相同的帧（原实现每 tick 都渲）。
         _viewTimeMs += 33;
-        KickRender();
+        if (_hasScrollBack || _needsRender) KickRender();
     }
 
     /// <summary>
     /// 即时触发一帧渲染（_rendering CAS 防堆积：上一帧在途则本次跳过，等下一事件再试）。
     /// 拖动 PointerMoved 每次调用 → 拖完一帧立刻渲下一帧（不等 33ms tick）；timer tick 也调（推 viewTime）。
     /// 跳过 PNG 编码/解码：RenderViewport 输出 BGRA8888/Premul SKBitmap → WriteableBitmap 直拷像素（省 ~20-40ms/帧）。
+    /// M11：SKBitmap/WriteableBitmap 双缓冲复用，尺寸变化才重建；渲染结果仅在「渲染参数与当前一致」时清脏（M10）。
     /// </summary>
     private void KickRender()
     {
         if (!IsVisible || _map == null || _mapService == null) return;
+        _needsRender = true; // 登记待渲染（CAS 失败时下一事件重试，不丢更新）
         if (Interlocked.CompareExchange(ref _rendering, 1, 0) != 0) return;
 
         // clamp camX/camY 到地图边界（AdjustToWorldRect）
@@ -138,47 +153,87 @@ public class MapViewportWindow : Window
         long vt = _viewTimeMs;
         int sw = (int)Width, sh = (int)Height;
         int gen = _renderGen;
+        int slot = _wbSlot; _wbSlot ^= 1;
 
         Task.Run(() =>
         {
-            SKBitmap? bmp = null;
+            SKBitmap? src = null;
             try
             {
-                bmp = svc.RenderViewport(map, cx, cy, zoom, vt, sw, sh);
-                if (bmp == null) return;
+                // M11：SKBitmap 双缓冲复用（尺寸变化才重建；_rendering 串行保证无并发使用）
+                src = slot == 0 ? _renderBmpA : _renderBmpB;
+                if (src == null || src.Width != sw || src.Height != sh)
+                {
+                    src?.Dispose();
+                    src = new SKBitmap(sw, sh, SKColorType.Bgra8888, SKAlphaType.Premul);
+                    if (slot == 0) _renderBmpA = src; else _renderBmpB = src;
+                }
+                var rendered = svc.RenderViewport(map, cx, cy, zoom, vt, sw, sh, src);
+                if (rendered == null) return;
+                // 防御：尺寸不匹配时 RenderViewport 会新分配位图（窗口已保证 src 尺寸一致，正常走复用分支）——非复用则此处释放，防泄漏
+                bool renderedIsPooled = ReferenceEquals(rendered, src);
+                try
+                {
+                // M11：WriteableBitmap 双缓冲复用（尺寸变化才重建；旧 wb 在 UI 线程换源后释放）
+                WriteableBitmap? oldWb = null;
+                var wb = slot == 0 ? _wbA : _wbB;
+                if (wb == null || wb.PixelSize.Width != sw || wb.PixelSize.Height != sh)
+                {
+                    oldWb = wb;
+                    wb = new WriteableBitmap(new PixelSize(sw, sh), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+                    if (slot == 0) _wbA = wb; else _wbB = wb;
+                }
                 // SKBitmap(BGRA8888 Premul) → WriteableBitmap 直拷，跳过 PNG 编码 + Bitmap 解码往返。
-                var wb = new WriteableBitmap(new PixelSize(bmp.Width, bmp.Height), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
                 using (var fb = wb.Lock())
                 {
-                    int srcRow = bmp.RowBytes, dstRow = fb.RowBytes;
+                    int srcRow = rendered.RowBytes, dstRow = fb.RowBytes;
                     int copyRow = Math.Min(srcRow, dstRow);
                     unsafe
                     {
-                        byte* src = (byte*)bmp.GetPixels();
+                        byte* srcP = (byte*)rendered.GetPixels();
                         byte* dst = (byte*)fb.Address;
                         if (srcRow == dstRow)
                         {
                             // stride 相等（BGRA8888 两端均 w*4）：整块拷贝
-                            long total = (long)srcRow * bmp.Height;
-                            Buffer.MemoryCopy(src, dst, total, total);
+                            long total = (long)srcRow * rendered.Height;
+                            Buffer.MemoryCopy(srcP, dst, total, total);
                         }
                         else
                         {
-                            for (int y = 0; y < bmp.Height; y++)
-                                Buffer.MemoryCopy(src + y * srcRow, dst + y * dstRow, copyRow, copyRow);
+                            for (int y = 0; y < rendered.Height; y++)
+                                Buffer.MemoryCopy(srcP + y * srcRow, dst + y * dstRow, copyRow, copyRow);
                         }
                     }
                 }
+                var wbToSet = wb;
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (gen != _renderGen) return; // 切换/Stop 后丢弃
-                    _image.Source = wb;
+                    try
+                    {
+                        if (gen != _renderGen) return; // 切换/Stop 后丢弃
+                        _image.Source = wbToSet;
+                        // M10：仅当渲染所用参数与当前一致才清脏——期间拖动/滚轮/尺寸变化会保留脏，下一 tick 重渲；
+                        // viewTimeMs 仅在存在滚动 back 时影响输出（无滚动时 timer 每 tick 递增它，不参与比较）。
+                        bool same = Math.Abs(_camX - cx) < 1e-3f && Math.Abs(_camY - cy) < 1e-3f
+                                    && Math.Abs(_zoom - zoom) < 1e-4f && (int)Width == sw && (int)Height == sh
+                                    && (!_hasScrollBack || _viewTimeMs == vt);
+                        if (same) _needsRender = false;
+                    }
+                    finally
+                    {
+                        // gen 不匹配时 Stop/SetMap 已把 Source 置 null，旧 wb 不再显示，可安全释放
+                        oldWb?.Dispose();
+                    }
                 });
+                }
+                finally
+                {
+                    if (!renderedIsPooled) rendered.Dispose(); // 非池化位图（尺寸不匹配防御分支）用完即释
+                }
             }
             catch (Exception ex) { Console.Error.WriteLine($"[MapViewportWindow] Render: {ex.Message}"); }
             finally
             {
-                bmp?.Dispose();
                 Interlocked.Exchange(ref _rendering, 0);
             }
         });

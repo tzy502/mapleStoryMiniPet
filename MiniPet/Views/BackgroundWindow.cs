@@ -21,6 +21,8 @@ public class BackgroundWindow : Window
 {
     private readonly Image _image = new() { Stretch = Stretch.None };
     private readonly Panel _panel;
+    // M2：渲染失败/全透明时的窗口内错误提示（深色底保证透明窗口上可读）；成功渲染时隐藏。
+    private readonly Border _errorCard;
     private MapInfo? _map;
     private MapService? _mapService;
     private bool _interactive;
@@ -48,8 +50,8 @@ public class BackgroundWindow : Window
     // 同步调用 SetMap 后渲染仍在后台线程，裁紧值未就绪；落地必须在渲染完成后。
     public event Action? MapRendered;
 
-    // 渲染完成回调（带请求 crop + PNG）：PetWindow 注入实现 SaveMapPng 落盘，无 WZ 时背景可离线显示。
-    public Action<byte[], int, int, int, int>? OnMapRenderCached;
+    // 渲染完成回调（带请求 crop + PNG + 裁紧后世界原点）：PetWindow 注入实现 SaveMapPng 落盘（含 M6 裁紧原点 sidecar），无 WZ 时背景可离线显示。
+    public Action<byte[], int, int, int, int, int, int>? OnMapRenderCached;
 
     public BackgroundWindow()
     {
@@ -70,6 +72,26 @@ public class BackgroundWindow : Window
         _panel = new Panel { IsHitTestVisible = false };
         _image.IsHitTestVisible = false;
         _panel.Children.Add(_image);
+        // M2：错误提示（居中，深色半透明底，透明窗口上可读）；默认隐藏
+        var errorText = new TextBlock
+        {
+            Text = "⚠️ 地图渲染失败",
+            FontSize = 14,
+            Foreground = Brushes.White,
+            Padding = new Thickness(16, 10),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        };
+        _errorCard = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(200, 40, 40, 48)),
+            CornerRadius = new CornerRadius(8),
+            Child = errorText,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            IsVisible = false
+        };
+        _panel.Children.Add(_errorCard);
         Content = _panel;
 
         PointerPressed += OnPointerPressed;
@@ -139,6 +161,7 @@ public class BackgroundWindow : Window
         Height = ch;
         EffectiveCropX = cx; EffectiveCropY = cy; EffectiveCropW = cw; EffectiveCropH = ch;
         _image.Source = null;
+        if (_errorCard != null) _errorCard.IsVisible = false; // M2：新渲染开始前隐藏错误提示
         var gen = ++_renderGen;
         System.Threading.Tasks.Task.Run(() =>
         {
@@ -148,7 +171,13 @@ public class BackgroundWindow : Window
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (gen != _renderGen) return;
-                    if (result == null) return;
+                    if (result == null)
+                    {
+                        // M2：渲染失败/全透明（CropFull 返回 null）→ 显示错误提示，不再静默空白
+                        if (_errorCard != null) _errorCard.IsVisible = true;
+                        Console.Error.WriteLine($"[BackgroundWindow] 地图渲染失败或全透明 (map={map.Id}, crop={cx},{cy},{cw}×{ch})");
+                        return;
+                    }
                     // #6：窗口尺寸 = 实际渲染返回图尺寸（裁紧后），透明 padding 不再计入高度。
                     Width = result.Width;
                     Height = result.Height;
@@ -159,8 +188,8 @@ public class BackgroundWindow : Window
                     using var ms = new MemoryStream(result.Png);
                     _image.Source = new Bitmap(ms);
                     MapRendered?.Invoke();
-                    // 落盘缓存（用请求 crop 作 key；PNG 为裁紧后的实际图）
-                    try { OnMapRenderCached?.Invoke(result.Png, cx, cy, cw, ch); }
+                    // 落盘缓存（用请求 crop 作 key；PNG 为裁紧后的实际图；M6：裁紧后世界原点随 sidecar 持久化，离线恢复不丢）
+                    try { OnMapRenderCached?.Invoke(result.Png, cx, cy, cw, ch, result.WorldX, result.WorldY); }
                     catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] CacheMap: {ex.Message}"); }
                 });
             }
@@ -177,6 +206,7 @@ public class BackgroundWindow : Window
 
     /// <summary>
     /// 离线模式：直接显示缓存的地图渲染 PNG（无 WZ 时背景可用）。crop 为渲染时的世界坐标窗口。
+    /// M6：cropX/cropY 应传「裁紧后世界原点」（sidecar 恢复的值）——PNG 已是裁紧图，EffectiveCrop 必须对齐其左上角世界坐标。
     /// </summary>
     public void ShowCachedMapPng(byte[] pngData, int cropX, int cropY, int cropW, int cropH)
     {
@@ -191,6 +221,7 @@ public class BackgroundWindow : Window
             Height = bmp.PixelSize.Height;
             EffectiveCropX = cropX; EffectiveCropY = cropY; EffectiveCropW = bmp.PixelSize.Width; EffectiveCropH = bmp.PixelSize.Height;
             _image.Source = new Bitmap(new MemoryStream(pngData));
+            if (_errorCard != null) _errorCard.IsVisible = false;
             MapRendered?.Invoke();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[BackgroundWindow] ShowCachedMapPng: {ex.Message}"); _image.Source = null; }
@@ -199,6 +230,7 @@ public class BackgroundWindow : Window
     public void HideMap()
     {
         _image.Source = null;
+        if (_errorCard != null) _errorCard.IsVisible = false;
         _map = null;
         if (_interactive) SetInteractive(false);
     }

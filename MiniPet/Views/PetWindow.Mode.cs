@@ -148,6 +148,7 @@ public partial class PetWindow
     /// <summary>
     /// 无 WZ 时尝试从 PNG 缓存显示背景（静态图分类；摄像机模式无缓存则进设置中心）。
     /// 缓存 key = mapId + 请求 crop；命中则 BackgroundWindow 直接显示缓存图。
+    /// M6：离线恢复用 sidecar 里的「裁紧后世界原点」作 EffectiveCrop——PNG 是裁紧图，用请求 crop 会错位落地。
     /// </summary>
     private void TryShowCachedMapBackground(PetSettings s)
     {
@@ -159,9 +160,12 @@ public partial class PetWindow
                 OpenBackgroundTab();
                 return;
             }
+            // M6：读取裁紧后世界原点（sidecar 缺失时回退请求 crop——旧缓存兼容）
+            int trimX = s.CropX, trimY = s.CropY;
+            _cacheManager.TryLoadMapPngTrim(s.MapId, s.CropX, s.CropY, s.CropW, s.CropH, out trimX, out trimY);
             _mapViewportWindow.Stop();
             _mapViewportWindow.Hide();
-            _backgroundWindow.ShowCachedMapPng(cached, s.CropX, s.CropY, s.CropW, s.CropH);
+            _backgroundWindow.ShowCachedMapPng(cached, trimX, trimY, s.CropW, s.CropH);
             _backgroundWindow.Show();
             RaisePet();
         }

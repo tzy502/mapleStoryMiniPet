@@ -597,34 +597,42 @@ public partial class SettingsWindow
         var gen = ++_bgPreviewGen;
         // 立即反馈：预览区显示加载中（切换地图一次点击即响应，胶水反馈 2026-08-09）
         if (_bgCropInfo != null) _bgCropInfo.Text = "⏳ 加载中…";
-        // 崩溃修复 2026-08-09：后台线程 Skia 渲染与窗口 Hide 并发 → SIGSEGV（sk_image_new_from_bitmap）。
-        // 预览渲染移 UI 线程（与窗口生命周期同线程，消除跨线程竞争）。
-        Dispatcher.UIThread.Post(() =>
+        // M5：预览渲染改后台线程（LoadMap+CompositeMapThumbnail 不触 UI，原实现在 UI 线程持 WZ 锁整帧渲染冻结 UI）；
+        // UI 更新（Bitmap 解码/赋值）仍在 UI 线程，gen 代际防串台。与 MapViewportWindow/BackgroundWindow 同一套后台渲染模式
+        // （Skia 渲染在后台线程 + WZ/缓存锁保护，2026-08-09 的 Hide 并发 SIGSEGV 根因已由锁串行化消除）。
+        System.Threading.Tasks.Task.Run(() =>
         {
             try
             {
                 var map = _mapSvc.LoadMap(mapId);
                 byte[]? png = map != null ? _mapSvc.CompositeMapThumbnail(map, BgThumbW, BgThumbH) : null;
-                if (gen != _bgPreviewGen) return;
-                _bgCurrentMap = map;
-                if (png == null || map == null)
+                Dispatcher.UIThread.Post(() =>
                 {
-                    if (_bgPreviewImage != null) _bgPreviewImage.Source = null;
-                    if (_bgCropInfo != null) _bgCropInfo.Text = "渲染失败";
-                    return;
-                }
-                using var ms = new MemoryStream(png);
-                var bmp = new Bitmap(ms);
-                if (_bgPreviewImage != null) _bgPreviewImage.Source = bmp;
-                int worldW = map.MaxX - map.MinX;
-                int worldH = map.MaxY - map.MinY;
-                _bgThumbW = (int)bmp.Size.Width;
-                _bgThumbH = (int)bmp.Size.Height;
-                _bgThumbScale = _bgThumbW > 0 ? (double)worldW / _bgThumbW : 1;
-                if (_bgCropInfo != null) _bgCropInfo.Text = $"地图 {worldW}×{worldH}，拖动选 crop（当前：整图）";
-                onLoaded?.Invoke();
+                    try
+                    {
+                        if (gen != _bgPreviewGen) return;
+                        _bgCurrentMap = map;
+                        if (png == null || map == null)
+                        {
+                            if (_bgPreviewImage != null) _bgPreviewImage.Source = null;
+                            if (_bgCropInfo != null) _bgCropInfo.Text = "渲染失败";
+                            return;
+                        }
+                        using var ms = new MemoryStream(png);
+                        var bmp = new Bitmap(ms);
+                        if (_bgPreviewImage != null) _bgPreviewImage.Source = bmp;
+                        int worldW = map.MaxX - map.MinX;
+                        int worldH = map.MaxY - map.MinY;
+                        _bgThumbW = (int)bmp.Size.Width;
+                        _bgThumbH = (int)bmp.Size.Height;
+                        _bgThumbScale = _bgThumbW > 0 ? (double)worldW / _bgThumbW : 1;
+                        if (_bgCropInfo != null) _bgCropInfo.Text = $"地图 {worldW}×{worldH}，拖动选 crop（当前：整图）";
+                        onLoaded?.Invoke();
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgRenderPreview: {ex.Message}"); }
+                });
             }
-            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgRenderPreview: {ex.Message}"); }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgRenderPreview bg: {ex.Message}"); }
         });
     }
 

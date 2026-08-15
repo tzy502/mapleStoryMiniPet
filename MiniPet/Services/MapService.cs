@@ -34,69 +34,92 @@ public partial class MapService
     /// <summary>清除整图渲染缓存（分层显隐 toggle 后调用，强制下次按新 flag 重新渲染）。</summary>
     public void InvalidateFullRenderCache()
     {
-        // 注意：不主动 Dispose _fullRender。后台渲染 Task 可能仍持有引用，
-        // 主动 Dispose 会导致在途 Task 访问已释放的 Skia 句柄（EXC_BAD_ACCESS 崩溃）。
-        // 置 null 让 GC 自然回收，代价是内存释放稍延迟，但避免跨线程悬空指针。
-        _fullRender = null;
-        _fullRenderCacheKey = null;
+        // M9：在 _spriteCacheLock 内 Dispose（与渲染串行，无在途引用）。
+        // 原实现因渲染在 WZ 锁外跑而不敢 Dispose（后台 Task 可能持有引用 → 悬空指针），
+        // M5 后整帧持 _spriteCacheLock，此处同锁内 Dispose 安全，内存立即释放。
+        lock (_spriteCacheLock)
+        {
+            try { _fullRender?.Dispose(); } catch { }
+            _fullRender = null;
+            _fullRenderCacheKey = null;
+        }
     }
 
     // 摄像机模式（模式2）精灵缓存：wzPath → (bmp, originX, originY)。首次懒加载（ExtractPng+Decode+GetOrigin），
-    // 后续帧命中缓存仅 DrawBitmap。地图切换时 ClearSpriteCache Dispose 清空。必须在 _wzLock 内访问（ExtractPng/GetOrigin 不自锁）。
+    // 后续帧命中缓存仅 DrawBitmap。地图切换时 ClearSpriteCache Dispose 清空。
+    // 锁（M1/M5）：整帧渲染持 _spriteCacheLock（轻量，不与 WZ 数据读取争用），ClearSpriteCache/InvalidateFullRenderCache 同锁
+    // → 与在途渲染串行，杜绝「渲染中 Dispose 原生句柄」竞态（原实现整帧持 WZ 锁兜底，M5 收缩后需独立锁）。
+    // 锁序：_spriteCacheLock → _wzLock（GetCachedSprite 未命中时在缓存锁内取 WZ 锁）；无反向路径，无死锁。
     // 上限保护：超过 MaxSpriteCacheEntries 时淘汰一半（大地图数千精灵时防 SKBitmap 常驻膨胀）。
     private const int MaxSpriteCacheEntries = 3000;
+    private readonly object _spriteCacheLock = new();
     private readonly Dictionary<string, (SKBitmap? bmp, int ox, int oy)> _spriteCache = new();
     private readonly LinkedList<string> _spriteCacheOrder = new();
+    // M12：LRU 键→链表节点字典，命中 O(1)（原 LinkedList.Remove 每帧数百次 O(n) 链表扫描）。
+    private readonly Dictionary<string, LinkedListNode<string>> _spriteLruNodes = new();
 
     // 层排序缓存：key = "{mapId}|{layerIdx}|{showObj}|{showTile}" → 排序后的绘制项。
     // 地图不变时 (Z0,Z1,Id) 顺序固定，避免每帧 8 层 LINQ OrderBy 分配临时对象（P5-2）。
     private readonly Dictionary<string, List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile)>> _layerSortCache = new();
 
-    /// <summary>清空摄像机模式精灵缓存（地图切换/退出摄像机模式时调用，释放 SKBitmap 资源）。</summary>
+    // M11：SKPaint 提字段复用（原每精灵 using new SKPaint，大地图每帧数百次分配）。整帧渲染在 _spriteCacheLock 内串行，单实例安全。
+    private readonly SKPaint _paintSprite = new() { IsAntialias = false, FilterQuality = SKFilterQuality.None };
+    private readonly SKPaint _paintFoothold = new() { Color = new SKColor(255, 0, 0, 180), IsAntialias = false, StrokeWidth = 2 };
+
+    /// <summary>清空摄像机模式精灵缓存（地图切换/退出摄像机模式/调用时，释放 SKBitmap 资源）。</summary>
     public void ClearSpriteCache()
     {
-        foreach (var kv in _spriteCache) { try { kv.Value.bmp?.Dispose(); } catch { } }
-        _spriteCache.Clear();
-        _spriteCacheOrder.Clear();
-        _layerSortCache.Clear();
+        // M1：收进 _spriteCacheLock —— RenderViewport 整帧持同一锁，在途帧先完成再 Dispose，
+        // 消除「切图/停渲染时原生句柄与在途渲染并发释放」崩溃风险。
+        lock (_spriteCacheLock)
+        {
+            foreach (var kv in _spriteCache) { try { kv.Value.bmp?.Dispose(); } catch { } }
+            _spriteCache.Clear();
+            _spriteCacheOrder.Clear();
+            _spriteLruNodes.Clear();
+            _layerSortCache.Clear();
+        }
     }
 
-    /// <summary>懒加载精灵（命中缓存直接返回；首次 ExtractPng+Decode+GetOrigin）。调用方须在 _wzLock 内。</summary>
+    /// <summary>懒加载精灵（命中缓存直接返回；首次 ExtractPng+Decode+GetOrigin）。调用方须已在 _spriteCacheLock 内（RenderViewport 整帧持锁）。</summary>
     private (SKBitmap? bmp, int ox, int oy) GetCachedSprite(string wzPath)
     {
         if (string.IsNullOrEmpty(wzPath)) return (null, 0, 0);
         if (_spriteCache.TryGetValue(wzPath, out var entry))
         {
-            // 命中：更新 LRU 顺序（移到队尾=最近使用）
-            _spriteCacheOrder.Remove(wzPath);
-            _spriteCacheOrder.AddLast(wzPath);
+            // M12：命中 → 键→节点字典 O(1) 移到队尾（原 LinkedList.Remove(wzPath) 是 O(n) 扫描）
+            if (_spriteLruNodes.TryGetValue(wzPath, out var node) && node.List == _spriteCacheOrder)
+            {
+                _spriteCacheOrder.Remove(node);
+                _spriteCacheOrder.AddLast(node);
+            }
             return entry;
         }
-        SKBitmap? bmp = null; int ox = 0, oy = 0;
-        var png = _wz.ExtractPng(wzPath);
-        if (png != null && png.Length > 0)
+        // M5：WZ 锁收缩到精灵懒加载——仅未命中时的 ExtractPng/GetOrigin 持 WZ 锁（合并为一次锁区间），
+        // PNG 解码在锁外（SKBitmap.Decode 线程安全）。负缓存（缺失 sprite 的 null 条目）随 ClearSpriteCache 清除（M14）。
+        byte[]? png = null;
+        var (ox, oy) = _wz.WithWzLock(() =>
         {
-            bmp = SKBitmap.Decode(png);
-            if (bmp != null)
-            {
-                var (ox2, oy2) = _wz.GetOrigin(wzPath);
-                ox = ox2; oy = oy2;
-            }
-        }
+            png = _wz.ExtractPng(wzPath);
+            return _wz.GetOrigin(wzPath);
+        });
+        SKBitmap? bmp = null;
+        if (png != null && png.Length > 0) { bmp = SKBitmap.Decode(png); }
         _spriteCache[wzPath] = (bmp, ox, oy);
-        _spriteCacheOrder.AddLast(wzPath);
+        _spriteLruNodes[wzPath] = _spriteCacheOrder.AddLast(wzPath);
         // 上限保护：超出时淘汰最久未用的一半（Dispose 释放 Skia 原生句柄）
         if (_spriteCache.Count > MaxSpriteCacheEntries)
         {
             int evictCount = _spriteCache.Count / 2;
             for (int i = 0; i < evictCount && _spriteCacheOrder.First != null; i++)
             {
-                var oldest = _spriteCacheOrder.First.Value;
+                var oldest = _spriteCacheOrder.First;
                 _spriteCacheOrder.RemoveFirst();
-                if (_spriteCache.TryGetValue(oldest, out var ev))
+                _spriteLruNodes.Remove(oldest.Value);
+                if (_spriteCache.TryGetValue(oldest.Value, out var ev))
                 {
                     try { ev.bmp?.Dispose(); } catch { }
-                    _spriteCache.Remove(oldest);
+                    _spriteCache.Remove(oldest.Value);
                 }
             }
         }
@@ -225,10 +248,15 @@ public partial class MapService
                 var y = _wz.GetIntProperty($"{tilePath}/y");
                 var u = _wz.GetStringProperty($"{tilePath}/u") ?? "";
                 var no = _wz.GetIntProperty($"{tilePath}/no");
+                // M3：tile 排序 Z 取精灵帧自身 z（`Map/Tile/{tS}.img/{u}/{no}/z`）——
+                // 对齐 R2 GetMeshTile（FrmMapRender2.SceneRendering.cs:943: mesh.Z0 = (renderObj as Frame)?.Z，
+                // TextureLoader.cs:56: frame.Z = frameNode.z）与 PIXI（index.ts:574: zIndex = compositeZIndex(resource.z, id)）。
+                // 原实现读地图节点 `tile/{i}/z`（该字段通常不存在 → 恒 0），同层 tile 顺序错乱、地面/装饰互盖错误。
+                var tileFrameZ = _wz.GetIntProperty($"Map/Tile/{tS}.img/{u}/{no}/z");
                 tiles.Add(new MapTile
                 {
                     Id = i, X = x, Y = y,
-                    Z = _wz.GetIntProperty($"{tilePath}/z"),
+                    Z = tileFrameZ,
                     Resource = new Sprite { ResourceUrl = $"Map/Tile/{tS}.img/{u}/{no}" }
                 });
             }
@@ -286,7 +314,11 @@ public partial class MapService
                 var cy = _wz.GetIntProperty($"{bp}/cy");
                 var rx = _wz.GetIntProperty($"{bp}/rx");
                 var ry = _wz.GetIntProperty($"{bp}/ry");
-                var alpha = _wz.GetIntProperty($"{bp}/a");
+                // M13：alpha 默认 255（对齐 R2 BackItem.LoadFromNode: node.Nodes["a"].GetValueEx(255)）。
+                // GetIntProperty 对缺失字段返回 0，无法区分「缺失=不透明」与「显式 a=0=不可见」，须查节点存在性。
+                int alpha = 255;
+                var aNode = _wz.FindNodeByPath($"{bp}/a");
+                if (aNode != null) alpha = aNode.GetValueEx<int>(255);
                 var front = _wz.GetIntProperty($"{bp}/front");
                 var ani = _wz.GetIntProperty($"{bp}/ani");
                 var type = _wz.GetIntProperty($"{bp}/type");
@@ -316,6 +348,7 @@ public partial class MapService
 
     /// <summary>
     /// 解析 foothold 三层树 {mapRoot}/foothold/{l0}/{l1}/{l2}，每段 {x1,y1,x2,y2}。
+    /// Layer = l0 层级索引（0=地面层，1+ = 平台/屋顶），供 GetGroundY 取地面（M7）。
     /// </summary>
     private List<MapFoothold> ParseFootholds(string fhPath)
     {
@@ -332,6 +365,7 @@ public partial class MapService
                         result.Add(new MapFoothold
                         {
                             Id = int.TryParse(l2.Text, out var id) ? id : 0,
+                            Layer = int.TryParse(l0.Text, out var layer) ? layer : 0,
                             X1 = _wz.GetIntProperty($"{p}/x1"),
                             Y1 = _wz.GetIntProperty($"{p}/y1"),
                             X2 = _wz.GetIntProperty($"{p}/x2"),
@@ -503,14 +537,23 @@ public partial class MapService
     }
 
     /// <summary>
-    /// 在世界坐标 worldX 处的「地面」foothold 顶面 y（取包含该 x 的最高平台，即最小 y）。
-    /// 用于把宠物脚底对齐到地面。找不到返回 null。
+    /// 在世界坐标 worldX 处的「地面」foothold 顶面 y。
+    /// M7：地面 = foothold 树第 0 层（WZ `foothold/{l0}/{l1}/{l2}` 的 l0，0=地面层，1+ = 平台/屋顶）。
+    /// 原实现取「覆盖该 x 的最高平台（最小 y）」→ 宠物站上屋顶/树顶。
+    /// 修正：仅在地图层（l0==0）内取最高点；地面层存在但该 x 无覆盖 → 返回 null（调用方回退窗口底部，
+    /// 绝不回退到平台层——那正是「站屋顶」原 bug）。地图完全没有 l0==0 地面层时才回退全量最高点（保证仍能落地）。
     /// </summary>
     public static int? GetGroundY(MapInfo mi, int worldX)
     {
         if (mi == null || mi.Footholds.Count == 0) return null;
+        var groundLayer = mi.Footholds.Where(f => f.Layer == 0).ToList();
+        return PickHighestFootholdY(groundLayer.Count > 0 ? groundLayer : mi.Footholds, worldX);
+    }
+
+    private static int? PickHighestFootholdY(List<MapFoothold> fhs, int worldX)
+    {
         int? best = null;
-        foreach (var fh in mi.Footholds)
+        foreach (var fh in fhs)
         {
             int xMin = Math.Min(fh.X1, fh.X2), xMax = Math.Max(fh.X1, fh.X2);
             if (worldX < xMin || worldX > xMax) continue;
@@ -523,7 +566,8 @@ public partial class MapService
 
     /// <summary>
     /// 渲染整张地图（模式1 静态 = 摄像机第0帧）并按 mapId 缓存（ADR-0004）。桌面 crop 与设置预览共用此整图。
-    /// 全程在 WzService 锁内（WithWzLock 用 lock() 可重入 → 嵌套 RenderViewport 安全）。
+    /// M5：不再整帧持 WZ 锁（渲染/WZ 读取已各自加锁）；改持 _spriteCacheLock——与换图 Dispose（M9）、
+    /// ClearSpriteCache（M1）、InvalidateFullRenderCache 串行，保证返回位图在使用期间不会被并发释放。
     /// 模式1 不再用旧 RenderCore/DrawBack（back 视差 centerX 写死地图中心 + portal 顺序错），改为
     /// RenderViewport(map, camCenter=GetMapCenter, zoom=1, viewTimeMs=0) 的快照，与模式2 同一套 R2 渲染算法。
     /// 坐标空间：screenPx = world − MinX（camCenter=mapCenter, screenW=worldW 时 screen=(world-camCenter)+worldW/2=world-MinX），
@@ -533,7 +577,7 @@ public partial class MapService
     private SKBitmap? RenderMapFull(MapInfo mapInfo)
     {
         if (mapInfo == null) return null;
-        return _wz.WithWzLock(() =>
+        lock (_spriteCacheLock)
         {
             int worldW = mapInfo.MaxX - mapInfo.MinX;
             int worldH = mapInfo.MaxY - mapInfo.MinY;
@@ -545,13 +589,13 @@ public partial class MapService
             var (ccx, ccy) = GetMapCenter(mapInfo);
             var bmp = RenderViewport(mapInfo, ccx, ccy, 1f, 0, worldW, worldH);
             if (bmp == null) return null;
-            // 不主动 Dispose 旧 _fullRender：后台 Task 可能仍持有引用，主动释放会导致悬空指针崩溃。
-            // 置 null 让 GC 回收（与 InvalidateFullRenderCache 一致的策略）。
-            _fullRender = null;
+            // M9：换图/换 flag 时旧整图在锁内 Dispose（M5 后整帧持 _spriteCacheLock，无在途引用竞态），
+            // 快速连续切图不再出现原生内存膨胀（原实现只置 null 等 GC）。
+            try { _fullRender?.Dispose(); } catch { }
             _fullRender = bmp;
             _fullRenderCacheKey = cacheKey;
             return _fullRender;
-        });
+        }
     }
 
     /// <summary>
@@ -564,7 +608,9 @@ public partial class MapService
     public CroppedMap? CropFull(MapInfo mapInfo, int cropX, int cropY, int cropW, int cropH)
     {
         if (mapInfo == null) return null;
-        return _wz.WithWzLock(() =>
+        // M5：不再整段持 WZ 锁；改持 _spriteCacheLock，与整图缓存换图 Dispose（M9）/ClearSpriteCache（M1）串行，
+        // 防止从 _fullRender blit 期间位图被并发释放（原 WZ 锁语义下 InvalidateFullRenderCache 只置 null，M9 改为 Dispose 后必须同锁）。
+        lock (_spriteCacheLock)
         {
             try
             {
@@ -572,6 +618,14 @@ public partial class MapService
                 int worldH = mapInfo.MaxY - mapInfo.MinY;
                 if (worldW <= 0 || worldH <= 0) return null;
                 if (cropW <= 0 || cropH <= 0) { cropX = mapInfo.MinX; cropY = mapInfo.MinY; cropW = worldW; cropH = worldH; }
+                // M15：超大 crop 上限（防单张 RGBA 位图内存失控；4096×4096 ≈ 67MB 为上限）
+                const int MaxCropDim = 4096;
+                if (cropW > MaxCropDim || cropH > MaxCropDim)
+                {
+                    Console.Error.WriteLine($"[MapService] CropFull: crop {cropW}×{cropH} 超上限 {MaxCropDim}×{MaxCropDim}，已收缩");
+                    cropW = Math.Min(cropW, MaxCropDim);
+                    cropH = Math.Min(cropH, MaxCropDim);
+                }
                 var full = RenderMapFull(mapInfo);
                 if (full == null) return null;
 
@@ -619,7 +673,7 @@ public partial class MapService
                 return new CroppedMap(png, cropX + trimL, cropY + trimT, contentW, contentH);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[MapService] CropFull: {ex.Message}"); return null; }
-        });
+        }
     }
 
     /// <summary>
@@ -658,7 +712,8 @@ public partial class MapService
     public byte[]? CompositeMapThumbnail(MapInfo mapInfo, int targetW, int targetH)
     {
         if (mapInfo == null || targetW <= 0 || targetH <= 0) return null;
-        return _wz.WithWzLock(() =>
+        // M5：同 CropFull——改持 _spriteCacheLock（与整图缓存换图 Dispose 串行），不再整段持 WZ 锁。
+        lock (_spriteCacheLock)
         {
             try
             {
@@ -681,7 +736,7 @@ public partial class MapService
                 return img.Encode(SKEncodedImageFormat.Png, 100).ToArray();
             }
             catch (Exception ex) { Console.Error.WriteLine($"[MapService] CompositeMapThumbnail: {ex.Message}"); return null; }
-        });
+        }
     }
 
     /// <summary>对齐 R2 FrmMapRender.GetBackTileMode：WZ type 0-7 → TileMode 位（bit0=H,bit1=V,bit2=ScrollH 无水平视差,bit3=ScrollV）。</summary>

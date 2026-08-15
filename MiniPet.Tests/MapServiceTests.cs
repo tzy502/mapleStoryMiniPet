@@ -3,6 +3,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using MiniPet.Models;
+using MiniPet.Services;
 
 namespace MiniPet.Tests;
 
@@ -233,6 +235,81 @@ public class MapServiceTests
     {
         var path = GetMapWzPath(-1);
         Assert.Equal("Map/Map/Map-/-1.img", path);
+    }
+
+    // --- M7：GetGroundY 地面层（foothold l0==0）优先 ---
+
+    [Fact]
+    public void GetGroundY_PrefersLayer0_OverPlatform()
+    {
+        // 同一 x 范围：地面层(l0=0) y=100，平台层(l0=1) y=60（屋顶更高）
+        var map = new MapInfo();
+        map.Footholds.Add(new MapFoothold { Layer = 1, X1 = 0, Y1 = 60, X2 = 500, Y2 = 60 });
+        map.Footholds.Add(new MapFoothold { Layer = 0, X1 = 0, Y1 = 100, X2 = 500, Y2 = 100 });
+        // 地面层优先 → 返回地面 y=100（而非屋顶 y=60）
+        Assert.Equal(100, MapService.GetGroundY(map, 250));
+    }
+
+    [Fact]
+    public void GetGroundY_NoLayer0Coverage_ReturnsNull()
+    {
+        // 地面层只覆盖 [0,100]，查询 x=300 超出 → 返回 null（调用方回退窗口底部），
+        // 绝不回退到平台层最高点（那正是「站屋顶」原 bug）。
+        var map = new MapInfo();
+        map.Footholds.Add(new MapFoothold { Layer = 1, X1 = 0, Y1 = 60, X2 = 500, Y2 = 60 });
+        map.Footholds.Add(new MapFoothold { Layer = 0, X1 = 0, Y1 = 100, X2 = 100, Y2 = 100 });
+        Assert.Null(MapService.GetGroundY(map, 300));
+    }
+
+    [Fact]
+    public void GetGroundY_NoLayer0AtAll_FallsBackToHighestPlatform()
+    {
+        // 地图完全没有 l0==0 地面层 → 退而求其次取最高平台（保证仍能落地）
+        var map = new MapInfo();
+        map.Footholds.Add(new MapFoothold { Layer = 1, X1 = 0, Y1 = 60, X2 = 500, Y2 = 60 });
+        map.Footholds.Add(new MapFoothold { Layer = 2, X1 = 0, Y1 = 120, X2 = 500, Y2 = 120 });
+        Assert.Equal(60, MapService.GetGroundY(map, 250));
+    }
+
+    [Fact]
+    public void GetGroundY_NoFootholds_ReturnsNull()
+    {
+        Assert.Null(MapService.GetGroundY(new MapInfo(), 100));
+        Assert.Null(MapService.GetGroundY(null, 100));
+    }
+
+    [Fact]
+    public void GetGroundY_SlopedFoothold_Interpolates()
+    {
+        // 斜地面：从 (0,100) 到 (200,200)，x=100 处 y=150
+        var map = new MapInfo();
+        map.Footholds.Add(new MapFoothold { Layer = 0, X1 = 0, Y1 = 100, X2 = 200, Y2 = 200 });
+        Assert.Equal(150, MapService.GetGroundY(map, 100));
+    }
+
+    // --- M10：HasScrollingBacks（自动滚动 back 判定）---
+
+    [Fact]
+    public void HasScrollingBacks_True_WhenScrollTileMode()
+    {
+        // type 4 = Horizontal|ScrollHorizontal；type 5 = Vertical|ScrollVertical
+        var map = new MapInfo();
+        map.Backs.Add(new MapBack { Type = 4, Alpha = 255 });
+        Assert.True(MapService.HasScrollingBacks(map));
+        map.Backs.Clear();
+        map.Backs.Add(new MapBack { Type = 5, Alpha = 255 });
+        Assert.True(MapService.HasScrollingBacks(map));
+    }
+
+    [Fact]
+    public void HasScrollingBacks_False_WhenNoScrollOrInvisible()
+    {
+        var map = new MapInfo();
+        Assert.False(MapService.HasScrollingBacks(map));
+        map.Backs.Add(new MapBack { Type = 0, Alpha = 255 });   // 无滚动
+        Assert.False(MapService.HasScrollingBacks(map));
+        map.Backs.Add(new MapBack { Type = 4, Alpha = 0 });     // 滚动但 a=0 不可见（M13）
+        Assert.False(MapService.HasScrollingBacks(map));
     }
 
     // --- embedded minimal logic replicas ---
