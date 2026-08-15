@@ -266,7 +266,8 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 清理过期缓存
+        /// 清理过期缓存（D10：精灵 png/json 按条带成对删除——任一侧较新则整对保留，防只删一半悬挂；
+        /// 气泡按整目录同生共死；地图为单文件无配对，按时间删）。
         /// </summary>
         public void ClearOldCache(int daysRetain)
         {
@@ -276,21 +277,22 @@ namespace MiniPet.Services
                 {
                     var cutoffDate = DateTime.Now.AddDays(-daysRetain);
 
-                    // 清理精灵图缓存
+                    // 精灵图缓存：{mobId}/{action}.png + {action}.json 成对判定
+                    // （SaveSpriteStrip 同时写两侧，两侧 mtime 应一致；任一侧未过期 → 整对保留）
                     var spritesDir = Path.Combine(_cacheDir, "sprites");
                     if (Directory.Exists(spritesDir))
                     {
-                        ClearOldFilesInDir(spritesDir, cutoffDate);
+                        ClearOldSpritePairs(spritesDir, cutoffDate);
                     }
 
-                    // 清理气泡缓存
+                    // 气泡缓存：{balloonId}/ 整目录（瓦片 + origin.json）整体过期才删，防半删悬挂瓦片
                     var balloonsDir = Path.Combine(_cacheDir, "balloons");
                     if (Directory.Exists(balloonsDir))
                     {
-                        ClearOldFilesInDir(balloonsDir, cutoffDate);
+                        ClearOldBalloonDirs(balloonsDir, cutoffDate);
                     }
 
-                    // 清理地图缓存
+                    // 地图缓存：单文件无配对，按时间删
                     var mapsDir = Path.Combine(_cacheDir, "maps");
                     if (Directory.Exists(mapsDir))
                     {
@@ -300,6 +302,93 @@ namespace MiniPet.Services
                 catch (IOException)
                 {
                     // 忽略清理错误
+                }
+            }
+        }
+
+        /// <summary>精灵条带成对清理：按文件名主干分组（{stem}.png + {stem}.json），组内任一侧未过期 → 整组保留；全过期 → 成对删除。</summary>
+        private static void ClearOldSpritePairs(string spritesDir, DateTime cutoffDate)
+        {
+            foreach (var mobDir in Directory.GetDirectories(spritesDir))
+            {
+                try
+                {
+                    var byStem = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                    foreach (var f in Directory.GetFiles(mobDir))
+                    {
+                        var stem = Path.GetFileNameWithoutExtension(f);
+                        if (!byStem.TryGetValue(stem, out var list))
+                        {
+                            list = new List<string>();
+                            byStem[stem] = list;
+                        }
+                        list.Add(f);
+                    }
+                    foreach (var files in byStem.Values)
+                    {
+                        try
+                        {
+                            var anyFresh = false;
+                            foreach (var f in files)
+                            {
+                                if (File.GetLastWriteTime(f) >= cutoffDate)
+                                {
+                                    anyFresh = true;
+                                    break;
+                                }
+                            }
+                            if (anyFresh) continue;
+                            foreach (var f in files)
+                            {
+                                File.Delete(f);
+                            }
+                        }
+                        catch (IOException)
+                        {
+                            // 忽略单个文件删除错误
+                        }
+                    }
+                    // 清空子目录
+                    if (Directory.GetFiles(mobDir).Length == 0)
+                    {
+                        Directory.Delete(mobDir);
+                    }
+                }
+                catch (IOException)
+                {
+                    // 忽略目录级错误
+                }
+            }
+        }
+
+        /// <summary>气泡整目录清理：目录内任一文件未过期 → 保留；全过期 → 整目录删除（瓦片 + origin.json 同生共死）。</summary>
+        private static void ClearOldBalloonDirs(string balloonsDir, DateTime cutoffDate)
+        {
+            foreach (var dir in Directory.GetDirectories(balloonsDir))
+            {
+                try
+                {
+                    var files = Directory.GetFiles(dir);
+                    if (files.Length == 0)
+                    {
+                        Directory.Delete(dir);
+                        continue;
+                    }
+                    var anyFresh = false;
+                    foreach (var f in files)
+                    {
+                        if (File.GetLastWriteTime(f) >= cutoffDate)
+                        {
+                            anyFresh = true;
+                            break;
+                        }
+                    }
+                    if (anyFresh) continue;
+                    Directory.Delete(dir, true);
+                }
+                catch (IOException)
+                {
+                    // 忽略目录级错误
                 }
             }
         }

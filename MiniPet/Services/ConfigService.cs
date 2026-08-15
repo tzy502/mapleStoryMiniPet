@@ -16,6 +16,11 @@ namespace MiniPet.Services
         private PetSettings _settings;
         private WzConfig _wzConfig;
         private readonly object _lock = new();
+        // P6-3：磁盘 JSON 内存缓存——高频 LoadSettings（如 EffectLayerService 每次 Agent 状态变化 2 次）
+        // 不再锁内反复 ReadAllText；SaveSettings/SaveWzConfig 成功后刷新。
+        // 语义保持：每次调用仍反序列化出独立对象（调用方可安全持有/修改，与旧逐次读盘行为一致）。
+        private string? _settingsJsonCache;
+        private string? _wzConfigJsonCache;
 
         /// <summary>
         /// 设置变更事件
@@ -40,10 +45,15 @@ namespace MiniPet.Services
             {
                 try
                 {
-                    if (File.Exists(_settingsPath))
+                    // P6-3：磁盘只读一次，后续走内存缓存（SaveSettings 后刷新）；
+                    // 每次仍反序列化出独立对象，调用方持有/修改互不影响（与旧逐次读盘语义一致）
+                    if (_settingsJsonCache == null && File.Exists(_settingsPath))
                     {
-                        var json = File.ReadAllText(_settingsPath);
-                        var settings = JsonSerializer.Deserialize<PetSettings>(json, GetJsonOptions());
+                        _settingsJsonCache = File.ReadAllText(_settingsPath);
+                    }
+                    if (_settingsJsonCache != null)
+                    {
+                        var settings = JsonSerializer.Deserialize<PetSettings>(_settingsJsonCache, GetJsonOptions());
                         if (settings != null)
                         {
                             _settings = settings;
@@ -53,14 +63,16 @@ namespace MiniPet.Services
                 }
                 catch (JsonException)
                 {
-                    // JSON格式错误，使用默认值
+                    // JSON格式错误：缓存作废（下次重读磁盘），使用默认值
+                    _settingsJsonCache = null;
                 }
                 catch (IOException)
                 {
-                    // 文件读取错误，使用默认值
+                    // 文件读取错误：缓存作废，使用默认值
+                    _settingsJsonCache = null;
                 }
 
-                // 文件不存在或解析失败，创建默认值
+                // 缓存未命中或解析失败，创建默认值
                 _settings = CreateDefaultSettings();
                 SaveSettings(_settings);
                 return _settings;
@@ -124,6 +136,7 @@ namespace MiniPet.Services
                     }
 
                     _settings = settings;
+                    _settingsJsonCache = json; // P6-3：内存缓存刷新（与落盘同源，保证下次 LoadSettings 返回本次保存值）
                     OnSettingsChanged?.Invoke(settings);
                 }
                 catch (IOException)
@@ -142,10 +155,14 @@ namespace MiniPet.Services
             {
                 try
                 {
-                    if (File.Exists(_wzConfigPath))
+                    // P6-3：同 LoadSettings，磁盘只读一次，后续走内存缓存（SaveWzConfig 后刷新）
+                    if (_wzConfigJsonCache == null && File.Exists(_wzConfigPath))
                     {
-                        var json = File.ReadAllText(_wzConfigPath);
-                        var config = JsonSerializer.Deserialize<WzConfig>(json, GetJsonOptions());
+                        _wzConfigJsonCache = File.ReadAllText(_wzConfigPath);
+                    }
+                    if (_wzConfigJsonCache != null)
+                    {
+                        var config = JsonSerializer.Deserialize<WzConfig>(_wzConfigJsonCache, GetJsonOptions());
                         if (config != null)
                         {
                             _wzConfig = config;
@@ -155,14 +172,14 @@ namespace MiniPet.Services
                 }
                 catch (JsonException)
                 {
-                    // JSON格式错误，使用默认值
+                    _wzConfigJsonCache = null;
                 }
                 catch (IOException)
                 {
-                    // 文件读取错误，使用默认值
+                    _wzConfigJsonCache = null;
                 }
 
-                // 文件不存在或解析失败，创建默认值
+                // 缓存未命中或解析失败，创建默认值
                 _wzConfig = new WzConfig();
                 SaveWzConfig(_wzConfig);
                 return _wzConfig;
@@ -187,6 +204,7 @@ namespace MiniPet.Services
                     var json = JsonSerializer.Serialize(config, GetJsonOptions());
                     File.WriteAllText(_wzConfigPath, json);
                     _wzConfig = config;
+                    _wzConfigJsonCache = json; // P6-3：内存缓存刷新
                 }
                 catch (IOException)
                 {

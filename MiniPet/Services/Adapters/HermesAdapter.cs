@@ -132,9 +132,11 @@ namespace MiniPet.Services.Adapters
 
         // ===== 轮询状态 =====
         private DispatcherTimer? _timer;
-        private bool _running;
+        private volatile bool _running;     // UI 线程 Start/Stop 写，轮询后台线程读
+        private int _pollInFlight;          // 单飞守卫（Interlocked）：1 = 有轮询在后台跑（防重叠 + 隔离 _lastPublished 访问）
 
         // 上次发布的状态（避免抖动：同状态不重复发）
+        // ⚠️ 线程安全：仅轮询后台线程访问（单飞守卫保证同一时刻至多一个轮询在跑）
         private AgentState _lastPublished = AgentState.Idle;
 
         // 熔断 / 退避
@@ -266,8 +268,11 @@ namespace MiniPet.Services.Adapters
             _timer.Tick += OnTick;
             _timer.Start();
 
-            // 启动立即探一次（不等首个 tick）。
-            PollOnce();
+            // 启动立即探一次（不等首个 tick）；后台线程执行（D6：不阻塞 UI 线程）。
+            if (Interlocked.CompareExchange(ref _pollInFlight, 1, 0) == 0)
+            {
+                _ = Task.Run(RunPollAsync);
+            }
         }
 
         /// <inheritdoc />
@@ -300,10 +305,34 @@ namespace MiniPet.Services.Adapters
 
         private void OnTick(object? sender, EventArgs e)
         {
-            PollOnce();
+            // D6：轮询移到后台线程（HTTP/SQLite 不再阻塞 UI 线程——Hermes 假死时曾冻结 UI 长达 100s）。
+            // DispatcherTimer 只做节拍器；上一轮未结束（Hermes 慢/挂起）→ 跳过本次，防轮询重叠。
+            if (Interlocked.CompareExchange(ref _pollInFlight, 1, 0) != 0)
+            {
+                return;
+            }
+            _ = Task.Run(RunPollAsync);
         }
 
-        private void PollOnce()
+        /// <summary>后台轮询入口（单飞）：包一层异常兜底 + 释放单飞标志。</summary>
+        private async Task RunPollAsync()
+        {
+            try
+            {
+                await PollOnceCoreAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // 兜底：轮询线程异常不允许逃逸（隐私：不打 ex.Message）
+                Console.Error.WriteLine($"[HermesAdapter] Poll: {SafeExcerpt(ex)}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _pollInFlight, 0);
+            }
+        }
+
+        private async Task PollOnceCoreAsync()
         {
             if (!_running) {
                 return;
@@ -325,7 +354,7 @@ namespace MiniPet.Services.Adapters
                 {
                     try
                     {
-                        httpSnap = QueryHttpSnapshotAsync().GetAwaiter().GetResult();
+                        httpSnap = await QueryHttpSnapshotAsync().ConfigureAwait(false);
                     }
                     catch
                     {
@@ -938,8 +967,10 @@ namespace MiniPet.Services.Adapters
             int backoff = _currentBackoffMs;
             _currentBackoffMs = Math.Min(_currentBackoffMs * 2, MaxBackoffMs);
 
-            if (_timer != null) {
-                _timer.Interval = TimeSpan.FromMilliseconds(backoff);
+            // 局部捕获避免与 Stop()（UI 线程置 _timer=null）的 TOCTOU 竞态（D6 后本方法在后台线程执行）
+            var t = _timer;
+            if (t != null) {
+                t.Interval = TimeSpan.FromMilliseconds(backoff);
                 // 下次 tick 后恢复标准周期。
                 Dispatcher.UIThread.Post(() =>
                 {

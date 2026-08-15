@@ -19,6 +19,14 @@ namespace MiniPet.Services
         private CancellationTokenSource? _hideCts;
         private readonly HashSet<string> _seeding = new();
 
+        // 补-13/S12：按 balloonId 缓存的解码后瓦片（预览与显示反复 RenderBalloon，避免每次重解 11 张 PNG）。
+        // SKBitmap 解码后只读，可被多个 SKCanvas.DrawBitmap 并发读取；WZ 重载边缘场景（同 id 瓦片内容变更）
+        // 会复用旧解码——实际重载极低频且磁盘缓存不自动重提，可接受。
+        private readonly object _tileCacheLock = new();
+        private readonly Dictionary<string, DecodedTiles> _tileCache = new(StringComparer.Ordinal);
+        private readonly Queue<string> _tileOrder = new();
+        private const int MaxTileCacheEntries = 24;
+
         /// <summary>气泡渲染完成回调：(text, data, pngBytes) — 由上层在 UI 线程显示</summary>
         public event Action<string, BalloonData, byte[], int?>? OnBalloonReady;
 
@@ -91,18 +99,21 @@ namespace MiniPet.Services
             var tiles = balloonData.Tiles;
             if (tiles == null) return null;
 
-            // 加载各切片
-            using var nw = TileToBitmap(tiles.NW);
-            using var n  = TileToBitmap(tiles.N);
-            using var ne = TileToBitmap(tiles.NE);
-            using var w  = TileToBitmap(tiles.W);
-            using var c  = TileToBitmap(tiles.C);
-            using var e  = TileToBitmap(tiles.E);
-            using var sw = TileToBitmap(tiles.SW);
-            using var s  = TileToBitmap(tiles.S);
-            using var se = TileToBitmap(tiles.SE);
-            using var arrow = TileToBitmap(tiles.Arrow);
-            using var head = TileToBitmap(tiles.Head);
+            // 补-13/S12：解码瓦片按 balloonId 缓存复用（SKBitmap 解码后只读，多线程 DrawBitmap 安全）
+            var decoded = GetDecodedTiles(balloonData);
+            if (decoded == null) return null;
+
+            var nw = decoded.NW;
+            var n  = decoded.N;
+            var ne = decoded.NE;
+            var w  = decoded.W;
+            var c  = decoded.C;
+            var e  = decoded.E;
+            var sw = decoded.SW;
+            var s  = decoded.S;
+            var se = decoded.SE;
+            var arrow = decoded.Arrow;
+            var head = decoded.Head;
 
             if (nw == null || n == null || ne == null ||
                 w == null || c == null || e == null ||
@@ -404,6 +415,84 @@ namespace MiniPet.Services
             catch
             {
                 return null;
+            }
+        }
+
+        /// <summary>取（或解码并缓存）balloonId 的解码瓦片；无稳定 Id（异常数据）时不缓存直接解码。</summary>
+        private DecodedTiles? GetDecodedTiles(BalloonData data)
+        {
+            if (data == null || data.Tiles == null)
+            {
+                return null;
+            }
+            if (string.IsNullOrEmpty(data.Id))
+            {
+                // 无稳定 Id：不缓存，直接解码
+                return DecodeTiles(data.Tiles);
+            }
+            lock (_tileCacheLock)
+            {
+                if (_tileCache.TryGetValue(data.Id, out var cached))
+                {
+                    return cached;
+                }
+                var decoded = DecodeTiles(data.Tiles);
+                if (decoded == null)
+                {
+                    return null;
+                }
+                _tileCache[data.Id] = decoded;
+                _tileOrder.Enqueue(data.Id);
+                // FIFO 淘汰（气泡瓦片小，24 条 ≈ 1MB 级，封顶足够）
+                while (_tileCache.Count > MaxTileCacheEntries)
+                {
+                    var oldest = _tileOrder.Dequeue();
+                    if (_tileCache.Remove(oldest, out var evicted))
+                    {
+                        evicted.Dispose();
+                    }
+                }
+                return decoded;
+            }
+        }
+
+        /// <summary>把瓦片字节解码为 SKBitmap 集合（空/损坏瓦片为 null，与 TileToBitmap 语义一致）。</summary>
+        private static DecodedTiles DecodeTiles(BalloonTiles tiles)
+        {
+            return new DecodedTiles
+            {
+                NW = TileToBitmap(tiles.NW),
+                N = TileToBitmap(tiles.N),
+                NE = TileToBitmap(tiles.NE),
+                W = TileToBitmap(tiles.W),
+                C = TileToBitmap(tiles.C),
+                E = TileToBitmap(tiles.E),
+                SW = TileToBitmap(tiles.SW),
+                S = TileToBitmap(tiles.S),
+                SE = TileToBitmap(tiles.SE),
+                Arrow = TileToBitmap(tiles.Arrow),
+                Head = TileToBitmap(tiles.Head)
+            };
+        }
+
+        /// <summary>解码后的气泡 9-slice 瓦片（RenderBalloon 按 balloonId 缓存复用，避免每次重解 PNG）。</summary>
+        private sealed class DecodedTiles : IDisposable
+        {
+            public SKBitmap? NW, N, NE, W, C, E, SW, S, SE, Arrow, Head;
+
+            public void Dispose()
+            {
+                NW?.Dispose();
+                N?.Dispose();
+                NE?.Dispose();
+                W?.Dispose();
+                C?.Dispose();
+                E?.Dispose();
+                SW?.Dispose();
+                S?.Dispose();
+                SE?.Dispose();
+                Arrow?.Dispose();
+                Head?.Dispose();
             }
         }
     }
