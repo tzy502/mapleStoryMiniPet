@@ -14,12 +14,13 @@ namespace MiniPet.Services
     ///   - Wave    → 气泡「完成」
     ///   - Review  → 气泡「思考中…」
     ///   - Waiting → 气泡「等你」
-    ///   - Run     → 调 PaperdollService 预留 expression gateway 触发实体忙碌动作（walk1/move）；gateway 未实现则 TODO
+    ///   - Run     → 经 ActionDriver 切实体忙碌动作（纸娃娃 walk1/move）+ 表情 driver 回 default（R7 已接入最小 driver）
     ///   - Idle    → 不动（回默认表情 default/blink）
     ///
     /// 设计取舍（选简单可行的）：
     /// overlay 只负责 Jump/Failed 这种「实体之上的叠加」与「气泡固定文本」；
-    /// Run/Idle 这种「实体现有动作切换」交给 PaperdollService.ExpressionDriver，本服务只翻状态不直接画帧。
+    /// Run/Idle 这种「实体现有动作切换」交给 AnimService（ActionDriver），表情由 PaperdollService.ExpressionDriver
+    /// （R7 已注入最小 driver 返回 default），本服务只翻状态不直接画帧。
     /// 不替换实体帧、不切实体（Mob/NPC/纸娃娃通用）。
     /// 当前 overlay 落地为「调 BalloonService 显示固定文本气泡」——BalloonService 已是独立透明置顶窗口
     /// （见 BalloonWindow：Topmost + Transparent + NSWindow.ignoresMouseEvents 点击穿透），
@@ -49,7 +50,7 @@ namespace MiniPet.Services
 
         /// <summary>
         /// 构造注入：EventBus 必需；BalloonService/ConfigService 必需（Jump/Failed/Wave/Review/Waiting 走气泡）；
-        /// PaperdollService 可选（Run/Idle 走 expression gateway，未注入则 Run 仅记 TODO 不抛）。
+        /// PaperdollService 可选（Run/Idle 走 expression gateway，未注入则跳过）。
         /// </summary>
         public EffectLayerService(
             EventBus eventBus,
@@ -61,6 +62,15 @@ namespace MiniPet.Services
             _balloonService = balloonService;
             _configService = configService;
             _paperdoll = paperdoll;
+
+            // R7 表情 gateway 最小接入：注入一个恒返回 ExpressionDefault 的 driver。
+            // 语义：Agent Run 的「忙碌」已由 ActionDriver 动作切换实现（纸娃娃→walk1，已工作），
+            // 表情（default/blink）暂无明确外部来源，不强行造表情——driver 返回 "default"，
+            // face 合成仍走 ResolveFaceAction 的 default→blink 回退。未来 Hermes/Claude 状态驱动表情时替换此 driver。
+            if (_paperdoll != null)
+            {
+                _paperdoll.ExpressionDriver = new DefaultExpressionDriver();
+            }
 
             _eventBus.Subscribe(EventType.PetReflectStateChanged, OnReflect);
         }
@@ -277,25 +287,16 @@ namespace MiniPet.Services
             }
         }
 
-        /// <summary>
-        /// 尝试驱动实体忙碌表情（Run 态）。
-        /// PaperdollService.ExpressionDriver（IExpressionDriver?）是预留 gateway（PaperdollService.cs:45 / :908 ResolveExpression）。
-        /// 当前 EffectLayerService 不直接设置 ExpressionDriver（避免与 PetWindow 现有 driver 冲突），
-        /// 仅在 PaperdollService 注入时记日志便于联调；真正驱动实体动作待 gateway 扩展（见 ApplyEffect Run 分支 TODO）。
-        /// </summary>
-        private void TryDriveBusyExpression()
-        {
-            if (_paperdoll == null)
-            {
-                // 未注入 PaperdollService（Mob/NPC 实体无纸娃娃 gateway）→ 跳过，无副作用
-                return;
-            }
-            // TODO(gateway 接入)：注入/构造一个 IExpressionDriver，Run 时返回忙碌表情（如 "default" 配 walk1），
-            //   Idle 时回 "default"/"blink"。当前仅日志，不实际改 driver 以免破坏现有表情逻辑。
-            Console.WriteLine("[EffectLayerService] Run → busy expression gateway (TODO: wire IExpressionDriver for walk1/move)");
-        }
-
         /// <summary>当前生效态（供外部观测/调试）。</summary>
         public AgentState CurrentReflect => _currentReflect;
+
+        /// <summary>
+        /// R7 最小表情 driver：恒返回 default（忙碌表情由 ActionDriver 动作切换表达，表情语义暂无外部来源）。
+        /// 见构造函数注入注释。
+        /// </summary>
+        private sealed class DefaultExpressionDriver : IExpressionDriver
+        {
+            public string GetExpression() => PaperdollService.ExpressionDefault;
+        }
     }
 }

@@ -59,6 +59,13 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, SKBitmap> _bmpCache = new();
     private readonly ConcurrentDictionary<string, SKBitmap> _dyeBmpCache = new();
     private readonly ConcurrentDictionary<string, int> _delayCache = new();
+    // 坐骑/椅子动作帧数缓存（R1：CollectPiecesForFrame 每帧查一次，避免重复 WZ 遍历）
+    private readonly ConcurrentDictionary<string, int> _rideFrameCountCache = new();
+    // 诊断去重（R5/R6：body 未锁定 / locked.Count==0 只打一次，防 30fps 刷屏）
+    private readonly ConcurrentDictionary<string, byte> _loggedFrameFailures = new();
+
+    /// <summary>位图缓存容量上限（R11）：超过即释放并清一半，防无界常驻（简化 LRU，无访问序维护）。</summary>
+    private const int MaxBmpCache = 512;
 
     // zmap 不可用时回退（顶→底）
     private static readonly string[] FallbackZmapTopToBottom =
@@ -78,6 +85,13 @@ public class PaperdollService : IEntityFrameProvider
     public CharacterAppearance? Current => _current;
     public string CurrentHash => _currentHash;
 
+    /// <summary>
+    /// 离线条带磁盘缓存 mobId（R4）：哨兵 + 外观 hash 后缀——换外观即换键自动失效，
+    /// 旧外观的离线条永远不会被新外观播放（修复「换外观后离线仍播旧外观」）。
+    /// AnimService 离线兜底经 provider 取此键加载（见 AnimService.LoadStripWithFallback）。
+    /// </summary>
+    public string OfflineCacheMobId => string.IsNullOrEmpty(_currentHash) ? SentinelMobId : $"{SentinelMobId}_{_currentHash}";
+
     /// <summary>设置当前外观（主窗口渲染目标）。切换外观清空依赖外观的缓存。</summary>
     public void SetAppearance(CharacterAppearance appearance)
     {
@@ -88,6 +102,8 @@ public class PaperdollService : IEntityFrameProvider
         _frameSourcesCache.Clear();
         _rootCache.Clear();
         _delayCache.Clear();
+        _rideFrameCountCache.Clear();
+        _loggedFrameFailures.Clear();
         _validActionsCache = null;
         _actionValidCache.Clear();
     }
@@ -132,8 +148,10 @@ public class PaperdollService : IEntityFrameProvider
         var valid = new List<string>();
         foreach (var a in ActionNames.Keys)
         {
+            // 缓存键含外观 hash（R12）：换外观自动失效，且并发预览（不同外观）不串台
+            string key = $"{_currentHash}|{a}";
             bool ok;
-            if (!_actionValidCache.TryGetValue(a, out ok)) { ok = IsActionValid(a); _actionValidCache[a] = ok; }
+            if (!_actionValidCache.TryGetValue(key, out ok)) { ok = IsActionValid(a); _actionValidCache[key] = ok; }
             if (ok) valid.Add(a);
         }
         _validActionsCache = valid;
@@ -217,12 +235,27 @@ public class PaperdollService : IEntityFrameProvider
 
             var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression));
             ResolveAnchors(pieces);
+            // R5 诊断：锚点解算后 body 未锁定（数据缺失/断件）——只打一次，防 30fps 刷屏
+            var bodyDiagnostic = pieces.FirstOrDefault(p => p.Category == "body");
+            if ((bodyDiagnostic == null || !bodyDiagnostic.Locked)
+                && _loggedFrameFailures.TryAdd($"{hash}|body-unlocked", 0))
+            {
+                Console.Error.WriteLine($"[Paperdoll] ResolveAnchors: body 未锁定（body 数据缺失）hash={hash} action={action} frame={frame} pieces={pieces.Count}");
+            }
             AssignLayers(pieces);
             // 遮挡锁：帽子遮发 / 套服遮裤等覆盖关系（对齐 MapleSalon2 buildLock/refreshLock）
             ApplyLocks(hash, a, pieces);
 
             var locked = pieces.Where(p => p.Locked && !p.Hidden).ToList();
-            if (locked.Count == 0) return (null, 0, 0, 0, 0);
+            if (locked.Count == 0)
+            {
+                // R6 诊断：locked.Count==0 静默空帧 → 打日志（含 hash/action/frame），只打一次防刷屏
+                if (_loggedFrameFailures.TryAdd($"{hash}|{action}|{frame}", 0))
+                {
+                    Console.Error.WriteLine($"[Paperdoll] RenderFrame FAIL: locked.Count==0 hash={hash} action={action} frame={frame} pieces={pieces.Count}");
+                }
+                return (null, 0, 0, 0, 0);
+            }
 
             // 帧位移 move（对齐 MapleSalon2 instruction.move）：WZ 每帧有 move 位移数据，
             // 角色位置由 move 决定（平滑）；忽略它则位置纯靠锚点（body 每帧 navel 变 → 呼吸整体摆 → 抖动）
@@ -300,6 +333,21 @@ public class PaperdollService : IEntityFrameProvider
         var sources = new List<PieceSource>();
         foreach (var (category, root) in GetRoots(hash, a))
         {
+            // R1 坐骑：TamingMob/{id}.img/{mountAction}/{mountFrame}/0 —— 结构同角色部件（origin/map.navel/z），
+            // 走同一 Piece 管线；动作缺省时回退 stand1/stand2（骑乘姿态），帧号 clamp 到坐骑帧数（最小联动）。
+            if (category == "mount")
+            {
+                AddMountPieces(sources, a, root, action, frame);
+                continue;
+            }
+            // R1 椅子：Item/Install|Cash/{img}.img/{id}/effect/{frame} —— effect 帧节点本身是单 canvas（Wz_Png），
+            // 无 map 锚点（ResolveAnchors 兜底锚到身体 navel）；帧号 clamp 到 effect 帧数。
+            if (category == "chair")
+            {
+                AddChairPieces(sources, a, root, frame);
+                continue;
+            }
+
             string act = category == "face" ? ResolveFaceAction(root, expression) : action;
             string framePath;
             if (category == "face")
@@ -328,6 +376,86 @@ public class PaperdollService : IEntityFrameProvider
         return sources;
     }
 
+    /// <summary>
+    /// R1 坐骑部件收集：TamingMob/{id}.img/{mountAction}/{mountFrame}/0。
+    /// 坐骑动作优先跟随当前角色动作（同名动作直接联动），缺省回退 stand1/stand2（骑乘姿态）；
+    /// 帧号 clamp 到坐骑动作帧数（最小可用联动，不做 MapleSalon2 的逐帧 instruction 同步）。
+    /// </summary>
+    private void AddMountPieces(List<PieceSource> sources, CharacterAppearance a, string mountRoot, string action, int frame)
+    {
+        string mountAction = ResolveMountAction(mountRoot, action);
+        if (mountAction.Length == 0) return;
+        int mountFrames = GetRideActionFrameCount(mountRoot, mountAction);
+        if (mountFrames <= 0) return;
+        int mountFrame = Math.Min(frame, mountFrames - 1);
+        string framePath = $"{mountRoot}/{mountAction}/{mountFrame}";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) return;
+        string itemId = a.Mount?.Id ?? "";
+        foreach (var pieceName in _wz.GetFramePieceNames(framePath))
+        {
+            // 只收 canvas 件（"delay" 等标量节点无 map → 不会锁定/绘制，但仍过滤掉避免白占 meta 缓存）
+            if (pieceName == "delay" || pieceName == "move" || pieceName == "a0" || pieceName == "a1") continue;
+            sources.Add(new PieceSource("mount", pieceName, $"{framePath}/{pieceName}", itemId));
+        }
+    }
+
+    /// <summary>
+    /// R1 椅子部件收集：Item/Install|Cash/{img}.img/{id:D8}/effect/{frame}。
+    /// effect 帧节点本身是单 canvas（Wz_Png，带 origin），无 map → ResolveAnchors 兜底锚到身体 navel。
+    /// 帧号 clamp 到 effect 帧数（多数椅子 effect 只有 1 帧）。
+    /// </summary>
+    private void AddChairPieces(List<PieceSource> sources, CharacterAppearance a, string chairRoot, int frame)
+    {
+        string effectRoot = $"{chairRoot}/effect";
+        int effectFrames = CountNumericChildren(effectRoot);
+        if (effectFrames <= 0) return;
+        int effectFrame = Math.Min(frame, effectFrames - 1);
+        string piecePath = $"{effectRoot}/{effectFrame}";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(piecePath) != null)) return;
+        sources.Add(new PieceSource("chair", effectFrame.ToString(), piecePath, a.Chair?.Id ?? ""));
+    }
+
+    /// <summary>坐骑动作解析：同名字动作优先；缺省回退 stand1/stand2（骑乘姿态）；再无则任意可用动作。</summary>
+    private string ResolveMountAction(string mountRoot, string requested)
+    {
+        if (!string.IsNullOrEmpty(requested) && GetRideActionFrameCount(mountRoot, requested) > 0) return requested;
+        if (GetRideActionFrameCount(mountRoot, "stand1") > 0) return "stand1";
+        if (GetRideActionFrameCount(mountRoot, "stand2") > 0) return "stand2";
+        foreach (var act in new[] { "walk1", "walk2", "jump", "fly", "tired", "prone" })
+        {
+            if (GetRideActionFrameCount(mountRoot, act) > 0) return act;
+        }
+        return "";
+    }
+
+    /// <summary>坐骑/椅子动作帧数缓存（避免 CollectPiecesForFrame 每帧重复 WZ 遍历）。</summary>
+    private int GetRideActionFrameCount(string root, string action)
+    {
+        string key = $"{root}|{action}";
+        if (_rideFrameCountCache.TryGetValue(key, out var c)) return c;
+        int c2 = GetActionFrameCount(root, action);
+        _rideFrameCountCache[key] = c2;
+        return c2;
+    }
+
+    /// <summary>统计某节点下数字子节点数（椅子 effect 帧数）。</summary>
+    private int CountNumericChildren(string path)
+    {
+        try
+        {
+            return _wz.WithWzLock(() =>
+            {
+                var node = _wz.FindNodeByPath(path);
+                if (node == null) return 0;
+                int count = 0;
+                foreach (Wz_Node child in node.Nodes)
+                    if (int.TryParse(child.Text, out _)) count++;
+                return count;
+            });
+        }
+        catch { return 0; }
+    }
+
     private static string GetCategoryItemId(CharacterAppearance a, string category) => category switch
     {
         "hair" => a.Hair?.Id ?? "", "face" => a.Face?.Id ?? "",
@@ -336,6 +464,7 @@ public class PaperdollService : IEntityFrameProvider
         "pants" => a.Pants?.Id ?? "", "shoe" => a.Shoes?.Id ?? "",
         "glove" => a.Glove?.Id ?? "", "shield" => a.Shield?.Id ?? "",
         "weapon" => a.Weapon?.Id ?? "", "earring" => a.Earring?.Id ?? "",
+        "mount" => a.Mount?.Id ?? "", "chair" => a.Chair?.Id ?? "",
         _ => ""
     };
 
@@ -402,6 +531,17 @@ public class PaperdollService : IEntityFrameProvider
             if (!changed) break;
         }
 
+        // R1 椅子部件无 map 锚点（WZ 只有 origin）：兜底锚到 navel 根（身体髋部）。
+        // 最小可用版：不读 info/bodyRelMove（本 WZ 无坐椅数据可校准），原点对齐身体 navel。
+        foreach (var p in pieces)
+        {
+            if (p.Locked || p.Category != "chair") continue;
+            p.AnchorX = 0;
+            p.AnchorY = 0;
+            p.BaseAnchor = "navel";
+            p.Locked = true;
+        }
+
         foreach (var p in pieces)
         {
             if (!p.Locked) continue;
@@ -445,14 +585,14 @@ public class PaperdollService : IEntityFrameProvider
                 set = new HashSet<string>();
                 layerSlots[p.ResolvedLayer] = set;
             }
-            foreach (var slot in VslotCodes(GetVslotForCategory(p.Category)))
+            foreach (var slot in VslotCodes(GetVslotForCategory(p.Category, p.ItemId)))
                 set.Add(slot);
         }
 
         foreach (var p in pieces)
         {
             if (p.Hidden) continue;
-            var vslot = GetVslotForCategory(p.Category);
+            var vslot = GetVslotForCategory(p.Category, p.ItemId);
             if (string.IsNullOrEmpty(vslot)) continue;
             var slots = VslotCodes(vslot).ToList();
 
@@ -479,7 +619,7 @@ public class PaperdollService : IEntityFrameProvider
     /// 全局遮挡锁表：slot 2 字符码 → 占槽部件 id（后写覆盖，对齐 MapleSalon2 buildLock）。
     /// 建表顺序：每个穿戴类别按 islot 槽位层在 zmap 中的位置（zmap 顶→底 → 倒序处理，后写者占槽），
     /// 最终槽位归「视觉上层（islot 层 index 小）+ 同层 item id 大」的部件。
-    /// 注意：不能用 CategoryInLayer 的按名分层——本 WZ 的 hairOverHead 层在 cap 层之上，
+    /// 注意：不能用按名分层的 CategoryInLayer 旧思路——本 WZ 的 hairOverHead 层在 cap 层之上，
     /// 按名分层会让后发覆盖帽子的槽位、帽子反被隐藏；MapleSalon2 用 item.islot.includes(layer) 定位，
     /// 每个部件只落在其 islot 槽位层（cap→Cp、hair→Hr 等 2 字符层），顺序才与之一致。
     /// </summary>
@@ -502,7 +642,7 @@ public class PaperdollService : IEntityFrameProvider
         {
             int best = int.MaxValue;
             bool found = false;
-            foreach (var code in VslotCodes(GetIslotForCategory(cat)))
+            foreach (var code in VslotCodes(GetIslotForCategory(cat, idMap[cat])))
             {
                 if (_zmapIndex.TryGetValue(code, out var idx) && idx < best)
                 {
@@ -520,7 +660,7 @@ public class PaperdollService : IEntityFrameProvider
             .ThenBy(p => idMap[p.Category], StringComparer.Ordinal))
         {
             var id = idMap[cat];
-            foreach (var slot in VslotCodes(GetVslotForCategory(cat)))
+            foreach (var slot in VslotCodes(GetVslotForCategory(cat, id)))
                 locks[slot] = id;
         }
         return locks;
@@ -545,41 +685,44 @@ public class PaperdollService : IEntityFrameProvider
         }
     }
 
-    /// <summary>类别 → islot 槽位层码（本 WZ 实际数据：cap→Cp、hair→Hr、cape→Sr、上衣→Ma、套服→MaPn、盾→Si、耳环→Ae）。</summary>
-    private static string GetIslotForCategory(string cat) => cat switch
+    /// <summary>
+    /// 类别 → islot 槽位层码（本 WZ 实际数据校准：cap→Cp、hair→Hr、cape→Sr、上衣→Ma、套服→MaPn、
+    /// 盾→Si、耳环→Ae；饰品按 id 前缀动态取——R8：101 面饰→Af、102 肩饰→Ay、103 耳环→Ae）。
+    /// </summary>
+    private static string GetIslotForCategory(string cat, string itemId = "") => cat switch
     {
-        "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc", "earring" => "Ae",
+        "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc",
+        "earring" => EarringSlots(itemId),
         "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
         "glove" => "Gv", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
         "body" => "Bd", _ => ""
     };
 
-    private static bool CategoryInLayer(string cat, string layerName)
-    {
-        string def = cat switch
-        {
-            "cap" => "cap", "hair" => "hair", "coat" => "coat", "overall" => "coat",
-            "pants" => "pants", "shoe" => "shoe", "glove" => "glove", "shield" => "shield",
-            "weapon" => "weapon", "cape" => "cape", "face" => "face", "earring" => "accessory",
-            "body" => "body", "head" => "head", _ => ""
-        };
-        if (!string.IsNullOrEmpty(def) && layerName == def) return true;
-        if (cat == "hair" && (layerName.Contains("hair", StringComparison.OrdinalIgnoreCase) || layerName == "Hr" || layerName == "backHead")) return true;
-        if (cat == "earring" && layerName.Contains("accessory", StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
-    }
-
     /// <summary>
     /// 类别 → vslot 槽串（按本 WZ 实际数据校准：帽 CpH1H5、披风 Sr、上衣 Ma、套服 MaPn、
-    /// 发型 H1H2H3H4H5H6HfHsHb、盾 Si、手套 GlGw、耳环 Ae、脸 Fc；2 字符成对切块）。
+    /// 发型 H1H2H3H4H5H6HfHsHb、盾 Si、手套 GlGw、耳环 Ae；2 字符成对切块）。
+    /// 坐骑/椅子（Tm/无）不参与遮挡锁，返回 "" 即跳过。
     /// </summary>
-    private static string GetVslotForCategory(string cat) => cat switch
+    private static string GetVslotForCategory(string cat, string itemId = "") => cat switch
     {
-        "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc", "earring" => "Ae",
+        "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc",
+        "earring" => EarringSlots(itemId),
         "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
         "glove" => "GlGw", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
         "body" => "Bd", _ => ""
     };
+
+    /// <summary>饰品槽位按 id 前缀（R8 校准真实 WZ：101→Af 面饰、102→Ay 肩饰、103→Ae 耳环；其余回退 Ae）。</summary>
+    private static string EarringSlots(string? itemId)
+    {
+        if (!string.IsNullOrEmpty(itemId) && int.TryParse(itemId, out var n))
+        {
+            int part = n / 10000;
+            if (part == 101) return "Af";
+            if (part == 102) return "Ay";
+        }
+        return "Ae";
+    }
 
     // ═══════════════════════════════════════════
     // 层名解析
@@ -617,6 +760,8 @@ public class PaperdollService : IEntityFrameProvider
             "cap" => "cap", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove",
             "weapon" => "weapon", "shield" => "shield", "cape" => "cape", "earring" => "accessory",
+            // R1 坐骑/椅子：z 字段缺失时回退层——坐骑 tamingMobMid（角色身下）、椅子 tamingMobRear（角色身后）
+            "mount" => "tamingMobMid", "chair" => "tamingMobRear",
             _ => p.PieceName
         };
     }
@@ -704,9 +849,42 @@ public class PaperdollService : IEntityFrameProvider
             _ when part >= 112 && part <= 119 => "Accessory/",
             _ when part >= 121 && part <= 170 => "Weapon/",
             _ when part >= 190 && part <= 199 => "TamingMob/",
+            // 注：椅子（301 系）不走 ItemRoot——Install 目录组织与 Character 装备不同
+            // （Item/Install/{id/1000 分组}.img/{id} 节点），由 ChairRoot 独立探测。
             _ => ""
         };
         return $"Character/{folder}{id.PadLeft(8, '0')}.img";
+    }
+
+    /// <summary>坐骑 img 根路径：Character/TamingMob/{id:D8}.img（190-199 系；结构同角色部件）。</summary>
+    private static string MountRoot(string id)
+    {
+        if (!int.TryParse(id, out var n) || n <= 0) return "";
+        return $"Character/TamingMob/{n:D8}.img";
+    }
+
+    /// <summary>
+    /// 椅子 img 根路径探测：Item/Install（或 Cash）/{id/1000:D5}.img 或 {id/10000:D4}.img 或旧版 0301.img，
+    /// 节点 = id 补零 8 位（本 WZ 实测：3010000 → Item/Install/03010.img/03010000；3020000 → 0302.img/03020000）。
+    /// 未命中返回 ""（渲染跳过，不崩溃）。
+    /// </summary>
+    private string ChairRoot(string id)
+    {
+        if (!int.TryParse(id, out var n) || n <= 0) return "";
+        string node = n.ToString("D8");
+        string[] candidates =
+        {
+            $"Item/Install/{n / 1000:D5}.img/{node}",
+            $"Item/Install/{n / 10000:D4}.img/{node}",
+            $"Item/Install/0301.img/{node}",
+            $"Item/Cash/{n / 1000:D5}.img/{node}",
+            $"Item/Cash/{n / 10000:D4}.img/{node}",
+        };
+        foreach (var c in candidates)
+        {
+            if (_wz.WithWzLock(() => _wz.FindNodeByPath(c) != null)) return c;
+        }
+        return "";
     }
 
     private List<(string Category, string Root)> GetRoots(string hash, CharacterAppearance a)
@@ -729,6 +907,17 @@ public class PaperdollService : IEntityFrameProvider
         if (HasId(a.Shield)) list.Add(("shield", ItemRoot(a.Shield!.Id)));
         if (HasId(a.Weapon)) list.Add(("weapon", ItemRoot(a.Weapon!.Id)));
         if (HasId(a.Earring)) list.Add(("earring", ItemRoot(a.Earring!.Id)));
+        // R1 坐骑/椅子：穿戴配置进渲染链路（TamingMob/Install；椅子路径探测命中才加）
+        if (!string.IsNullOrEmpty(a.Mount?.Id))
+        {
+            var mountRoot = MountRoot(a.Mount!.Id);
+            if (mountRoot.Length > 0) list.Add(("mount", mountRoot));
+        }
+        if (!string.IsNullOrEmpty(a.Chair?.Id))
+        {
+            var chairRoot = ChairRoot(a.Chair!.Id);
+            if (chairRoot.Length > 0) list.Add(("chair", chairRoot));
+        }
         _rootCache[hash] = list;
         return list;
     }
@@ -799,7 +988,26 @@ public class PaperdollService : IEntityFrameProvider
         var bmp = SKBitmap.Decode(png);
         if (bmp == null) return null;
         _bmpCache[piecePath] = bmp;
+        EnforceBmpCap(_bmpCache);
         return bmp;
+    }
+
+    /// <summary>
+    /// 位图缓存容量上限（R11）：ConcurrentDictionary 无访问序，超出上限时移除一半条目（简化 LRU）。
+    /// 上限 512 张覆盖整套外观的部件位图绰绰有余；只在外观批量切换/长会话中偶尔触发，防无界常驻。
+    /// 注意：只移除引用不显式 Dispose——另一线程可能正在 GetBmp 后绘制该位图，显式释放原生句柄
+    /// 会与在途渲染竞态（同 M1 ClearSpriteCache 结论）；原生内存由 GC 终结器回收。
+    /// </summary>
+    private static void EnforceBmpCap(ConcurrentDictionary<string, SKBitmap> cache)
+    {
+        if (cache.Count < MaxBmpCache) return;
+        int evictTarget = MaxBmpCache / 2;
+        int removed = 0;
+        foreach (var kv in cache)
+        {
+            if (removed >= evictTarget) break;
+            if (cache.TryRemove(kv.Key, out _)) removed++;
+        }
     }
 
     /// <summary>染发位图：hair/face 部件带 Hue/Sat/Bright 时返回缓存染色位图（逐像素 HSV 调整），否则 null。</summary>
@@ -815,7 +1023,11 @@ public class PaperdollService : IEntityFrameProvider
         var src = GetBmp(piecePath);
         if (src == null) return null;
         var dyed = ApplyHsv(src, it.Hue, it.Saturation / 100f, it.Brightness / 100f);
-        if (dyed != null) _dyeBmpCache[key] = dyed;
+        if (dyed != null)
+        {
+            _dyeBmpCache[key] = dyed;
+            EnforceBmpCap(_dyeBmpCache);
+        }
         return dyed;
     }
 
@@ -969,6 +1181,8 @@ public class PaperdollService : IEntityFrameProvider
         AppendId(sb, a.Hair); AppendId(sb, a.Face); AppendId(sb, a.Cap); AppendId(sb, a.Cape);
         AppendId(sb, a.Coat); AppendId(sb, a.Overall); AppendId(sb, a.Pants); AppendId(sb, a.Shoes);
         AppendId(sb, a.Glove); AppendId(sb, a.Shield); AppendId(sb, a.Weapon); AppendId(sb, a.Earring);
+        // R1：坐骑/椅子 id 进指纹（换坐骑/椅子自动失效相关缓存 + 离线条缓存键）
+        sb.Append(a.Mount?.Id ?? "").Append('|').Append(a.Chair?.Id ?? "").Append('|');
         return sb.ToString();
     }
 
@@ -1019,6 +1233,8 @@ public class PaperdollService : IEntityFrameProvider
     {
         if (_current == null || !_wz.IsLoaded) return;
         var hash = _currentHash;
+        // R4：缓存键含外观指纹（SentinelMobId + hash），换外观自动失效
+        string offlineMobId = OfflineCacheMobId;
         foreach (var action in OfflineActions)
         {
             try
@@ -1039,7 +1255,9 @@ public class PaperdollService : IEntityFrameProvider
                     var pieces = MaterializePieces(CollectPiecesForFrame(hash, _current, action, f, ExpressionDefault));
                     ResolveAnchors(pieces);
                     AssignLayers(pieces);
-                    foreach (var p in pieces.Where(x => x.Locked).OrderByDescending(x => x.ZIndex))
+                    // R2：离线图条与实时渲染一致应用遮挡锁（帽子遮发/套服遮裤等），且排除被锁隐藏的部件
+                    ApplyLocks(hash, _current, pieces);
+                    foreach (var p in pieces.Where(x => x.Locked && !x.Hidden).OrderByDescending(x => x.ZIndex))
                     {
                         var pb = GetBmp(p.PiecePath);
                         if (pb == null) continue;
@@ -1076,8 +1294,8 @@ public class PaperdollService : IEntityFrameProvider
                 };
                 var configJson = System.Text.Json.JsonSerializer.Serialize(config);
                 var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
-                _cache.SaveSpriteStrip(SentinelMobId, action, png, configBytes);
-                _sprite.CacheStrip(SentinelMobId, action, stripObj, png);
+                _cache.SaveSpriteStrip(offlineMobId, action, png, configBytes);
+                _sprite.CacheStrip(offlineMobId, action, stripObj, png);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] BuildOfflineStrip({action}): {ex.Message}"); }
         }
