@@ -269,12 +269,13 @@ public partial class SettingsWindow : Window
         wzBtn.Click += (_, _) => ShowWzOverlay();
         rightPanel.Children.Add(wzBtn);
 
-        var themeLabel = new TextBlock { Text = _isDarkMode ? "暗黑" : "白天", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center };
-        rightPanel.Children.Add(themeLabel);
-
-        var themeToggle = new ToggleSwitch { IsChecked = _isDarkMode, Width = 44, Height = 24, VerticalAlignment = VerticalAlignment.Center };
-        themeToggle.IsCheckedChanged += (_, _) => { _isDarkMode = themeToggle.IsChecked ?? true; themeLabel.Text = _isDarkMode ? "暗黑" : "白天"; _settings.Theme = _isDarkMode ? "dark" : "light"; _config.SaveSettings(_settings); };
-        rightPanel.Children.Add(themeToggle);
+        // ⚠️ 深夜/白天模式切换暂隐藏（2026-08-15 记录：切换逻辑只写 _settings.Theme 未真正应用主题，
+        // 且与 FluentTheme + 全局 Button hover 覆写叠加出现显示异常——待修复后恢复，勿删 _isDarkMode 相关读取逻辑）
+        // var themeLabel = new TextBlock { Text = _isDarkMode ? "暗黑" : "白天", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center };
+        // rightPanel.Children.Add(themeLabel);
+        // var themeToggle = new ToggleSwitch { IsChecked = _isDarkMode, Width = 44, Height = 24, VerticalAlignment = VerticalAlignment.Center };
+        // themeToggle.IsCheckedChanged += (_, _) => { _isDarkMode = themeToggle.IsChecked ?? true; themeLabel.Text = _isDarkMode ? "暗黑" : "白天"; _settings.Theme = _isDarkMode ? "dark" : "light"; _config.SaveSettings(_settings); };
+        // rightPanel.Children.Add(themeToggle);
         DockPanel.SetDock(rightPanel, Dock.Right);
         bar.Children.Add(rightPanel);
         return bar;

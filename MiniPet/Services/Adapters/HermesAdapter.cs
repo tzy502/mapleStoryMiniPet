@@ -556,6 +556,11 @@ namespace MiniPet.Services.Adapters
             bool hasCompleted = false;
             int reviewCount = 0;
             bool isFirst = true;
+            // ⚠️ 2026-08-15 修复「一直思考中」：reviewCount 必须限定新鲜窗口（对齐 SQLite 兜底路径
+            // windowStartEpoch = now - PollIntervalMs*StalenessMultiplier = 10s）。
+            // 旧实现把 limit 内所有带 reasoning 的历史行全部计数 → Deepseek 每轮都带 reasoning →
+            // reviewCount 永远 > 0 → 桌宠永远 Review（思考中）→ 用户反馈「一直思考中」。
+            double reviewWindowStartEpoch = ToEpochSeconds(DateTime.Now.AddMilliseconds(-(PollIntervalMs * StalenessMultiplier)));
 
             if (root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array)
             {
@@ -582,7 +587,8 @@ namespace MiniPet.Services.Adapters
                     {
                         hasContentFilter = true;
                     }
-                    if (hasReasoning)
+                    // 只统计新鲜窗口内的 reasoning 行（历史思考不算「正在思考」）
+                    if (hasReasoning && (GetDoubleOrNull(m, "timestamp") ?? 0) >= reviewWindowStartEpoch)
                     {
                         reviewCount++;
                     }

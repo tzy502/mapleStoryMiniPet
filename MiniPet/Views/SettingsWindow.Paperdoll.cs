@@ -98,7 +98,21 @@ public partial class SettingsWindow
                     if (!string.IsNullOrEmpty(n)) return n;
                 }
             }
-            // 二级：String.wz 名称（GetItemName 已含 9 条路径探测）
+            // 二级：String/Eqp.img/Eqp/Skin/{key}/name（启动日志实证 String.wz 有数据且 Eqp 子节点含
+            // Skin 分类；原 GetItemName 的 9 条路径不含 Skin 分类，皮肤名需专用路径；Wz_Image 需 TryExtract）
+            var skinImg = _wzService.FindNodeByPath("String/Eqp.img");
+            if (skinImg != null)
+            {
+                var sRoot = skinImg;
+                var sImg = skinImg.GetValue<Wz_Image>();
+                if (sImg != null && sImg.TryExtract()) sRoot = sImg.Node;
+                foreach (var key in new[] { idStr, pad })
+                {
+                    var n = sRoot.FindNodeByPath($"Eqp/Skin/{key}/name")?.GetValueEx<string>(null);
+                    if (!string.IsNullOrEmpty(n)) return n;
+                }
+            }
+            // 三级：String.wz 通用名称（GetItemName 已含 9 条路径探测）
             var cn = _wzService.GetItemName("Body", idStr);
             if (!string.IsNullOrEmpty(cn)) return cn;
         }

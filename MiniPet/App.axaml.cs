@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Presenters;
+using Avalonia.Data;
+using Avalonia.Styling;
 using Microsoft.Extensions.DependencyInjection;
 using MiniPet.Models;
 using MiniPet.Services;
@@ -25,6 +29,20 @@ public partial class App : Application
     {
         // App.axaml 已删（纯代码模式），FluentTheme 在这里注册，替代 <Application.Styles>
         Styles.Add(new FluentTheme());
+
+        // Fluent 主题的 Button 模板自带 hover 高亮（模板内 ContentPresenter:pointerover 会覆盖
+        // Button 的本地 Background/BorderBrush，优先级高于本地值）——在此覆写为恒跟随 Button 的
+        // Background/BorderBrush：按钮 hover 效果完全由 UiStyle 控制（背景不变 + 边框变 accent 蓝，
+        // 与输入框选中一致），消除主题自带的 hover 变色。
+        Styles.Add(new Style(x => x.OfType<Button>().Class(":pointerover")
+            .Template().OfType<ContentPresenter>().Name("PART_ContentPresenter"))
+        {
+            Setters =
+            {
+                new Setter(ContentPresenter.BackgroundProperty, new TemplateBinding(Button.BackgroundProperty)),
+                new Setter(ContentPresenter.BorderBrushProperty, new TemplateBinding(Button.BorderBrushProperty)),
+            }
+        });
     }
 
     public override void OnFrameworkInitializationCompleted()

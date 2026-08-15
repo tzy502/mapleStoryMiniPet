@@ -114,16 +114,16 @@ namespace MiniPet.Services
             int colW = c.Width;
             int colH = c.Height;
 
-            // 文字颜色：clr 为有符号 ARGB（常为负数，-1 = 白）；0/未设置时默认白色不透明。
+            // 文字颜色：WZ 的 clr 是「从白色减去的 RGB 补值」（MapleSalon2 getWzClrColor：
+            // color = 0x1000000 + clr，clr 常为负数如 -1 = 白、-0x10000 = 红）；clr=0 同 MapleSalon2 视为白。
             // ⚠️ 2026-08-08 曾重写丢失 Color → SKPaint 默认黑色文字（用户报黑字）
             int clr = balloonData.Clr;
-            uint color = clr != 0 ? (uint)clr : 0xFFFFFFFFu;
-            byte ca = (byte)((color >> 24) & 0xFF);
-            byte cr = (byte)((color >> 16) & 0xFF);
-            byte cg = (byte)((color >> 8) & 0xFF);
-            byte cb = (byte)(color & 0xFF);
-            if (ca == 0) ca = 0xFF; // 默认不透明
-            var textColor = new SKColor(cr, cg, cb, ca);
+            uint rgb = clr == 0 ? 0xFFFFFFu : (uint)((0x1000000 + clr) & 0xFFFFFF);
+            byte cr = (byte)(rgb >> 16);
+            byte cg = (byte)(rgb >> 8);
+            byte cb = (byte)rgb;
+            // 文字默认不透明（WZ clr 无 alpha 通道）
+            var textColor = new SKColor(cr, cg, cb, 0xFF);
 
             // 文字断行（中文逐字符，对齐 MapleSalon2：wordWrapWidth=90, lineHeight=16, SimSun/MingLiU 系）
             // 加粗仅「思考中…」（Review 状态气泡）使用（胶水 2026-08-15：只针对思考加粗）
@@ -134,10 +134,7 @@ namespace MiniPet.Services
                 Color = textColor,
                 IsAntialias = true,
                 TextAlign = SKTextAlign.Center,
-                Typeface = SKTypeface.FromFamilyName("PingFang SC", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
-                    ?? SKTypeface.FromFamilyName("SimSun", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
-                    ?? SKTypeface.FromFamilyName("MingLiU", fontWeight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
-                    ?? SKTypeface.Default
+                Typeface = CreateBalloonTypeface(fontWeight)
             };
             const int wrapW = 90;
             const float lineHeight = 16f;
@@ -357,7 +354,8 @@ namespace MiniPet.Services
             using var paint = new SKPaint
             {
                 TextSize = 12,
-                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                // 与渲染同字体链（原 Arial 无中文字形 → 中文气泡宽度测量不准，窗口尺寸偏小）
+                Typeface = CreateBalloonTypeface(SKFontStyleWeight.Bold)
             };
 
             // 近似换行：按 maxWidth 截断，计算行数
@@ -372,6 +370,25 @@ namespace MiniPet.Services
             h = Math.Max(h, lineHeight);
 
             return (w, h);
+        }
+
+        /// <summary>
+        /// 聊天气泡字体（按平台分流）：
+        /// Windows → 宋体系优先（SimSun/MingLiU，对齐 MapleSalon2 的冒险岛宋体风格）；
+        /// macOS → 苹方 PingFang SC 优先（系统黑体，宋体风格在 mac 上非原版观感，保持苹方）。
+        /// </summary>
+        private static SKTypeface CreateBalloonTypeface(SKFontStyleWeight weight = SKFontStyleWeight.Normal)
+        {
+            bool isWindows = OperatingSystem.IsWindows();
+            return isWindows
+                ? SKTypeface.FromFamilyName("SimSun", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("MingLiU", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("PingFang SC", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.Default
+                : SKTypeface.FromFamilyName("PingFang SC", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("SimSun", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.FromFamilyName("MingLiU", weight, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright)
+                    ?? SKTypeface.Default;
         }
 
         /// <summary>
