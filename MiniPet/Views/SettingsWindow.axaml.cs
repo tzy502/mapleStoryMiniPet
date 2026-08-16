@@ -188,6 +188,19 @@ public partial class SettingsWindow : Window
         _wzConfig = _config.LoadWzConfig();
         _isDarkMode = _settings.Theme != "light";
 
+        // 纸娃娃页初始显示当前主窗口搭配（2026-08-17：原固定默认外观，用户在设置中心「查看
+        // 现在用的搭配」时发型/脸型/装备全被默认值顶替，看不到当前搭配；有存档则克隆恢复，
+        // 无存档保持默认外观）。窗口单例复用，仅首次构造生效，后续保留用户本次编辑状态。
+        try
+        {
+            var current = _settings.CurrentPaperdoll;
+            if (current != null)
+            {
+                _paperdollCurrent = CloneAppearance(current);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PaperdollInit: {ex.Message}"); }
+
         Title = "MiniPet 设置中心";
         Width = 1020;
         Height = 740;
