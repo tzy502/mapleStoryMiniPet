@@ -20,3 +20,4 @@ obj/
 
 # 本地 NuGet 包缓存（自检/测试用，不入库）
 .nuget-packages/
+dist/
