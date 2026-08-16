@@ -102,6 +102,12 @@ namespace MiniPet.Services.Adapters
         /// </summary>
         public Action<string, bool>? ConnStatusCallback { get; set; }
 
+        /// <summary>最近一次连接状态（true = WS 已连上 events.mux）。供「DSH 状态」菜单弹窗读取。</summary>
+        public bool IsConnected { get; private set; }
+
+        /// <summary>最近一次发布的 DSH 反映态（Run/Review/Waiting/Failed/Jump/Wave/Idle；Idle = 无活动）。</summary>
+        public AgentState LastPublishedState => _lastPublished;
+
         /// <summary>当前活跃实例（App 生命周期内单例；Start 设 / Stop 清）。</summary>
         public static DshAdapter? Current { get; private set; }
 
@@ -814,6 +820,7 @@ namespace MiniPet.Services.Adapters
         /// <summary>触发连接状态回调（UI 线程 Post）。文案只含来源 + 时间。</summary>
         private void RaiseConnStatus(bool ok)
         {
+            IsConnected = ok;
             var callback = ConnStatusCallback;
             if (callback == null) {
                 return;

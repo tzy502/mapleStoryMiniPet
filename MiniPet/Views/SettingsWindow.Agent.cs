@@ -201,10 +201,10 @@ public partial class SettingsWindow
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            // ── DSH 接入（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权） ──
-            root.Children.Add(BuildAgentSectionHeader("DSH 接入（DeepSeek Harness，本机 127.0.0.1:3080）"));
+            // ── DSH 监控（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权） ──
+            root.Children.Add(BuildAgentSectionHeader("DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080）"));
             var dshPanel = new StackPanel { Spacing = 10 };
-            _agentDshCheck = MakeAgentToggle("启用 DSH 状态观察（默认关；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
+            _agentDshCheck = MakeAgentToggle("DSH 监控（默认开启，DeepSeek Harness 执行状态反映；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
             dshPanel.Children.Add(_agentDshCheck);
             var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
             dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）

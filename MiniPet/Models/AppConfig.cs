@@ -69,8 +69,9 @@ namespace MiniPet.Models
 
         // ── DSH（DeepSeek Harness）接入（RESEARCH-dsh-http-bridge.md §4.5）──
 
-        /// <summary>DSH 接入开关（本机 loopback 免鉴权，仅 127.0.0.1；默认关）。</summary>
-        public bool DshEnabled { get; set; }
+        /// <summary>DSH 接入开关（本机 loopback 免鉴权，仅 127.0.0.1；默认开——桌宠默认监控 DSH 执行状态，
+        /// DSH 未运行时 adapter 静默退避重连，不刷屏不打扰）。</summary>
+        public bool DshEnabled { get; set; } = true;
 
         /// <summary>DSH Host（默认 127.0.0.1，锁本机 loopback，不做跨机访问）。</summary>
         public string DshHost { get; set; } = "127.0.0.1";

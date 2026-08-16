@@ -169,9 +169,8 @@ public partial class MaterialBrowserWindow : Window
 
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-        root.RowDefinitions.Add(new RowDefinition(new GridLength(46)));
 
-        // ── 主体三栏 ──
+        // ── 主体三栏（筛选/搜索/分页已并入条目列表列，分类树与详情列满高）──
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(200)));   // 分类树
         body.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1)));     // 分隔线
@@ -196,11 +195,6 @@ public partial class MaterialBrowserWindow : Window
 
         root.Children.Add(body);
         Grid.SetRow(body, 0);
-
-        // ── 底栏 ──
-        var bottomBar = BuildBottomBar();
-        root.Children.Add(bottomBar);
-        Grid.SetRow(bottomBar, 1);
 
         Content = root;
 
@@ -291,23 +285,19 @@ public partial class MaterialBrowserWindow : Window
     }
 
     // ═══════════════════════════════════════════
-    // 列表面板
+    // 列表面板（筛选/搜索/分页并入本列：筛选行 Auto + 列表 Star + 分页行 Auto，分类树与详情列满高）
     // ═══════════════════════════════════════════
     private Border BuildListPanel()
     {
-        var dock = new DockPanel();
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 筛选行：标题 + 搜索 + 计数
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));   // 条目列表
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));   // 分页行
 
-        // 标题
-        var header = new TextBlock
-        {
-            Text = "📋 条目列表",
-            FontSize = 13,
-            FontWeight = FontWeight.Bold,
-            Foreground = BrushTxtPrimary,
-            Margin = new Thickness(14, 10, 0, 6)
-        };
-        DockPanel.SetDock(header, Dock.Top);
-        dock.Children.Add(header);
+        // 筛选行（与条目列表同处一列：搜索/计数并入列表列头部，不再单列全宽筛选行）
+        var filterBar = BuildListFilterBar();
+        Grid.SetRow(filterBar, 0);
+        grid.Children.Add(filterBar);
 
         // 列表
         _itemList = new ListBox
@@ -317,9 +307,15 @@ public partial class MaterialBrowserWindow : Window
             Margin = new Thickness(0)
         };
         _itemList.SelectionChanged += OnItemSelected;
-        dock.Children.Add(_itemList);
+        Grid.SetRow(_itemList, 1);
+        grid.Children.Add(_itemList);
 
-        return new Border { Child = dock };
+        // 分页行（原底栏分页移入列表列底部，功能不变）
+        var pager = BuildPager();
+        Grid.SetRow(pager, 2);
+        grid.Children.Add(pager);
+
+        return new Border { Child = grid };
     }
 
     // ═══════════════════════════════════════════
@@ -531,17 +527,25 @@ public partial class MaterialBrowserWindow : Window
     }
 
     // ═══════════════════════════════════════════
-    // 底栏：搜索 + 分页
+    // 列表列筛选行：标题 + 搜索框 + 计数（搜索防抖 / ×清除逻辑与原底栏一致）
     // ═══════════════════════════════════════════
-    private Border BuildBottomBar()
+    private Border BuildListFilterBar()
     {
-        var bar = new Grid();
-        bar.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(200)));
-        bar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        bar.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(280)));
-        bar.Height = 46;
-        bar.Background = new SolidColorBrush(Color.FromArgb(255, 22, 22, 28));
-        bar.Margin = new Thickness(0);
+        var bar = new Grid { Margin = new Thickness(14, 10, 14, 6) };
+        bar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 标题
+        bar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // 搜索框
+        bar.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 计数
+
+        var header = new TextBlock
+        {
+            Text = "📋 条目列表",
+            FontSize = 13,
+            FontWeight = FontWeight.Bold,
+            Foreground = BrushTxtPrimary,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(header, 0);
+        bar.Children.Add(header);
 
         // 搜索框：标准 input 样式（白底黑字、InputBorder 边框、圆角 6），TextBox 自带边框圆角，外层仅做定位容器
         var searchPanel = new Border
@@ -622,16 +626,37 @@ public partial class MaterialBrowserWindow : Window
         searchGrid.Children.Add(_searchClearBtn);
         searchPanel.Child = searchGrid;
 
-        Grid.SetColumn(searchPanel, 0);
+        Grid.SetColumn(searchPanel, 1);
         bar.Children.Add(searchPanel);
 
-        // 分页控件
+        // 计数（原底栏右侧移入筛选行右侧，UpdatePager 写入不变）
+        _countLabel = new TextBlock
+        {
+            Text = "",
+            FontSize = 10,
+            Foreground = BrushTxtDim,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(10, 0, 0, 0)
+        };
+        Grid.SetColumn(_countLabel, 2);
+        bar.Children.Add(_countLabel);
+
+        return new Border { Child = bar };
+    }
+
+    // ═══════════════════════════════════════════
+    // 分页行：◀ 页码 ▶（原底栏分页移入列表列底部，逻辑不变）
+    // ═══════════════════════════════════════════
+    private StackPanel BuildPager()
+    {
         var pager = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 8)
         };
 
         _prevBtn = new Button
@@ -718,23 +743,7 @@ public partial class MaterialBrowserWindow : Window
         _nextBtn.Click += (_, _) => GoPage(+1);
         pager.Children.Add(_nextBtn);
 
-        Grid.SetColumn(pager, 1);
-        bar.Children.Add(pager);
-
-        // 右侧 — 条目计数
-        _countLabel = new TextBlock
-        {
-            Text = "",
-            FontSize = 10,
-            Foreground = BrushTxtDim,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 16, 0)
-        };
-        Grid.SetColumn(_countLabel, 2);
-        bar.Children.Add(_countLabel);
-
-        return new Border { Child = bar };
+        return pager;
     }
 
     private static Border BuildDivider()

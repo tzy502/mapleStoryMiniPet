@@ -202,6 +202,15 @@ public partial class PetWindow
             };
             cm.Items.Add(dshChatItem);
 
+            // ── DSH 状态（监控是默认行为：默认开启时桌宠反映 DSH 干活状态；弹窗只读显示连接 + 反映态，不装配 adapter）──
+            var dshStatusItem = new MenuItem { Header = "📊 DSH 状态" };
+            dshStatusItem.Click += (_, _) =>
+            {
+                try { ShowDshStatusPopup(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshStatus: {ex.Message}"); }
+            };
+            cm.Items.Add(dshStatusItem);
+
             // ── 设置中心 ──
             var settingsItem = new MenuItem { Header = "设置中心" };
             settingsItem.Click += (_, _) =>
@@ -384,6 +393,46 @@ public partial class PetWindow
             "  反映态   : Idle（待 Aggregator 接线）",
         };
         ShowInfoPopup("Agent 状态", string.Join("\n", lines));
+    }
+
+    /// <summary>
+    /// DSH 状态弹窗：监控开关 + 连接状态 + 当前 DSH 反映态（只读，不装配 adapter）。
+    /// 监控为默认行为（DshEnabled 默认开）；连接状态来自 DshAdapter 最近一次 ConnStatus。
+    /// </summary>
+    private void ShowDshStatusPopup()
+    {
+        var settings = _configService.LoadSettings();
+        var ai = settings.AgentIntegration ?? new AgentIntegrationConfig();
+        var dsh = DshAdapter.Current;
+
+        var lines = new List<string>
+        {
+            "🤖 DSH 监控状态",
+            string.Empty,
+            $"  监控开关 : {(ai.DshEnabled ? "开" : "关")}",
+            $"  连接状态 : {(dsh != null && dsh.IsConnected ? "🟢 已连接" : "🔴 未连接（静默退避重连中）")}",
+            string.Empty,
+            $"  当前反映态 : {(dsh == null ? "—（未装配）" : DshStateName(dsh.LastPublishedState))}",
+            string.Empty,
+            "  DSH 干活时桌宠自动反映（Run→move 动作等，走 EffectLayerService 链路）；",
+            "  仅本机 loopback，隐私只消费事件视图非内容字段。",
+        };
+        ShowInfoPopup("DSH 状态", string.Join("\n", lines));
+    }
+
+    /// <summary>DSH 反映态中文名（与设置页 7 态映射区一致）。</summary>
+    private static string DshStateName(AgentState s)
+    {
+        switch (s)
+        {
+            case AgentState.Run: return "Run 干活";
+            case AgentState.Review: return "Review 思考";
+            case AgentState.Wave: return "Wave 完成";
+            case AgentState.Jump: return "Jump 庆祝";
+            case AgentState.Failed: return "Failed 失败";
+            case AgentState.Waiting: return "Waiting 等待";
+            default: return "Idle 空闲";
+        }
     }
 
     /// <summary>
