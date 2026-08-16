@@ -397,7 +397,9 @@ public class PaperdollService : IEntityFrameProvider
         // R-chair：带椅子时角色渲染为坐姿（对齐 MapleSalon2 sitCharacter：groupData.action = info.sitAction || Sit）。
         // 角色部件用坐姿帧（body sit 只有 1 帧，帧号 clamp）；椅子特效帧仍用原始帧号驱动
         // （probe 实测 53% 椅子 effect 多帧，随角色动画循环，不冻结在 0 帧）。
-        var (renderAction, renderFrame) = ResolveChairRender(a, action, frame);
+        // R20 骑乘：坐骑 characterAction 映射叠加在坐姿之上——01930001 等飞行坐骑角色应播映射动作
+        // （stand1→fly），坐骑部件由 AddMountPieces 按原角色动作独立解析（保持 MapleSalon2 语义）。
+        var (renderAction, renderFrame) = ResolveRenderAction(a, action, frame);
 
         var sources = new List<PieceSource>();
         // R18 hideBody：坐骑动作映射 hideBody（characterAction[坐骑动作] == "hideBody"，坐骑完全覆盖角色）
@@ -746,6 +748,24 @@ public class PaperdollService : IEntityFrameProvider
         return (sitAction, Math.Min(frame, fc - 1));
     }
 
+    /// <summary>
+    /// R20 渲染动作解析（椅子坐姿 + 骑乘映射叠加）：先按椅子坐姿，再按坐骑 characterAction 映射
+    /// 切换角色动作（如 01930001 飞行坐骑 stand1→fly）；帧号 clamp 到最终动作帧数（角色/坐骑同帧一致）。
+    /// 无坐骑/无映射时行为与 ResolveChairRender 完全一致（普通坐骑无回归）。
+    /// </summary>
+    private (string Action, int Frame) ResolveRenderAction(CharacterAppearance a, string action, int frame)
+    {
+        var (rAct, rFrame) = ResolveChairRender(a, action, frame);
+        string rideAct = ResolveRideAction(a, rAct);
+        if (rideAct != rAct)
+        {
+            rAct = rideAct;
+            int fc = GetActionFrameCount(BodyRoot(a), rAct);
+            if (fc > 0) rFrame = Math.Min(rFrame, fc - 1);
+        }
+        return (rAct, rFrame);
+    }
+
     /// <summary>椅子特效层帧数缓存（CountNumericChildren 每帧调用，热路径避免重复 WZ 遍历）。</summary>
     private int GetChairEffectFrameCount(string effectRoot)
     {
@@ -903,6 +923,34 @@ public class PaperdollService : IEntityFrameProvider
         return "";
     }
 
+    /// <summary>
+    /// R20 骑乘角色动作解析（对齐 MapleSalon2 sitCharacter：characterAction = 坐骑 characterAction 映射的角色动作）：
+    /// 链：角色请求动作 → ResolveMountAction（反向映射出坐骑动作）→ characterAction[坐骑动作] → 角色应播动作。
+    /// 例：01930001 飞行坐骑 characterAction={stand1→fly, walk1→fly,...} → 角色 stand1 → 坐骑 stand1 → 角色应播 fly
+    /// （飞行坐骑骑乘时角色播 fly 帧，坐骑部件照常锚到角色 navel，不再浮在站立角色头顶）。
+    /// 映射目标不可播（body 无该动作帧，如 01992031 的 StabT2）或值为 hideBody 时回退原动作；
+    /// 无坐骑 / 坐骑无 characterAction 映射时原样返回（普通坐骑行为不变）。
+    /// </summary>
+    private string ResolveRideAction(CharacterAppearance a, string requested)
+    {
+        if (string.IsNullOrEmpty(a.Mount?.Id)) return requested;
+        var mountRoot = MountRoot(a.Mount!.Id);
+        if (mountRoot.Length == 0) return requested;
+        // 角色请求动作 → 坐骑动作（复用 R18 反向映射链）
+        string mountAction = ResolveMountAction(mountRoot, requested);
+        if (mountAction.Length == 0) return requested;
+        // 坐骑动作 → characterAction 映射的角色动作（如 stand1 → fly）
+        var map = GetMountCharActionMap(mountRoot);
+        if (map.TryGetValue(mountAction, out var mapped)
+            && !string.IsNullOrEmpty(mapped)
+            && !mapped.Equals("hideBody", StringComparison.OrdinalIgnoreCase)
+            && GetActionFrameCount(BodyRoot(a), mapped) > 0)
+        {
+            return mapped;
+        }
+        return requested;
+    }
+
     /// <summary>坐骑/椅子动作帧数缓存（避免 CollectPiecesForFrame 每帧重复 WZ 遍历）。</summary>
     private int GetRideActionFrameCount(string root, string action)
     {
@@ -995,7 +1043,8 @@ public class PaperdollService : IEntityFrameProvider
         try
         {
             // R-chair：带椅子时帧位移也用坐姿帧（坐姿 move 与坐姿 body 一致，避免站立 move 造成抖动）
-            var (rAct, rFrame) = ResolveChairRender(a, action, frame);
+            // R20 骑乘：帧位移同样用骑乘映射后的动作帧（01930001 角色播 fly 时 move 也取 fly，保持动作一致）
+            var (rAct, rFrame) = ResolveRenderAction(a, action, frame);
             mv = _wz.WithWzLock(() => _wz.FindNodeByPath($"{BodyRoot(a)}/{rAct}/{rFrame}/move")?.GetValueEx<Wz_Vector>(null));
         }
         catch { }
