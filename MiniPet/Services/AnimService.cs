@@ -460,7 +460,19 @@ namespace MiniPet.Services
         /// </summary>
         public bool IsLooping(string action)
         {
-            return _animDefs.TryGetValue(action, out var def) && def.IsLoop;
+            if (_animDefs.TryGetValue(action, out var def) && def.IsLoop)
+            {
+                return true;
+            }
+            // 2026-08-17：纸娃娃实际动作名（stand1/stand2/walk1/fly/jump…）不在 _animDefs——
+            // 原 IsLooping 返回 false → SwitchTo("stand") 把 stand1 按 OneShot 播放 → 播完
+            // （~300ms）完成回调又回 stand1 → 死循环重置空闲累计 → 空闲随机永不触发（动画固定 stand1）。
+            // 循环前缀判定对齐 IsLoopAction；swing*/stab*/shoot* 等展示动作不匹配 → 仍按 OneShot。
+            if (action.StartsWith("stand", StringComparison.OrdinalIgnoreCase)) { return true; }
+            if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase)) { return true; }
+            if (action.StartsWith("fly", StringComparison.OrdinalIgnoreCase)) { return true; }
+            if (action.StartsWith("jump", StringComparison.OrdinalIgnoreCase)) { return true; }
+            return false;
         }
 
         /// <summary>
