@@ -274,10 +274,19 @@ public class PaperdollServiceTests
     }
 
     [Fact]
-    public void ChairRoot_3020000_SecondCandidateIs0302Img()
+    public void ChairRoot_3015000_SecondCandidateIs030150Img()
     {
+        // 2026-08-16：3015000 系按 id/100 分组（030150.img），id/1000 候选（03015.img）不存在
+        var candidates = ChairRootCandidates("3015000");
+        Assert.Equal("Item/Install/030150.img/03015000", candidates[1]);
+    }
+
+    [Fact]
+    public void ChairRoot_3020000_ThirdCandidateIs0302Img()
+    {
+        // 3020xxx 按 id/10000 分组（0302.img）；id/1000（03020.img）、id/100（030200.img）均不存在
         var candidates = ChairRootCandidates("3020000");
-        Assert.Equal("Item/Install/0302.img/03020000", candidates[1]);
+        Assert.Equal("Item/Install/0302.img/03020000", candidates[2]);
     }
 
     [Fact]
@@ -313,9 +322,11 @@ public class PaperdollServiceTests
         return new List<string>
         {
             $"Item/Install/{n / 1000:D5}.img/{node}",
+            $"Item/Install/{n / 100:D6}.img/{node}",
             $"Item/Install/{n / 10000:D4}.img/{node}",
             $"Item/Install/0301.img/{node}",
             $"Item/Cash/{n / 1000:D5}.img/{node}",
+            $"Item/Cash/{n / 100:D6}.img/{node}",
             $"Item/Cash/{n / 10000:D4}.img/{node}",
         };
     }

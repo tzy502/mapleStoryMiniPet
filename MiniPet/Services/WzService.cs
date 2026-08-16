@@ -675,6 +675,8 @@ namespace MiniPet.Services
                 {
                     $"String/Item.img/{category}/{key}",
                     $"String/Item.img/{category}/{pad}",
+                    $"String/Ins.img/{key}",
+                    $"String/Ins.img/{pad}",
                     $"String/Eqp.img/Eqp/{category}/{key}",
                     $"String/Eqp.img/{category}/{key}",
                     $"String/Eqp.img/Eqp/{key}",
@@ -1154,6 +1156,40 @@ namespace MiniPet.Services
 
         public List<string> ListNpcIds() =>
             GetDirectoryChildren("Npc").Select(x => x.Id).Where(id => !string.IsNullOrEmpty(id) && id != "0").ToList();
+
+        /// <summary>
+        /// 枚举 img 文件内部数字 id 子节点（2026-08-16 椅子专用）：
+        /// GetDirectoryChildren 只适用于「目录」（子节点是 .img 文件，按 .img 后缀过滤）；
+        /// 而 Item/Install/03010.img 这类 img 文件是 Wz_Image 节点，其子节点是 03010000 等数字 id——
+        /// 必须先 GetValue&lt;Wz_Image&gt; + TryExtract 后遍历 img.Node 才能拿到（未提取时 Nodes 为空 → 椅子列表空根因）。
+        /// 返回无前导零 id（匹配 String.wz 键）。
+        /// </summary>
+        public List<string> GetImgChildren(string imgPath)
+        {
+            var result = new List<string>();
+            try
+            {
+                lock (_wzLock)
+                {
+                    var node = _wzs?.WzNode.FindNodeByPath(true, imgPath.Replace('/', '\\').Split('\\'));
+                    if (node == null) return result;
+                    var img = node.GetValue<Wz_Image>();
+                    if (img == null || !img.TryExtract()) return result;
+                    foreach (Wz_Node child in img.Node.Nodes)
+                    {
+                        if (int.TryParse(child.Text, out var idNum))
+                        {
+                            result.Add(idNum.ToString()); // 无前导零，匹配 String.wz 键
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WzService] GetImgChildren({imgPath}): {ex.Message}");
+            }
+            return result;
+        }
 
         /// <summary>
         /// 枚举 WZ 全量地图 id（转发 MapCatalogService）。持 _wzLock。

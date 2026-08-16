@@ -1140,16 +1140,28 @@ public partial class MaterialBrowserWindow
             {
                 AddCharacterCategory(wz, entries, folder, cat, emoji);
             }
-            // 椅子：Item/Install/0301.img（探测，失败跳过）
+            // 椅子：Item/Install/{分组}.img（03010.img…03019.img / 030150.img…030159.img / 0302.img，
+            // 按 id/1000、id/100、id/10000 分组；本 WZ 无 0301.img）。
+            // 2026-08-16 修复：img 文件是 Wz_Image 节点，GetDirectoryChildren（目录专用，.img 后缀过滤 +
+            // 未 TryExtract 时 Nodes 空）对 img 路径返回空 → 椅子分类空列表（用户反馈「椅子没有内容」）。
+            // 改用 GetImgChildren：FindNodeByPath + Wz_Image.TryExtract + 遍历数字 id 子节点；
+            // 椅子 id 范围 3010000–3020999（MapleSalon2 isChairId；Install 内 0304.img 等是其他家具，排除）。
             try
             {
-                foreach (var (id, _) in wz.GetDirectoryChildren("Item/Install/0301.img"))
+                foreach (var (_, imgFile) in wz.GetDirectoryChildren("Item/Install"))
                 {
-                    var cn = wz.GetItemName("Install", id);
-                    entries.Add(new MaterialEntry("椅子", id, string.IsNullOrEmpty(cn) ? $"椅子_{id}" : cn, "🪑"));
+                    foreach (var id in wz.GetImgChildren($"Item/Install/{imgFile}"))
+                    {
+                        if (!int.TryParse(id, out var chairId) || chairId < 3010000 || chairId >= 3021000)
+                        {
+                            continue;
+                        }
+                        var cn = wz.GetItemName("Install", id);
+                        entries.Add(new MaterialEntry("椅子", id, string.IsNullOrEmpty(cn) ? $"椅子_{id}" : cn, "🪑"));
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] LoadFromWz(椅子): {ex.Message}"); }
         }
         catch (Exception ex)
         {
