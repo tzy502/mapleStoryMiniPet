@@ -9,4 +9,9 @@
     <ProjectReference Include="../MiniPet/MiniPet.csproj" />
     <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Reference Include="WzComparerR2.WzLib">
+      <HintPath>../MiniPet/lib/WzComparerR2.WzLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
 </Project>

@@ -542,7 +542,13 @@ public partial class MaterialBrowserWindow
         };
     }
 
-    /// <summary>尝试提取条目 icon PNG（优先 icon 字段，回退 iconRaw；均无返回 null）。</summary>
+    /// <summary>
+    /// 尝试提取条目 icon PNG（对齐 MapleSalon2 getIconPath 语义，真实 WZ 实测存在）：
+    /// 装备 → {root}/info/icon（帽/衣/裤/鞋/手套/武器/盾/披风/饰品/坐骑）；
+    /// 发型 → {root}/default/hair；脸型 → {root}/blink/0/face；
+    /// 椅子 → {root}/info/icon（Item/Install/0301.img/{id}）；
+    /// 回退根 icon/iconRaw；均无返回 null。
+    /// </summary>
     private byte[]? TryExtractIcon(WzService wz, string category, string id)
     {
         var root = CategoryWzRoot(category, id);
@@ -550,9 +556,20 @@ public partial class MaterialBrowserWindow
         {
             return null;
         }
+        string primary = category switch
+        {
+            "发型" => $"{root}/default/hair",
+            "脸型" => $"{root}/blink/0/face",
+            _ => $"{root}/info/icon",
+        };
+        var png = wz.ExtractPng(primary);
+        if (png != null && png.Length > 0)
+        {
+            return png;
+        }
         foreach (var sub in new[] { "icon", "iconRaw" })
         {
-            var png = wz.ExtractPng($"{root}/{sub}");
+            png = wz.ExtractPng($"{root}/{sub}");
             if (png != null && png.Length > 0)
             {
                 return png;
