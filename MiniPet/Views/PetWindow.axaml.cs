@@ -447,10 +447,14 @@ public partial class PetWindow : Window
                         if (_isDragging || !IsVisible) { return; }
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
+                        // 2026-08-16：尺寸必须在 ShowBalloon 前读取——一次性气泡（autoHide 非空）内部
+                        // 自动隐藏时 HideBalloon 会 Dispose 位图，返回后再访问 bmp.PixelSize 抛 ObjectDisposedException。
+                        var bw = bmp.PixelSize.Width;
+                        var bh = bmp.PixelSize.Height;
                         TimeSpan? autoHide = durationMs.HasValue ? TimeSpan.FromMilliseconds(durationMs.Value) : null;
                         await _balloonWindow.BalloonControl.ShowBalloon(text, data, bmp, autoHide);
-                        _balloonWindow.Width = bmp.PixelSize.Width;
-                        _balloonWindow.Height = bmp.PixelSize.Height;
+                        _balloonWindow.Width = bw;
+                        _balloonWindow.Height = bh;
                         // 锚点基准 = 当前角色锚点（拖拽结束会更新）
                         _balloonAnchorX = Position.X + _lastOriginX;
                         _balloonAnchorY = Position.Y + _lastOriginY;
