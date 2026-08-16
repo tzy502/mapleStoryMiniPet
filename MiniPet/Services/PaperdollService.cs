@@ -802,12 +802,24 @@ public class PaperdollService : IEntityFrameProvider
         // R1 椅子部件无 map 锚点（WZ 只有 origin）：兜底锚到 navel 根（身体髋部）。
         // 最小可用版：不读 info/bodyRelMove（本 WZ 无坐椅数据可校准），原点对齐身体 navel。
         // R13 节点级特效部件同样可能无 map（独立 effect 帧）：同椅子兜底锚到 navel。
+        // R15 全局特效（Effect/ItemEff.img）无 map 时对齐 MapleSalon2：锚 brow（眉毛，head 部件 map 提供）
+        // + getEffectPos 默认偏移 {10,50} 取负（resolveEffectFrames 的 {brow:{-10,-50}}）；brow 不在锚表时回退 navel。
         foreach (var p in pieces)
         {
             if (p.Locked || (p.Category != "chair" && p.Category != "effect")) continue;
-            p.AnchorX = 0;
-            p.AnchorY = 0;
-            p.BaseAnchor = "navel";
+            if (p.Category == "effect" && anchors.TryGetValue("brow", out var browAbs))
+            {
+                // MapleSalon2 map = {brow: {x: -10, y: -50}} → Anchor = browAbs - (-10, -50)
+                p.AnchorX = browAbs.x + 10;
+                p.AnchorY = browAbs.y + 50;
+                p.BaseAnchor = "brow";
+            }
+            else
+            {
+                p.AnchorX = 0;
+                p.AnchorY = 0;
+                p.BaseAnchor = "navel";
+            }
             p.Locked = true;
         }
 
