@@ -916,6 +916,27 @@ public class PaperdollService : IEntityFrameProvider
     private void ResolveAnchors(List<Piece> pieces)
     {
         var anchors = new Dictionary<string, (int x, int y)> { ["navel"] = (0, 0) };
+        // R19 坐骑锚点对齐 MapleSalon2：坐骑全部部件以「坐骑帧主 navel」为基准摆位（-origin 相对布局），
+        // 不锚到各部件自身 map.navel——多 navel 坐骑（如 01902002 三部件 navel 各不相同）若锚自身
+        // navel，部件会整体错位（probe 实测 Δ=(25,-44)/(3,-22)）；主 navel = 帧内第一个含 map.navel 的
+        // 部件（MapleSalon2 getFrameNavel = 第一个 map 含 navel 的 layer），全无则 (0,0)。
+        // 无 map 的坐骑部件也照常锁定渲染（MapleSalon2 无视 map，position 恒 -origin）。
+        bool mountFrameNavelFound = false;
+        (int x, int y) mountFrameNavel = (0, 0);
+        foreach (var p in pieces)
+        {
+            if (p.Category != "mount" || mountFrameNavelFound) continue;
+            if (p.Map.TryGetValue("navel", out var nv)) { mountFrameNavel = nv; mountFrameNavelFound = true; }
+        }
+        foreach (var p in pieces)
+        {
+            if (p.Category != "mount" || p.Locked) continue;
+            p.AnchorX = -mountFrameNavel.x;
+            p.AnchorY = -mountFrameNavel.y;
+            p.BaseAnchor = "navel";
+            p.Locked = true;
+        }
+
         int maxIter = pieces.Count * 4 + 8;
         for (int iter = 0; iter < maxIter; iter++)
         {
