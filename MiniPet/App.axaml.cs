@@ -47,6 +47,13 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // 2026-08-17 用户要求：macOS 桌宠不进程序坞（Dock）——ActivationPolicy=Accessory，
+        // 窗口照常显示/可输入（设置中心不受影响）；Windows 任务栏隐藏见 PetWindow.ShowInTaskbar。
+        if (OperatingSystem.IsMacOS())
+        {
+            try { Utils.MacNative.HideDockIcon(); }
+            catch (Exception ex) { Console.Error.WriteLine($"[App] HideDockIcon: {ex.Message}"); }
+        }
         var services = new ServiceCollection();
         services.AddSingleton<ConfigService>();
         services.AddSingleton<CacheManager>();

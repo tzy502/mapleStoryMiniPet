@@ -134,6 +134,8 @@ public partial class PetWindow : Window
         MinWidth = 64;
         MinHeight = 64;
         Topmost = true;
+        // 2026-08-17 用户要求：桌宠不进任务栏（Windows），仅托盘展示；设置中心正常显示
+        ShowInTaskbar = false;
         WindowDecorations = global::Avalonia.Controls.WindowDecorations.None;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Brushes.Transparent;
