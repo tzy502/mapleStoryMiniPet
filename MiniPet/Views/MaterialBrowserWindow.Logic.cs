@@ -318,10 +318,12 @@ public partial class MaterialBrowserWindow
         });
         row.Children.Add(info);
 
+        // 类型徽标：emoji + 分类名，怪物红橙 / NPC 绿 / 纸娃娃 accent 蓝（「全部」混排时一眼区分 Mob·NPC 与纸娃娃）
+        var (badgeBg, badgeFg) = CategoryBadgeColors(entry?.Category ?? "");
         var catBadge = new Border
         {
             CornerRadius = new CornerRadius(3),
-            Background = new SolidColorBrush(Color.FromArgb(26, 94, 156, 255)),
+            Background = new SolidColorBrush(badgeBg),
             Padding = new Thickness(6, 2),
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -329,15 +331,33 @@ public partial class MaterialBrowserWindow
         };
         catBadge.Child = new TextBlock
         {
-            [!TextBlock.TextProperty] = new Avalonia.Data.Binding("Category"),
+            Text = entry == null ? "" : $"{entry.Emoji} {entry.Category}",
             FontSize = 9,
-            Foreground = BrushAccent
+            Foreground = new SolidColorBrush(badgeFg)
         };
         row.Children.Add(catBadge);
 
         // 悬停 tooltip：显示完整名称（MapleSalon2 参考）
         ToolTip.SetTip(row, entry?.Name ?? "");
         return row;
+    }
+
+    /// <summary>条目类型徽标配色：怪物红橙、NPC 绿、纸娃娃部件 accent 蓝、其余（提示等）灰——与分类组头同色系。</summary>
+    private static (Color Bg, Color Fg) CategoryBadgeColors(string category)
+    {
+        if (category == "怪物")
+        {
+            return (MobBadgeBg, MobBadgeColor);
+        }
+        if (category == "NPC")
+        {
+            return (NpcBadgeBg, NpcBadgeColor);
+        }
+        if (IsPaperdollCategory(category))
+        {
+            return (Color.FromArgb(26, 94, 156, 255), AccentColor);
+        }
+        return (Color.FromArgb(26, 120, 120, 140), TxtSecondary);
     }
 
     /// <summary>发型分组组头行：名称 + 变体数 + 展开箭头，点击折叠/展开。</summary>
