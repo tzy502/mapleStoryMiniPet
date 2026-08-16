@@ -207,71 +207,6 @@ public partial class SettingsWindow
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            // ── DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080；2026-08-16 从「常规」子 tab 撤回 Hermes tab 原位置） ──
-            root.Children.Add(BuildAgentSectionHeader("DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080）"));
-            var dshPanel = new StackPanel { Spacing = 10 };
-            _agentDshCheck = MakeAgentToggle("DSH 监控（默认开启，DeepSeek Harness 执行状态反映；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
-            dshPanel.Children.Add(_agentDshCheck);
-            var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
-            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
-            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
-            _agentDshHostInput = new TextBox
-            {
-                Watermark = "127.0.0.1",
-                FontSize = 12,
-                Text = ai.DshHost ?? "127.0.0.1",
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            _agentDshStatusText = new TextBlock
-            {
-                Text = "⚪ 未同步（未开启或 DSH 未运行）",
-                FontSize = 11,
-                Foreground = BrushTxtDim,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(_agentDshHostInput, 0);
-            Grid.SetColumn(_agentDshStatusText, 1);
-            dshHostRow.Children.Add(_agentDshHostInput);
-            dshHostRow.Children.Add(_agentDshStatusText);
-            dshPanel.Children.Add(dshHostRow);
-            _agentDshPort = new NumericUpDown();
-            dshPanel.Children.Add(MakeAgentNumericBox("端口（默认 3080，dsh --profile web）", ai.DshPort == 0 ? 3080 : ai.DshPort, 1, 65535, _agentDshPort));
-            var wsWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
-            wsWrap.Children.Add(new TextBlock { Text = "会话工作区 cwd（可选，留空 = MiniPet 进程当前目录）", FontSize = 10, Foreground = BrushTxtDim });
-            _agentDshWorkspaceInput = new TextBox
-            {
-                Watermark = "例：/Users/.../mapleStoryMiniPet/.worktrees/dsh",
-                FontSize = 12,
-                Text = ai.DshWorkspace ?? string.Empty,
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            wsWrap.Children.Add(_agentDshWorkspaceInput);
-            dshPanel.Children.Add(wsWrap);
-            root.Children.Add(dshPanel);
-            root.Children.Add(new TextBlock
-            {
-                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。\n保存后重启生效（与 Hermes 一致）；「🤖 DSH 对话」无需开启观察即可用——点击时自动装配，仅当 DSH 未运行时窗口显示未连接。",
-                FontSize = 10,
-                Foreground = BrushTxtDim,
-                TextWrapping = TextWrapping.Wrap,
-            });
-
-            // 挂 DshAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
-            if (DshAdapter.Current is { } dshAdapter)
-            {
-                dshAdapter.ConnStatusCallback += UpdateDshConnStatus;
-            }
-
             // ── 7 态映射配置区 ──
             root.Children.Add(BuildAgentSectionHeader("7 态 状态→反馈 映射"));
             root.Children.Add(new TextBlock
@@ -401,6 +336,72 @@ public partial class SettingsWindow
                 Foreground = BrushTxtDim,
                 TextWrapping = TextWrapping.Wrap,
             });
+
+            // ── DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080；2026-08-16 从 Hermes tab 移入本 tab） ──
+            root.Children.Add(BuildAgentSectionHeader("DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080）"));
+            var ai = _settings.AgentIntegration ?? new AgentIntegrationConfig();
+            var dshPanel = new StackPanel { Spacing = 10 };
+            _agentDshCheck = MakeAgentToggle("DSH 监控（默认开启，DeepSeek Harness 执行状态反映；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
+            dshPanel.Children.Add(_agentDshCheck);
+            var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
+            _agentDshHostInput = new TextBox
+            {
+                Watermark = "127.0.0.1",
+                FontSize = 12,
+                Text = ai.DshHost ?? "127.0.0.1",
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            _agentDshStatusText = new TextBlock
+            {
+                Text = "⚪ 未同步（未开启或 DSH 未运行）",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(_agentDshHostInput, 0);
+            Grid.SetColumn(_agentDshStatusText, 1);
+            dshHostRow.Children.Add(_agentDshHostInput);
+            dshHostRow.Children.Add(_agentDshStatusText);
+            dshPanel.Children.Add(dshHostRow);
+            _agentDshPort = new NumericUpDown();
+            dshPanel.Children.Add(MakeAgentNumericBox("端口（默认 3080，dsh --profile web）", ai.DshPort == 0 ? 3080 : ai.DshPort, 1, 65535, _agentDshPort));
+            var wsWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            wsWrap.Children.Add(new TextBlock { Text = "会话工作区 cwd（可选，留空 = MiniPet 进程当前目录）", FontSize = 10, Foreground = BrushTxtDim });
+            _agentDshWorkspaceInput = new TextBox
+            {
+                Watermark = "例：/Users/.../mapleStoryMiniPet/.worktrees/dsh",
+                FontSize = 12,
+                Text = ai.DshWorkspace ?? string.Empty,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            wsWrap.Children.Add(_agentDshWorkspaceInput);
+            dshPanel.Children.Add(wsWrap);
+            root.Children.Add(dshPanel);
+            root.Children.Add(new TextBlock
+            {
+                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。\n保存后重启生效；「🤖 DSH 对话」无需开启观察即可用——点击时自动装配，仅当 DSH 未运行时窗口显示未连接。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // 挂 DshAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
+            if (DshAdapter.Current is { } dshAdapter2)
+            {
+                dshAdapter2.ConnStatusCallback += UpdateDshConnStatus;
+            }
 
             // ── 连接状态提示 ──
             var dsh = DshAdapter.Current;
