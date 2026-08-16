@@ -503,18 +503,20 @@ public partial class MaterialBrowserWindow
     // icon 预览（D：WZ 装备节点自带 icon/iconRaw，ExtractPng 直取，比合成快）
     // ═══════════════════════════════════════════
 
-    /// <summary>替换预览框内容：旧 Image.Source 位图先 Dispose 再换新（防逐次选中泄漏位图）。</summary>
+    /// <summary>替换预览框内容：⚠️ 先换 Child 再 Dispose 旧 Image.Source——先 Dispose 会让旧 Image
+    /// 在下一布局 pass 测量已释放位图 → ObjectDisposedException 崩溃（实测 SIGABRT，全项目同款修复）。</summary>
     private void SetPreviewChild(Control child)
     {
         if (_previewBox == null)
         {
             return;
         }
-        if (_previewBox.Child is Image oldImg && oldImg.Source is IDisposable oldSrc)
+        var oldImg = _previewBox.Child as Image;
+        _previewBox.Child = child;
+        if (oldImg?.Source is IDisposable oldSrc)
         {
             oldSrc.Dispose();
         }
-        _previewBox.Child = child;
     }
 
     /// <summary>分类 → WZ img 根路径（icon 提取用；纸娃娃部件按 8 位补零，椅子在 Install/0301.img 下）。纯函数，可单测。</summary>

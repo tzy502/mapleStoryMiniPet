@@ -16,6 +16,10 @@ public partial class SpriteCanvas : UserControl
 {
     private Bitmap? _currentBitmap;
     private WriteableBitmap? _wb;
+    /// <summary>延迟一帧释放的旧位图（防异步布局 pass 引用已释放位图，见 SetFrame 注释）。</summary>
+    private Bitmap? _pendingDispose;
+    /// <summary>延迟一帧释放的旧 WriteableBitmap（同 _pendingDispose）。</summary>
+    private WriteableBitmap? _pendingWbDispose;
     private int _wbW = -1;
     private int _wbH = -1;
     private int _originX;
@@ -68,9 +72,12 @@ public partial class SpriteCanvas : UserControl
             return;
         }
 
-        // ⚠️ 先换 Source 再 Dispose 旧图：Avalonia 布局是延迟批处理，若先 Dispose 旧位图，
-        // 拖拽结束/尺寸变化触发的布局 pass 会测量仍引用旧位图的 Image.Source → ObjectDisposedException 崩溃
-        // （实测 SIGABRT，Ref<IBitmapImpl> 已释放仍被读取）。A3 同款顺序。
+        // ⚠️ 延迟一帧释放旧位图：Avalonia 布局/渲染 pass 是异步批处理，换 Source 后旧位图仍可能被
+        // 排队的布局测量引用；当帧换源后立即 Dispose 存在竞态窗口 → ObjectDisposedException 崩溃
+        // （实测 SIGABRT，Ref<IBitmapImpl>）。旧图存入 _pendingDispose，下一帧换源后再释放
+        // （此时所有布局 pass 已消费新 Source；Mob 帧 30fps 必须释放，否则内存爆炸）。
+        _pendingDispose?.Dispose();
+        _pendingDispose = null;
         var oldBitmap = _currentBitmap;
         using var ms = new MemoryStream(pngData);
         _currentBitmap = new Bitmap(ms);
@@ -99,8 +106,8 @@ public partial class SpriteCanvas : UserControl
         }
         // Source 必须每帧设（换帧核心）
         SpriteImage.Source = _currentBitmap;
-        // 换源后再释放旧图（布局延迟 pass 不会引用已释放位图，同上）
-        oldBitmap?.Dispose();
+        // 换源后旧图延迟到下一帧释放（见上方注释；防异步布局竞态）
+        _pendingDispose = oldBitmap;
         Canvas.SetLeft(SpriteImage, 0);
         Canvas.SetTop(SpriteImage, 0);
     }
@@ -145,7 +152,9 @@ public partial class SpriteCanvas : UserControl
         // 直拷 BGRA premul 像素。
         // ⚠️ 必须每次 new WriteableBitmap（Source 引用变化 → Image 必然重绘）：
         // 复用同引用时 Avalonia 不重绘 → 画面静止 = 动画"不动"（回归 bug，旧代码每帧 new Bitmap 所以动）
-        // ⚠️ 先换 Source 再 Dispose 旧 wb（与 SetFrame 同：布局延迟 pass 引用已释放位图会崩）
+        // ⚠️ 延迟一帧释放旧 wb（与 SetFrame 同：异步布局 pass 引用已释放位图会崩，实测 SIGABRT）
+        _pendingWbDispose?.Dispose();
+        _pendingWbDispose = null;
         var oldWb = _wb;
         _wb = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
         using (var fb = _wb.Lock())
@@ -170,8 +179,8 @@ public partial class SpriteCanvas : UserControl
             }
         }
         SpriteImage.Source = _wb;
-        // 换源后再释放旧 wb
-        oldWb?.Dispose();
+        // 换源后旧 wb 延迟到下一帧释放（防异步布局竞态）
+        _pendingWbDispose = oldWb;
         Canvas.SetLeft(SpriteImage, 0);
         Canvas.SetTop(SpriteImage, 0);
     }
@@ -186,5 +195,9 @@ public partial class SpriteCanvas : UserControl
         _currentBitmap = null;
         _wb?.Dispose();
         _wb = null;
+        _pendingDispose?.Dispose();
+        _pendingDispose = null;
+        _pendingWbDispose?.Dispose();
+        _pendingWbDispose = null;
     }
 }

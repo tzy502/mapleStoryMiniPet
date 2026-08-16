@@ -391,10 +391,10 @@ public partial class SettingsWindow
                         var frameRect = new PixelRect(frameWidth * _previewFrameIndex, 0, frameWidth, frameHeight);
                         try
                         {
-                            // ⚠️ 先换 Source 再 Dispose 旧 CroppedBitmap（防每帧泄漏 + 防布局测量已释放位图崩溃）
-                            var oldSrc = img2.Source;
+                            // ⚠️ 换帧后旧 CroppedBitmap 不显式 Dispose（交 GC）：异步布局 pass 可能仍持有
+                            // 旧 Source 测量请求，显式 Dispose 会 ObjectDisposedException（实测 SIGABRT，
+                            // 与 ShowFrame 同款结论）。预览帧小、240ms 节奏，GC 压力可接受。
                             img2.Source = new CroppedBitmap(_previewSourceBitmap, frameRect);
-                            (oldSrc as IDisposable)?.Dispose();
                             _balloonPreviewImage = img2;
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TickFrame: {ex.Message}"); }

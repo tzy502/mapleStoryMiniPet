@@ -1138,11 +1138,11 @@ public partial class SettingsWindow : Window
             {
                 try
                 {
-                    // S3：替换前 Dispose 旧位图 + 缓存上限（防无界增长）
-                    if (_listThumbs.TryRemove(key, out var old))
-                    {
-                        old.Dispose();
-                    }
+                    // ⚠️ 只移除不 Dispose 旧位图：同一 Bitmap 可能正被收藏/最近列表的 Image.Source
+                    // 共享引用（MakeThumbImage 直接用缓存实例），显式 Dispose 会让列表在下一布局
+                    // pass 测量已释放位图 → ObjectDisposedException 崩溃（实测 SIGABRT）。
+                    // 原生内存交 GC 终结器回收（与 BalloonService 瓦片缓存同结论）。
+                    _listThumbs.TryRemove(key, out _);
                     _listThumbs[key] = captured;
                     TrimListThumbs();
                     if (iconBox.IsLoaded && iconBox.IsVisible && iconBox.Child is TextBlock)
@@ -1158,7 +1158,7 @@ public partial class SettingsWindow : Window
         });
     }
 
-    /// <summary>缩略图缓存上限：超出丢弃最早条目（ConcurrentDictionary 无序，取任意移除；S3）。</summary>
+    /// <summary>缩略图缓存上限：超出丢弃条目（只移除不 Dispose——共享引用场景显式 Dispose 会崩，见 LoadListThumbAsync）。</summary>
     private void TrimListThumbs()
     {
         if (_listThumbs.Count <= ListThumbMax)
@@ -1172,9 +1172,8 @@ public partial class SettingsWindow : Window
             {
                 break;
             }
-            if (_listThumbs.TryRemove(kv.Key, out var old))
+            if (_listThumbs.TryRemove(kv.Key, out _))
             {
-                old.Dispose();
                 excess--;
             }
         }
@@ -1376,17 +1375,15 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            // 曾作为 Image.Source 的 CroppedBitmap 只摘除不 Dispose（交 GC）——异步布局 pass
+            // 可能仍持有测量请求（实测 SIGABRT，与 ShowFrame/AnimTick 同款结论）
             if (_previewSpriteImage != null)
             {
-                var s1 = _previewSpriteImage.Source;
                 _previewSpriteImage.Source = null;
-                (s1 as IDisposable)?.Dispose();
             }
             if (_balloonPreviewImage != null)
             {
-                var s2 = _balloonPreviewImage.Source;
                 _balloonPreviewImage.Source = null;
-                (s2 as IDisposable)?.Dispose();
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ClearPreviewRefs: {ex.Message}"); }
@@ -1409,11 +1406,10 @@ public partial class SettingsWindow : Window
         int idx = frameIndex % _previewStrip.FrameCount;
         try
         {
-            // ⚠️ 先换 Source 再 Dispose 旧 CroppedBitmap：先 Dispose 会让 Image 在下一布局 pass
-            // 测量已释放位图 → ObjectDisposedException（实测 SIGABRT，Ref<IBitmapImpl>）
-            var oldSrc = image.Source;
+            // ⚠️ 换 Source 后旧 CroppedBitmap 不显式 Dispose（交 GC 终结器回收）：Avalonia 异步布局
+            // pass 可能仍持有旧 Source 的测量请求，显式 Dispose 会触发 ObjectDisposedException（实测
+            // SIGABRT）。预览图小（单帧 240ms 节奏），GC 压力可接受。
             image.Source = new CroppedBitmap(_previewSourceBitmap, new PixelRect(fw * idx, 0, fw, fh));
-            (oldSrc as IDisposable)?.Dispose();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ShowFrame: {ex.Message}"); }
     }
