@@ -431,6 +431,7 @@ public class PaperdollService : IEntityFrameProvider
             {
                 if (category is "body" or "head" or "hair" or "face" or "mount" or "chair") continue;
                 AddEquipEffectPieces(sources, a, category, root, action, frame);
+                AddItemEffEffectPieces(sources, a, category, frame);
             }
         }
 
@@ -573,6 +574,32 @@ public class PaperdollService : IEntityFrameProvider
                 sources.Add(new PieceSource("effect", effFrame.ToString(), piecePath, itemId));
             }
         }
+    }
+
+    /// <summary>
+    /// R15 全局装备特效表收集：Effect/ItemEff.img/{id}/effect（MapleSalon2 getPieceEffectWz 同源）。
+    /// 本 WZ 实测（1102149 冰凌披风）：特效动画帧在 default/{0..17}（18 帧循环），无 stand1 等动作帧；
+    /// 帧号取模循环（对齐 MapleSalon2 特效动画循环语义）；z 为 effect/default 的 z（=-2，特效层）。
+    /// 修复前只在 Character/Cape.img 内找 effect——本 WZ 披风 img 无 effect 节点，特效数据一直在
+    /// Effect/ItemEff.img 却被忽略 → 冰凌披风特效缺失（用户反馈「冰凌披风渲染依旧有问题」）。
+    /// </summary>
+    private void AddItemEffEffectPieces(List<PieceSource> sources, CharacterAppearance a, string category, int frame)
+    {
+        string itemId = GetCategoryItemId(a, category);
+        if (string.IsNullOrEmpty(itemId)) { return; }
+        // MapleSalon2 用原样 id（如 1102149），部分数据也可能补零（01102149）——两种都试
+        string effectRoot = $"Effect/ItemEff.img/{itemId}/effect";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(effectRoot) != null))
+        {
+            effectRoot = $"Effect/ItemEff.img/{itemId.PadLeft(8, '0')}/effect";
+            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(effectRoot) != null)) { return; }
+        }
+        int frames = CountNumericChildren($"{effectRoot}/default");
+        if (frames <= 0) { return; }
+        int effFrame = frame % frames;
+        string piecePath = $"{effectRoot}/default/{effFrame}";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(piecePath) != null)) { return; }
+        sources.Add(new PieceSource("effect", effFrame.ToString(), piecePath, itemId));
     }
 
     /// <summary>
