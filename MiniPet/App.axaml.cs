@@ -86,6 +86,9 @@ public partial class App : Application
             // 数据流：adapter(Hermes/CC/Codex) → EventBus(AgentStateChanged) → Aggregator
             //        → EventBus(PetReflectStateChanged) → EffectLayerService(气泡/表情)
             // Aggregator 与 EffectLayerService 在构造内已自 Subscribe，这里只 new + Start。
+            // NO_AI 编译符号（Windows 纯净版打包：-p:DefineConstants=NO_AI）整块跳过——无任何
+            // AI 适配器/轮询/重连，即开即用纯桌宠；正常构建不受影响。
+#if !NO_AI
             try
             {
                 // 读 config.AgentIntegration 配置；总开关 Enabled=false 时整块不加载（Aggregator / EffectLayer / 各 adapter）
@@ -151,6 +154,7 @@ public partial class App : Application
             {
                 Console.Error.WriteLine($"[App] Agent 接入链装配失败: {ex.Message}");
             }
+#endif // !NO_AI
             var wzConfig = configService.LoadWzConfig();
             if (!string.IsNullOrEmpty(wzConfig.BaseWzPath))
             {
