@@ -734,7 +734,13 @@ public partial class SettingsWindow
         {
             if (_paperdollPreviewCanvas == null) { return; }
             int seq = ++_previewSeq;
-            var panel = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 12 };
+            // 自适应布局（2026-08-16）：Grid 行 = 动作按钮 Auto / 预览图 Star（填满剩余）/ 性别 Auto / 装备摘要 Auto，
+            // 预览图随画布伸缩（原 StackPanel + 固定 160x200 太小）。
+            var panel = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+            panel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            panel.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+            panel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            panel.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
             // 动作切换按钮组（体验 C-1：stand1/walk1/jump/swingOF/alert，当前动作高亮 accent）
             var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
@@ -758,13 +764,18 @@ public partial class SettingsWindow
                 btn.Click += (_, _) => { try { _paperdollPreviewAction = captured; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PreviewAction: {ex.Message}"); } };
                 actionRow.Children.Add(btn);
             }
+            Grid.SetRow(actionRow, 0);
             panel.Children.Add(actionRow);
 
-            // 合成中占位（体验 C-2）：Task 启动前设，完成替换为图；WZ 未加载时保持 🧑 占位
-            var figure = new Border { Width = 160, Height = 200, CornerRadius = new CornerRadius(12), Background = GetCheckerboardBrush(), HorizontalAlignment = HorizontalAlignment.Center, Child = new TextBlock { Text = _wzService.IsLoaded ? "⏳ 合成中…" : "🧑", FontSize = _wzService.IsLoaded ? 13 : 60, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+            // 合成中占位（体验 C-2）：Task 启动前设，完成替换为图；WZ 未加载时保持 🧑 占位。
+            // 自适应：去除固定 160x200，填满 Star 行，图随画布等比放大（Image Stretch=Uniform）。
+            var figure = new Border { CornerRadius = new CornerRadius(12), Background = GetCheckerboardBrush(), Margin = new Thickness(0, 6, 0, 4), HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, Child = new TextBlock { Text = _wzService.IsLoaded ? "⏳ 合成中…" : "🧑", FontSize = _wzService.IsLoaded ? 13 : 60, Foreground = BrushTxtDim, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+            Grid.SetRow(figure, 1);
             panel.Children.Add(figure);
 
-            panel.Children.Add(new TextBlock { Text = _paperdollCurrent.Gender == 0 ? "♂ 男性" : "♀ 女性", FontSize = 13, FontWeight = FontWeight.Bold, Foreground = BrushTxtPrimary, HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center });
+            var genderTb = new TextBlock { Text = _paperdollCurrent.Gender == 0 ? "♂ 男性" : "♀ 女性", FontSize = 13, FontWeight = FontWeight.Bold, Foreground = BrushTxtPrimary, HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center };
+            Grid.SetRow(genderTb, 2);
+            panel.Children.Add(genderTb);
 
             var equipSummary = new StackPanel { Spacing = 2, HorizontalAlignment = HorizontalAlignment.Stretch };
             var parts = new (string Label, string? Id)[] {
@@ -783,6 +794,7 @@ public partial class SettingsWindow
                 var val = has ? id : "—";
                 equipSummary.Children.Add(new TextBlock { Text = $"{label}: {val}", FontSize = 9, Foreground = color, HorizontalAlignment = HorizontalAlignment.Stretch, TextAlignment = TextAlignment.Center });
             }
+            Grid.SetRow(equipSummary, 3);
             panel.Children.Add(equipSummary);
             _paperdollPreviewCanvas.Child = panel;
 
