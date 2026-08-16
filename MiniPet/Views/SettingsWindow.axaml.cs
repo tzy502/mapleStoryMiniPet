@@ -346,14 +346,15 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>
-    /// AI 设置主 pane（2026-08-15：Agent 接入从「桌宠设置」子 tab 移入此处）。
-    /// 子 tab：Hermes（Agent 接入）/ Deepseek harness / Claude Code / Codex（后三者占位待实现）。
+    /// AI 设置主 pane（2026-08-15：Agent 接入从「桌宠设置」子 tab 移入此处；
+    /// 2026-08-XX：DSH 监控从 Hermes tab 移出，独立为「常规」子 tab 排在 Hermes 之前）。
+    /// 子 tab：常规（DSH 监控）/ Hermes（Agent 接入）/ Deepseek harness / Claude Code / Codex（后三者占位待实现）。
     /// </summary>
     private Border BuildAiSettingsPane()
     {
         var container = new DockPanel();
         var subTabBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 4, 14, 0) };
-        var subTabs = new[] { "Hermes", "Deepseek harness", "Claude Code", "Codex" };
+        var subTabs = new[] { "常规", "Hermes", "Deepseek harness", "Claude Code", "Codex" };
         for (int i = 0; i < subTabs.Length; i++)
         {
             var idx = i;
@@ -365,10 +366,14 @@ public partial class SettingsWindow : Window
         DockPanel.SetDock(subTabBar, Dock.Top);
 
         var body = new Grid();
-        var sub0 = BuildAgentTab();
+        var sub0 = BuildGeneralTab();
         _aiSubPanes.Add(sub0);
         body.Children.Add(sub0);
-        for (int i = 1; i < subTabs.Length; i++)
+        var sub1 = BuildAgentTab();
+        sub1.IsVisible = false;
+        _aiSubPanes.Add(sub1);
+        body.Children.Add(sub1);
+        for (int i = 2; i < subTabs.Length; i++)
         {
             var sub = BuildPlaceholder("🚧", subTabs[i] + " 待实现");
             sub.IsVisible = false;

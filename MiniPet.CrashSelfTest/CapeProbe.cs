@@ -11,9 +11,9 @@ namespace MiniPet.CrashSelfTest;
 /// <summary>
 /// 披风渲染调研探针（StartupObject 模式，参考 IconProbe 写法）：
 /// ① dump 真实 zmap 层序（183 层）+ 披风/effect 相关层位置；
-/// ② 多披风（含 110249）部件 ZField 分布 + PaperdollService.ProbeLayerResolution 落层结果
+/// ② 多披风（含 1102149 冰凌披风）部件 ZField 分布 + PaperdollService.ProbeLayerResolution 落层结果
 ///    （同一二进制在修复前后各跑一次 → 修复前后落层对比）；
-/// ③ Character/Cape/00110249.img 的 effect 节点结构（节点级/帧级？动画帧？canvas 结构）+ info/enableEffect。
+/// ③ Character/Cape/01102149.img 的 effect 节点结构（节点级/帧级？动画帧？canvas 结构）+ info/enableEffect。
 /// 用法：dotnet run --project MiniPet.CrashSelfTest -p:UsedAvaloniaProducts= -p:StartupObject=MiniPet.CrashSelfTest.CapeProbe
 /// </summary>
 public static class CapeProbe
@@ -57,7 +57,7 @@ public static class CapeProbe
         DumpZmap(wz);
         DumpCapePieces(wz);
         DumpEffectStructure(wz);
-        DumpInfoNode(wz, "110249");
+        DumpInfoNode(wz, "1102149");
         ScanEffects(wz);
     }
 
@@ -86,7 +86,7 @@ public static class CapeProbe
     private static void DumpCapePieces(WzService wz)
     {
         // MapleSalon2 fixLayers 注释里出现过的披风 id + 任务指定 110249 + 本 WZ 实测含帧级 effect 的披风
-        var capeIds = new[] { "110249", "1102000", "1102081", "1102270", "1102613", "1102657", "1102665", "1102682", "1103058", "1103098", "1103741", "1103488", "1103489", "1103490", "1103733", "1103734" };
+        var capeIds = new[] { "1102149", "1102000", "1102081", "1102270", "1102613", "1102657", "1102665", "1102682", "1103058", "1103098", "1103741", "1103488", "1103489", "1103490", "1103733", "1103734" };
         var cache = new CacheManager();
         var paperdoll = new PaperdollService(wz, cache, new SpriteService(cache));
         string[] actions = { "stand1", "walk1", "jump", "alert", "swingOF", "swingO1", "sit", "prone" };
@@ -165,7 +165,7 @@ public static class CapeProbe
     // ── ③ effect 节点结构 ──
     private static void DumpEffectStructure(WzService wz)
     {
-        var ids = new[] { "110249", "1102000", "1102081", "1102270", "1103488", "1103733" };
+        var ids = new[] { "1102149", "1102000", "1102081", "1102270", "1103488", "1103733" };
         foreach (var id in ids)
         {
             string root = $"Character/Cape/{id.PadLeft(8, '0')}.img";
