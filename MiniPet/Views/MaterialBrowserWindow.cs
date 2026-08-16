@@ -251,18 +251,18 @@ public partial class MaterialBrowserWindow : Window
         _categoryButtons["全部"] = allBtn;
         stack.Children.Add(allBtn);
 
-        // ── 🧍 纸娃娃组（accent 蓝组头）──
-        stack.Children.Add(BuildCategoryGroupHeader("🧍 纸娃娃", AccentColor));
-        foreach (var cat in PaperdollCategories)
+        // ── 👾 素材组（橙色组头：怪物/NPC 与纸娃娃部件一眼区分；2026-08-16 用户要求怪物/NPC 在上）──
+        stack.Children.Add(BuildCategoryGroupHeader("👾 素材", MaterialGroupColor));
+        foreach (var cat in MaterialCategories)
         {
             var btn = BuildCategoryButton(cat);
             _categoryButtons[cat] = btn;
             stack.Children.Add(btn);
         }
 
-        // ── 👾 素材组（橙色组头：怪物/NPC 与纸娃娃部件一眼区分）──
-        stack.Children.Add(BuildCategoryGroupHeader("👾 素材", MaterialGroupColor));
-        foreach (var cat in MaterialCategories)
+        // ── 🧍 纸娃娃组（accent 蓝组头）──
+        stack.Children.Add(BuildCategoryGroupHeader("🧍 纸娃娃", AccentColor));
+        foreach (var cat in PaperdollCategories)
         {
             var btn = BuildCategoryButton(cat);
             _categoryButtons[cat] = btn;
