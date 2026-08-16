@@ -14,8 +14,10 @@ using MiniPet.Services.Adapters;
 namespace MiniPet.Views;
 
 /// <summary>
-/// SettingsWindow Agent 接入 tab（partial 拆分）：BuildAgentTab。
-/// PLAN-agent-integration §7 —— 各 adapter 开关 + 轮询/静默/staleness 阈值 + WZ 庆祝节点路径。
+/// SettingsWindow Agent 接入 tab（partial 拆分）：BuildAgentTab（Hermes，含 DSH 监控区块）+
+/// BuildDshChatTab（DeepSeek Harness 对话入口页）。
+/// PLAN-agent-integration §7 —— 各 adapter 开关 + 轮询/静默/staleness 阈值 + WZ 庆祝节点路径；
+/// DSH 监控 2026-08-16 从「常规」子 tab 撤回 Hermes tab 原位置（与 Hermes 设置同区）。
 /// 绑定 PetSettings.AgentIntegration，手动读写（与 Balloon/Background tab 同风格）。
 /// </summary>
 public partial class SettingsWindow
@@ -39,140 +41,12 @@ public partial class SettingsWindow
     private NumericUpDown? _agentDshPort;
     private TextBox? _agentDshWorkspaceInput;
     private TextBlock? _agentDshStatusText;
+    // ── DeepSeek Harness 对话子 tab UI 引用 ──
+    private TextBlock? _dshChatStatusText;
+    private Button? _dshChatOpenBtn;
+    private TextBlock? _dshChatHint;
     private readonly Dictionary<AgentState, TextBox> _agentStateActionInputs = new();
     private readonly Dictionary<AgentState, TextBox> _agentStateBalloonInputs = new();
-
-    /// <summary>
-    /// 常规设置子 tab（DSH 监控独立成 tab，排在 Hermes 之前；2026-08-XX 从 Hermes tab 移出）。
-    /// </summary>
-    private Border BuildGeneralTab()
-    {
-        try
-        {
-            var ai = _settings.AgentIntegration ?? new AgentIntegrationConfig();
-            // 容错：旧配置缺字段时回填默认
-            if (_settings.AgentIntegration == null)
-            {
-                _settings.AgentIntegration = ai;
-            }
-
-            var scroll = new ScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Padding = new Thickness(0),
-            };
-
-            var root = new StackPanel
-            {
-                Margin = new Thickness(20, 16, 20, 16),
-                Spacing = 18,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-
-            // ── 标题 ──
-            root.Children.Add(new TextBlock
-            {
-                Text = "⚙️ 常规设置",
-                FontSize = 16,
-                FontWeight = FontWeight.Bold,
-                Foreground = BrushTxtPrimary,
-            });
-            root.Children.Add(new TextBlock
-            {
-                Text = "DSH 监控（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权）。",
-                FontSize = 11,
-                Foreground = BrushTxtDim,
-                TextWrapping = TextWrapping.Wrap,
-            });
-
-            // ── DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080） ──
-            root.Children.Add(BuildAgentSectionHeader("DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080）"));
-            var dshPanel = new StackPanel { Spacing = 10 };
-            _agentDshCheck = MakeAgentToggle("DSH 监控（默认开启，DeepSeek Harness 执行状态反映；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
-            dshPanel.Children.Add(_agentDshCheck);
-            var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
-            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
-            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
-            _agentDshHostInput = new TextBox
-            {
-                Watermark = "127.0.0.1",
-                FontSize = 12,
-                Text = ai.DshHost ?? "127.0.0.1",
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            _agentDshStatusText = new TextBlock
-            {
-                Text = "⚪ 未同步（未开启或 DSH 未运行）",
-                FontSize = 11,
-                Foreground = BrushTxtDim,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(_agentDshHostInput, 0);
-            Grid.SetColumn(_agentDshStatusText, 1);
-            dshHostRow.Children.Add(_agentDshHostInput);
-            dshHostRow.Children.Add(_agentDshStatusText);
-            dshPanel.Children.Add(dshHostRow);
-            _agentDshPort = new NumericUpDown();
-            dshPanel.Children.Add(MakeAgentNumericBox("端口（默认 3080，dsh --profile web）", ai.DshPort == 0 ? 3080 : ai.DshPort, 1, 65535, _agentDshPort));
-            var wsWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
-            wsWrap.Children.Add(new TextBlock { Text = "会话工作区 cwd（可选，留空 = MiniPet 进程当前目录）", FontSize = 10, Foreground = BrushTxtDim });
-            _agentDshWorkspaceInput = new TextBox
-            {
-                Watermark = "例：/Users/.../mapleStoryMiniPet/.worktrees/dsh",
-                FontSize = 12,
-                Text = ai.DshWorkspace ?? string.Empty,
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            wsWrap.Children.Add(_agentDshWorkspaceInput);
-            dshPanel.Children.Add(wsWrap);
-            root.Children.Add(dshPanel);
-            root.Children.Add(new TextBlock
-            {
-                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。\n保存后重启生效（与 Hermes 一致）；「🤖 DSH 对话」无需开启观察即可用——点击时自动装配，仅当 DSH 未运行时窗口显示未连接。",
-                FontSize = 10,
-                Foreground = BrushTxtDim,
-                TextWrapping = TextWrapping.Wrap,
-            });
-
-            // 挂 DshAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
-            if (DshAdapter.Current is { } dshAdapter)
-            {
-                dshAdapter.ConnStatusCallback += UpdateDshConnStatus;
-            }
-
-            // ── 保存按钮 ──
-            var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
-            var saveBtn = new Button
-            {
-                Content = "💾 保存",
-                FontSize = 11,
-                Padding = new Thickness(20, 8),
-                Background = BrushAccent,
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(6),
-            };
-            UiStyle.ApplyHover(saveBtn);
-            saveBtn.Click += (_, _) => SaveAgentIntegration();
-            btnRow.Children.Add(saveBtn);
-            root.Children.Add(btnRow);
-
-            scroll.Content = root;
-            return new Border { Child = scroll };
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BuildGeneralTab: {ex.Message}"); return new Border(); }
-    }
 
     private Border BuildAgentTab()
     {
@@ -333,6 +207,71 @@ public partial class SettingsWindow
                 TextWrapping = TextWrapping.Wrap,
             });
 
+            // ── DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080；2026-08-16 从「常规」子 tab 撤回 Hermes tab 原位置） ──
+            root.Children.Add(BuildAgentSectionHeader("DSH 监控（DeepSeek Harness，本机 127.0.0.1:3080）"));
+            var dshPanel = new StackPanel { Spacing = 10 };
+            _agentDshCheck = MakeAgentToggle("DSH 监控（默认开启，DeepSeek Harness 执行状态反映；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
+            dshPanel.Children.Add(_agentDshCheck);
+            var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
+            dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
+            _agentDshHostInput = new TextBox
+            {
+                Watermark = "127.0.0.1",
+                FontSize = 12,
+                Text = ai.DshHost ?? "127.0.0.1",
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            _agentDshStatusText = new TextBlock
+            {
+                Text = "⚪ 未同步（未开启或 DSH 未运行）",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(_agentDshHostInput, 0);
+            Grid.SetColumn(_agentDshStatusText, 1);
+            dshHostRow.Children.Add(_agentDshHostInput);
+            dshHostRow.Children.Add(_agentDshStatusText);
+            dshPanel.Children.Add(dshHostRow);
+            _agentDshPort = new NumericUpDown();
+            dshPanel.Children.Add(MakeAgentNumericBox("端口（默认 3080，dsh --profile web）", ai.DshPort == 0 ? 3080 : ai.DshPort, 1, 65535, _agentDshPort));
+            var wsWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            wsWrap.Children.Add(new TextBlock { Text = "会话工作区 cwd（可选，留空 = MiniPet 进程当前目录）", FontSize = 10, Foreground = BrushTxtDim });
+            _agentDshWorkspaceInput = new TextBox
+            {
+                Watermark = "例：/Users/.../mapleStoryMiniPet/.worktrees/dsh",
+                FontSize = 12,
+                Text = ai.DshWorkspace ?? string.Empty,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            wsWrap.Children.Add(_agentDshWorkspaceInput);
+            dshPanel.Children.Add(wsWrap);
+            root.Children.Add(dshPanel);
+            root.Children.Add(new TextBlock
+            {
+                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。\n保存后重启生效（与 Hermes 一致）；「🤖 DSH 对话」无需开启观察即可用——点击时自动装配，仅当 DSH 未运行时窗口显示未连接。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // 挂 DshAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
+            if (DshAdapter.Current is { } dshAdapter)
+            {
+                dshAdapter.ConnStatusCallback += UpdateDshConnStatus;
+            }
+
             // ── 7 态映射配置区 ──
             root.Children.Add(BuildAgentSectionHeader("7 态 状态→反馈 映射"));
             root.Children.Add(new TextBlock
@@ -421,6 +360,112 @@ public partial class SettingsWindow
             return new Border { Child = scroll };
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BuildAgentTab: {ex.Message}"); return new Border(); }
+    }
+
+    /// <summary>
+    /// DeepSeek Harness 对话子 tab（2026-08-16 由占位改为实际功能页）：
+    /// 与桌宠右键菜单「🤖 DSH 对话」同链路——DshChatWindow.OpenOrActivate（单例，已开则聚焦）。
+    /// DshAdapter 未装配（DshEnabled 关或 App 启动未装配）时按钮降级为说明文字：
+    /// 设置窗口无 EventBus 依赖无法就地自动装配，提示用户先经桌宠右键菜单装配或开启 DSH 监控后重启。
+    /// </summary>
+    private Border BuildDshChatTab()
+    {
+        try
+        {
+            var scroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(0),
+            };
+
+            var root = new StackPanel
+            {
+                Margin = new Thickness(20, 16, 20, 16),
+                Spacing = 18,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+
+            // ── 标题 ──
+            root.Children.Add(new TextBlock
+            {
+                Text = "DeepSeek Harness 对话",
+                FontSize = 16,
+                FontWeight = FontWeight.Bold,
+                Foreground = BrushTxtPrimary,
+            });
+            root.Children.Add(new TextBlock
+            {
+                Text = "连接本机 DeepSeek Harness（DeepSeek Harness Web GUI 后端，loopback 127.0.0.1:3080，免鉴权），打开迷你对话窗口即可与 DSH 会话对话（session.create 固定 minipet_dsh 复用）。\n对话链路独立于「DSH 监控」观察开关；仅当本机 DSH 未运行时窗口显示未连接。",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // ── 连接状态提示 ──
+            var dsh = DshAdapter.Current;
+            _dshChatStatusText = new TextBlock
+            {
+                Text = dsh != null && dsh.IsConnected
+                    ? "🟢 DSH 已连接（127.0.0.1:3080）"
+                    : "🔴 DSH 未连接（适配器未装配或 DSH 未运行）",
+                FontSize = 12,
+                Foreground = BrushTxtSecondary,
+            };
+            root.Children.Add(_dshChatStatusText);
+
+            // ── 打开对话窗口按钮 ──
+            _dshChatOpenBtn = new Button
+            {
+                Content = "💬 打开 DSH 对话窗口",
+                FontSize = 12,
+                Padding = new Thickness(22, 10),
+                Background = BrushAccent,
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(6),
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            UiStyle.ApplyHover(_dshChatOpenBtn);
+            _dshChatOpenBtn.Click += (_, _) => OpenDshChatWindow();
+            // 缺少必要依赖（DshAdapter 未装配，设置窗口无 EventBus 无法就地装配）→ 按钮禁用，降级为说明文字
+            _dshChatOpenBtn.IsEnabled = dsh != null;
+            root.Children.Add(_dshChatOpenBtn);
+
+            _dshChatHint = new TextBlock
+            {
+                Text = dsh != null
+                    ? "点击后打开 DSH 对话窗口（单例，已开则聚焦）；连接状态在窗口状态行实时显示。"
+                    : "⚠️ DSH 适配器未装配（设置窗口无 EventBus，无法就地自动装配）。\n请先在桌宠右键菜单点一次「🤖 DSH 对话」自动装配，或开启本页「Hermes」tab 的 DSH 监控后重启 MiniPet。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            root.Children.Add(_dshChatHint);
+
+            scroll.Content = root;
+            return new Border { Child = scroll };
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BuildDshChatTab: {ex.Message}"); return new Border(); }
+    }
+
+    /// <summary>打开 DSH 对话窗口（与桌宠右键菜单「🤖 DSH 对话」同链路：DshChatWindow.OpenOrActivate 单例）。</summary>
+    private void OpenDshChatWindow()
+    {
+        try
+        {
+            if (DshAdapter.Current == null)
+            {
+                // 降级：按钮已禁用，双保险——点击也只会提示
+                if (_dshChatHint != null)
+                {
+                    _dshChatHint.Text = "⚠️ DSH 适配器未装配。请先在桌宠右键菜单点一次「🤖 DSH 对话」自动装配，或开启 DSH 监控后重启 MiniPet。";
+                }
+                return;
+            }
+            DshChatWindow.OpenOrActivate();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OpenDshChatWindow: {ex.Message}"); }
     }
 
     private static TextBlock BuildAgentSectionHeader(string text)
