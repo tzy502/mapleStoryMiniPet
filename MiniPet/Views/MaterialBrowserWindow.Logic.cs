@@ -59,10 +59,9 @@ public partial class MaterialBrowserWindow
     {
         var query = (_searchInput?.Text ?? "").Trim();
 
-        // 性别联动过滤（发型/脸型按草稿 Gender 分 id 段）
+        // 2026-08-16：去除性别过滤（用户要求——男女角色不限制，发型/脸型全量展示）
         _filteredEntries = _allEntries
             .Where(e => _activeCategory == "全部" || e.Category == _activeCategory)
-            .Where(e => MatchesGender(e.Category, e.Id, _draftAppearance.Gender))
             .Where(e =>
                 string.IsNullOrEmpty(query) ||
                 e.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
