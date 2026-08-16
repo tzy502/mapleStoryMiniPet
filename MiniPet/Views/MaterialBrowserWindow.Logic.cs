@@ -895,11 +895,8 @@ public partial class MaterialBrowserWindow
                     win.Close();
                     return;
                 }
-                if (cfg.SavedPaperdolls.ContainsKey(name))
-                {
-                    win.Close();
-                    return;
-                }
+                // 2026-08-16：同名直接覆盖（用户要求「保存搭配是覆盖不是新增」）；
+                // 原逻辑 ContainsKey 时直接关闭不保存——同名存档无法更新
                 cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
                 _configService!.SaveSettings(cfg);
                 RefreshOutfitList();
