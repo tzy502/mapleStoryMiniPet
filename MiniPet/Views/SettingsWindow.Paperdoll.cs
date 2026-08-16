@@ -321,7 +321,7 @@ public partial class SettingsWindow
         content.Children.Add(BuildEquipSelectRow("帽 子", "帽子", out _capIdInput));
         content.Children.Add(BuildEquipSelectRow("披 风", "披风", out _capeIdInput));
         content.Children.Add(BuildEquipSelectRow("上 衣", "上衣", out _coatIdInput));
-        content.Children.Add(BuildEquipSelectRow("长 袍", "长袍", out _overallIdInput));
+        content.Children.Add(BuildEquipSelectRow("套 服", "套服", out _overallIdInput));
         content.Children.Add(BuildEquipSelectRow("裤 子", "裤子", out _pantsIdInput));
         content.Children.Add(BuildEquipSelectRow("鞋 子", "鞋子", out _shoesIdInput));
         content.Children.Add(BuildEquipSelectRow("武 器", "武器", out _weaponIdInput));
@@ -446,7 +446,7 @@ public partial class SettingsWindow
             case "帽子": _paperdollCurrent.Cap = draft.Cap; break;
             case "披风": _paperdollCurrent.Cape = draft.Cape; break;
             case "上衣": _paperdollCurrent.Coat = draft.Coat; break;
-            case "长袍": _paperdollCurrent.Overall = draft.Overall; break;
+            case "套服": _paperdollCurrent.Overall = draft.Overall; break;
             case "裤子": _paperdollCurrent.Pants = draft.Pants; break;
             case "鞋子": _paperdollCurrent.Shoes = draft.Shoes; break;
             case "手套": _paperdollCurrent.Glove = draft.Glove; break;
@@ -464,7 +464,7 @@ public partial class SettingsWindow
     {
         "发型" => _paperdollCurrent.Hair?.Id ?? "", "脸型" => _paperdollCurrent.Face?.Id ?? "",
         "帽子" => _paperdollCurrent.Cap?.Id ?? "", "披风" => _paperdollCurrent.Cape?.Id ?? "",
-        "上衣" => _paperdollCurrent.Coat?.Id ?? "", "长袍" => _paperdollCurrent.Overall?.Id ?? "",
+        "上衣" => _paperdollCurrent.Coat?.Id ?? "", "套服" => _paperdollCurrent.Overall?.Id ?? "",
         "裤子" => _paperdollCurrent.Pants?.Id ?? "", "鞋子" => _paperdollCurrent.Shoes?.Id ?? "",
         "手套" => _paperdollCurrent.Glove?.Id ?? "", "武器" => _paperdollCurrent.Weapon?.Id ?? "",
         "盾牌" => _paperdollCurrent.Shield?.Id ?? "",
@@ -477,7 +477,7 @@ public partial class SettingsWindow
     private static string CategoryFolder(string category) => category switch
     {
         "发型" => "Hair", "脸型" => "Face", "帽子" => "Cap", "上衣" => "Coat",
-        "长袍" => "Longcoat", "裤子" => "Pants", "鞋子" => "Shoes", "手套" => "Glove",
+        "套服" => "Longcoat", "裤子" => "Pants", "鞋子" => "Shoes", "手套" => "Glove",
         "武器" => "Weapon", "盾牌" => "Shield", "披风" => "Cape",
         "面饰" or "眼饰" or "耳环" => "Accessory",
         "坐骑" => "TamingMob", "椅子" => "Install",
@@ -504,7 +504,7 @@ public partial class SettingsWindow
             case "帽子": _paperdollCurrent.Cap = null; break;
             case "披风": _paperdollCurrent.Cape = null; break;
             case "上衣": _paperdollCurrent.Coat = null; break;
-            case "长袍": _paperdollCurrent.Overall = null; break;
+            case "套服": _paperdollCurrent.Overall = null; break;
             case "裤子": _paperdollCurrent.Pants = null; break;
             case "鞋子": _paperdollCurrent.Shoes = null; break;
             case "手套": _paperdollCurrent.Glove = null; break;
@@ -739,7 +739,7 @@ public partial class SettingsWindow
             if (_capIdInput != null) { _capIdInput.Content = CategoryDisplayName("帽子"); }
             if (_capeIdInput != null) { _capeIdInput.Content = CategoryDisplayName("披风"); }
             if (_coatIdInput != null) { _coatIdInput.Content = CategoryDisplayName("上衣"); }
-            if (_overallIdInput != null) { _overallIdInput.Content = CategoryDisplayName("长袍"); }
+            if (_overallIdInput != null) { _overallIdInput.Content = CategoryDisplayName("套服"); }
             if (_pantsIdInput != null) { _pantsIdInput.Content = CategoryDisplayName("裤子"); }
             if (_shoesIdInput != null) { _shoesIdInput.Content = CategoryDisplayName("鞋子"); }
             if (_gloveIdInput != null) { _gloveIdInput.Content = CategoryDisplayName("手套"); }
@@ -877,7 +877,7 @@ public partial class SettingsWindow
             var parts = new (string Label, string? Id)[] {
                 ("发型", _paperdollCurrent.Hair?.Id), ("脸型", _paperdollCurrent.Face?.Id),
                 ("帽子", _paperdollCurrent.Cap?.Id), ("披风", _paperdollCurrent.Cape?.Id),
-                ("上衣", _paperdollCurrent.Coat?.Id), ("长袍", _paperdollCurrent.Overall?.Id),
+                ("上衣", _paperdollCurrent.Coat?.Id), ("套服", _paperdollCurrent.Overall?.Id),
                 ("裤子", _paperdollCurrent.Pants?.Id), ("鞋子", _paperdollCurrent.Shoes?.Id),
                 ("武器", _paperdollCurrent.Weapon?.Id), ("盾牌", _paperdollCurrent.Shield?.Id),
                 ("手套", _paperdollCurrent.Glove?.Id),

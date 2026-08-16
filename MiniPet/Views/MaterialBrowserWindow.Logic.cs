@@ -545,7 +545,7 @@ public partial class MaterialBrowserWindow
             "脸型" => $"Character/Face/{id.PadLeft(8, '0')}.img",
             "帽子" => $"Character/Cap/{id.PadLeft(8, '0')}.img",
             "上衣" => $"Character/Coat/{id.PadLeft(8, '0')}.img",
-            "长袍" => $"Character/Longcoat/{id.PadLeft(8, '0')}.img",
+            "套服" => $"Character/Longcoat/{id.PadLeft(8, '0')}.img",
             "裤子" => $"Character/Pants/{id.PadLeft(8, '0')}.img",
             "鞋子" => $"Character/Shoes/{id.PadLeft(8, '0')}.img",
             "手套" => $"Character/Glove/{id.PadLeft(8, '0')}.img",
@@ -829,7 +829,7 @@ public partial class MaterialBrowserWindow
             case "脸型": _draftAppearance.Face = it; return;
             case "帽子": _draftAppearance.Cap = it; return;
             case "上衣": _draftAppearance.Coat = it; return;
-            case "长袍": _draftAppearance.Overall = it; return;
+            case "套服": _draftAppearance.Overall = it; return;
             case "裤子": _draftAppearance.Pants = it; return;
             case "鞋子": _draftAppearance.Shoes = it; return;
             case "手套": _draftAppearance.Glove = it; return;
@@ -1136,7 +1136,7 @@ public partial class MaterialBrowserWindow
             AddCharacterCategory(wz, entries, "Face", "脸型", "😊");
             foreach (var (folder, cat, emoji) in new[]
             {
-                ("Cap", "帽子", "⛑️"), ("Coat", "上衣", "🛡️"), ("Longcoat", "长袍", "🧥"),
+                ("Cap", "帽子", "⛑️"), ("Coat", "上衣", "🛡️"), ("Longcoat", "套服", "🧥"),
                 ("Pants", "裤子", "👖"), ("Shoes", "鞋子", "👢"), ("Glove", "手套", "🧤"),
                 ("Weapon", "武器", "🗡️"), ("Shield", "盾牌", "🛡️"), ("Cape", "披风", "🧣"),
                 ("TamingMob", "坐骑", "🏍️"),

@@ -18,7 +18,7 @@ namespace MiniPet.Models
         public ItemInfo? Cap { get; set; }
         public ItemInfo? Cape { get; set; }
         public ItemInfo? Coat { get; set; }
-        /// <summary>105xxxx 长袍/套服（与 Coat/Pants 冲突，选穿互斥）。</summary>
+        /// <summary>105xxxx 套服/套服（与 Coat/Pants 冲突，选穿互斥）。</summary>
         public ItemInfo? Overall { get; set; }
         public ItemInfo? Pants { get; set; }
         public ItemInfo? Shoes { get; set; }
