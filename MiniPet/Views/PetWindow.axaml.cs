@@ -749,7 +749,10 @@ public partial class PetWindow : Window
             _lastElapsed = elapsed;
 
             if (delta <= 0) { delta = 33; }
-            if (delta > 500) { delta = 33; } // 防止大跳跃（窗口失焦后恢复）
+            // 2026-08-17：大跳（失焦恢复/卡顿）原 clamp 到 33ms 会吞掉实际时间——慢渲染/低帧
+            // 环境下空闲随机累计永远到不了阈值（Windows 纯净版「定时器不切动画」的根因候选）。
+            // 改为封顶 500ms：保留大部分实际时间，既防失焦跳变失控，又不饿死空闲累计。
+            if (delta > 500) { delta = 500; }
 
             var fr = _animService.Tick(delta);
             byte[]? pngData = null;
