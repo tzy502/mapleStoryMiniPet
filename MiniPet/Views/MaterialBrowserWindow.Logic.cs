@@ -373,10 +373,7 @@ public partial class MaterialBrowserWindow
         {
             return;
         }
-        if (_selectBtn != null)
-        {
-            _selectBtn.Content = IsPaperdollCategory(entry.Category) && _paperdoll != null ? "✅ 应用到主窗口" : "✅ 选择";
-        }
+        UpdateSelectButtonText(entry);
         UpdateDetail(entry);
     }
 
@@ -895,9 +892,14 @@ public partial class MaterialBrowserWindow
         {
             _countLabel.Text = $"{_filteredEntries.Count} 条 / {_totalPages} 页";
         }
-        if (_pageLabel != null)
+        // 页码输入框只显示数字；总页数显示在右侧纯文本（如 "/ 5"）
+        if (_pageInput != null)
         {
-            _pageLabel.Text = $"{_currentPage}/{_totalPages}";
+            _pageInput.Text = _currentPage.ToString();
+        }
+        if (_pageTotalLabel != null)
+        {
+            _pageTotalLabel.Text = $"/ {_totalPages}";
         }
         if (_prevBtn != null)
         {
