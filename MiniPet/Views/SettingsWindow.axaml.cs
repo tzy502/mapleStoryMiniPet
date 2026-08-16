@@ -346,15 +346,15 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>
-    /// AI 设置主 pane（2026-08-15：Agent 接入从「桌宠设置」子 tab 移入此处；
-    /// 2026-08-16：撤销「常规」子 tab——DSH 监控撤回 Hermes tab 原位置；「Deepseek harness」子 tab 由占位改为 DSH 对话页）。
-    /// 子 tab：Hermes（Agent 接入 + DSH 监控区块，默认可见）/ Deepseek harness（DSH 对话入口）/ Claude Code / Codex（后两者占位待实现）。
+    /// AI 设置主 pane（2026-08-16 重构：通用设置独立 tab 放最前——阈值/Adapter 开关/7 态映射/WZ 节点；
+    /// Hermes tab 只留 Hermes 连接与 Profile；Deepseek harness tab = DSH 监控 + DSH 对话）。
+    /// 子 tab：通用 / Hermes / Deepseek harness / Claude Code / Codex（后两者占位待实现）。
     /// </summary>
     private Border BuildAiSettingsPane()
     {
         var container = new DockPanel();
         var subTabBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 4, 14, 0) };
-        var subTabs = new[] { "Hermes", "Deepseek harness", "Claude Code", "Codex" };
+        var subTabs = new[] { "通用", "Hermes", "Deepseek harness", "Claude Code", "Codex" };
         for (int i = 0; i < subTabs.Length; i++)
         {
             var idx = i;
@@ -366,14 +366,18 @@ public partial class SettingsWindow : Window
         DockPanel.SetDock(subTabBar, Dock.Top);
 
         var body = new Grid();
-        var sub0 = BuildAgentTab();
+        var sub0 = BuildGeneralTab();
         _aiSubPanes.Add(sub0);
         body.Children.Add(sub0);
-        var sub1 = BuildDshChatTab();
+        var sub1 = BuildAgentTab();
         sub1.IsVisible = false;
         _aiSubPanes.Add(sub1);
         body.Children.Add(sub1);
-        for (int i = 2; i < subTabs.Length; i++)
+        var sub2 = BuildDshChatTab();
+        sub2.IsVisible = false;
+        _aiSubPanes.Add(sub2);
+        body.Children.Add(sub2);
+        for (int i = 3; i < subTabs.Length; i++)
         {
             var sub = BuildPlaceholder("🚧", subTabs[i] + " 待实现");
             sub.IsVisible = false;

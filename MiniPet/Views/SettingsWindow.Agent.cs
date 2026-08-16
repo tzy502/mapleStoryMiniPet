@@ -48,7 +48,11 @@ public partial class SettingsWindow
     private readonly Dictionary<AgentState, TextBox> _agentStateActionInputs = new();
     private readonly Dictionary<AgentState, TextBox> _agentStateBalloonInputs = new();
 
-    private Border BuildAgentTab()
+    /// <summary>
+    /// 通用设置子 tab（2026-08-16：从 Hermes tab 抽离的通用配置——Adapter 开关 / 阈值 / 7 态映射 / WZ 节点，
+    /// 排在 Hermes 之前；Hermes tab 只留连接与 Profile，Deepseek harness tab 只留 DSH 内容）。
+    /// </summary>
+    private Border BuildGeneralTab()
     {
         try
         {
@@ -70,27 +74,41 @@ public partial class SettingsWindow
             {
                 Margin = new Thickness(20, 16, 20, 16),
                 Spacing = 18,
-                // 自适应：去掉 MaxWidth=720 上限，内容随窗口宽度伸缩（阈值行/映射行均 Star 等分，不受影响）
                 HorizontalAlignment = HorizontalAlignment.Stretch,
             };
 
             // ── 标题 ──
             root.Children.Add(new TextBlock
             {
-                Text = "🤖 Agent 接入",
+                Text = "⚙️ 通用设置",
                 FontSize = 16,
                 FontWeight = FontWeight.Bold,
                 Foreground = BrushTxtPrimary,
             });
             root.Children.Add(new TextBlock
             {
-                Text = "订阅 DSH / Hermes / Claude Code / Codex 的实时活动状态，用桌宠反映 agent 干活过程。\n优先级 DSH > Hermes > Claude Code > Codex。",
+                Text = "Agent 接入通用配置（所有 adapter 共用）：开关、阈值、7 态反馈映射与庆祝节点。",
                 FontSize = 11,
                 Foreground = BrushTxtDim,
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            // ── adapter 开关区（2026-08-15 移到「Hermes 连接」下方——开启 agent 关联跟随当前 agent 区块）──
+            // ── Adapter 开关 ──
+            root.Children.Add(BuildAgentSectionHeader("Adapter 开关"));
+            var switchRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 16,
+            };
+            _agentHermesCheck = MakeAgentToggle("Hermes", ai.HermesEnabled);
+            _agentCCCheck = MakeAgentToggle("Claude Code", ai.CCEnabled);
+            _agentCodexCheck = MakeAgentToggle("Codex", ai.CodexEnabled);
+            _agentEffectCheck = MakeAgentToggle("特效层", ai.EffectEnabled);
+            switchRow.Children.Add(_agentHermesCheck);
+            switchRow.Children.Add(_agentCCCheck);
+            switchRow.Children.Add(_agentCodexCheck);
+            switchRow.Children.Add(_agentEffectCheck);
+            root.Children.Add(switchRow);
 
             // ── 阈值区 ──
             root.Children.Add(BuildAgentSectionHeader("阈值（秒）"));
@@ -117,95 +135,6 @@ public partial class SettingsWindow
             threshGrid.Children.Add(c2);
             threshGrid.Children.Add(c3);
             root.Children.Add(threshGrid);
-
-            // ── Hermes 连接（api_server） ──
-            root.Children.Add(BuildAgentSectionHeader("Hermes 连接（api_server）"));
-            var connPanel = new StackPanel { Spacing = 10 };
-            _agentHermesPort = new NumericUpDown();
-            connPanel.Children.Add(MakeAgentNumericBox("端口（0 = 自动发现，默认 8642）", ai.HermesPort, 0, 65535, _agentHermesPort));
-            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
-            keyWrap.Children.Add(new TextBlock { Text = "API Server Key（api_server Bearer 本地凭证，仅本机勿备份同步）", FontSize = 10, Foreground = BrushTxtDim });
-            _agentHermesApiKey = new TextBox
-            {
-                Watermark = "Hermes config.yaml 的 api_server key",
-                FontSize = 12,
-                TextAlignment = TextAlignment.Left,
-                Text = ai.HermesApiServerKey ?? string.Empty,
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            keyWrap.Children.Add(_agentHermesApiKey);
-            connPanel.Children.Add(keyWrap);
-            root.Children.Add(connPanel);
-
-            // ── adapter 开关区（S2：补装配——原注释声明此区「移到 Hermes 连接下方」但控件从未构建，
-            //     _agentHermesCheck/_agentCCCheck 等死字段从未赋值 → 开关在 UI 上不可用、保存时读 null 丢弃）──
-            root.Children.Add(BuildAgentSectionHeader("Adapter 开关"));
-            var switchRow = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 16,
-            };
-            _agentHermesCheck = MakeAgentToggle("Hermes", ai.HermesEnabled);
-            _agentCCCheck = MakeAgentToggle("Claude Code", ai.CCEnabled);
-            _agentCodexCheck = MakeAgentToggle("Codex", ai.CodexEnabled);
-            _agentEffectCheck = MakeAgentToggle("特效层", ai.EffectEnabled);
-            switchRow.Children.Add(_agentHermesCheck);
-            switchRow.Children.Add(_agentCCCheck);
-            switchRow.Children.Add(_agentCodexCheck);
-            switchRow.Children.Add(_agentEffectCheck);
-            root.Children.Add(switchRow);
-
-            // ── Hermes Profile（profile 名 + 同步状态显示） ──
-            root.Children.Add(BuildAgentSectionHeader("Hermes Profile"));
-            var profileRow = new Grid
-            {
-                ColumnSpacing = 8,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // profile 名输入（占满剩余宽度）
-            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
-            _agentHermesProfileInput = new TextBox
-            {
-                Watermark = "默认空 = 默认 profile",
-                FontSize = 12,
-                Text = ai.HermesProfile ?? string.Empty,
-                Background = Brushes.White,
-                Foreground = Brushes.Black,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            _agentHermesStatusText = new TextBlock
-            {
-                Text = "⚪ 未同步",
-                FontSize = 11,
-                Foreground = BrushTxtDim,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(_agentHermesProfileInput, 0);
-            Grid.SetColumn(_agentHermesStatusText, 1);
-            profileRow.Children.Add(_agentHermesProfileInput);
-            profileRow.Children.Add(_agentHermesStatusText);
-            root.Children.Add(profileRow);
-
-            // 挂 HermesAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
-            if (HermesAdapter.Current is { } hermesAdapter)
-            {
-                hermesAdapter.ConnStatusCallback += UpdateHermesConnStatus;
-            }
-            root.Children.Add(new TextBlock
-            {
-                Text = "默认空 = 默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析（根尊重 HERMES_HOME）。",
-                FontSize = 10,
-                Foreground = BrushTxtDim,
-                TextWrapping = TextWrapping.Wrap,
-            });
 
             // ── 7 态映射配置区 ──
             root.Children.Add(BuildAgentSectionHeader("7 态 状态→反馈 映射"));
@@ -273,6 +202,142 @@ public partial class SettingsWindow
                 Padding = new Thickness(10, 6),
             };
             root.Children.Add(_agentWzNodeInput);
+
+            // ── 保存按钮 ──
+            var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
+            var saveBtn = new Button
+            {
+                Content = "💾 保存",
+                FontSize = 11,
+                Padding = new Thickness(20, 8),
+                Background = BrushAccent,
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(6),
+            };
+            UiStyle.ApplyHover(saveBtn);
+            saveBtn.Click += (_, _) => SaveAgentIntegration();
+            btnRow.Children.Add(saveBtn);
+            root.Children.Add(btnRow);
+
+            scroll.Content = root;
+            return new Border { Child = scroll };
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BuildGeneralTab: {ex.Message}"); return new Border(); }
+    }
+
+    private Border BuildAgentTab()
+    {
+        try
+        {
+            var ai = _settings.AgentIntegration ?? new AgentIntegrationConfig();
+            // 容错：旧配置缺字段时回填默认
+            if (_settings.AgentIntegration == null)
+            {
+                _settings.AgentIntegration = ai;
+            }
+
+            var scroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(0),
+            };
+
+            var root = new StackPanel
+            {
+                Margin = new Thickness(20, 16, 20, 16),
+                Spacing = 18,
+                // 自适应：去掉 MaxWidth=720 上限，内容随窗口宽度伸缩（阈值行/映射行均 Star 等分，不受影响）
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+
+            // ── 标题 ──
+            root.Children.Add(new TextBlock
+            {
+                Text = "🔗 Hermes 接入",
+                FontSize = 16,
+                FontWeight = FontWeight.Bold,
+                Foreground = BrushTxtPrimary,
+            });
+            root.Children.Add(new TextBlock
+            {
+                Text = "Hermes（api_server）连接与 Profile 配置；通用行为（Adapter 开关 / 阈值 / 7 态映射）在「通用」tab。",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            // ── Hermes 连接（api_server） ──
+            root.Children.Add(BuildAgentSectionHeader("Hermes 连接（api_server）"));
+            var connPanel = new StackPanel { Spacing = 10 };
+            _agentHermesPort = new NumericUpDown();
+            connPanel.Children.Add(MakeAgentNumericBox("端口（0 = 自动发现，默认 8642）", ai.HermesPort, 0, 65535, _agentHermesPort));
+            var keyWrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 0) };
+            keyWrap.Children.Add(new TextBlock { Text = "API Server Key（api_server Bearer 本地凭证，仅本机勿备份同步）", FontSize = 10, Foreground = BrushTxtDim });
+            _agentHermesApiKey = new TextBox
+            {
+                Watermark = "Hermes config.yaml 的 api_server key",
+                FontSize = 12,
+                TextAlignment = TextAlignment.Left,
+                Text = ai.HermesApiServerKey ?? string.Empty,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            keyWrap.Children.Add(_agentHermesApiKey);
+            connPanel.Children.Add(keyWrap);
+            root.Children.Add(connPanel);
+
+            // ── Hermes Profile（profile 名 + 同步状态显示） ──
+            root.Children.Add(BuildAgentSectionHeader("Hermes Profile"));
+            var profileRow = new Grid
+            {
+                ColumnSpacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // profile 名输入（占满剩余宽度）
+            profileRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));   // 同步状态
+            _agentHermesProfileInput = new TextBox
+            {
+                Watermark = "默认空 = 默认 profile",
+                FontSize = 12,
+                Text = ai.HermesProfile ?? string.Empty,
+                Background = Brushes.White,
+                Foreground = Brushes.Black,
+                BorderBrush = new SolidColorBrush(InputBorder),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 6),
+            };
+            _agentHermesStatusText = new TextBlock
+            {
+                Text = "⚪ 未同步",
+                FontSize = 11,
+                Foreground = BrushTxtDim,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(_agentHermesProfileInput, 0);
+            Grid.SetColumn(_agentHermesStatusText, 1);
+            profileRow.Children.Add(_agentHermesProfileInput);
+            profileRow.Children.Add(_agentHermesStatusText);
+            root.Children.Add(profileRow);
+
+            // 挂 HermesAdapter 同步状态回调（adapter 生命周期跟随 App，静态 Current 单例）。
+            if (HermesAdapter.Current is { } hermesAdapter)
+            {
+                hermesAdapter.ConnStatusCallback += UpdateHermesConnStatus;
+            }
+            root.Children.Add(new TextBlock
+            {
+                Text = "默认空 = 默认 profile；state.db 路径按 ~/.hermes/[profiles/<p>/]state.db 解析（根尊重 HERMES_HOME）。",
+                FontSize = 10,
+                Foreground = BrushTxtDim,
+                TextWrapping = TextWrapping.Wrap,
+            });
 
             // ── 保存按钮 ──
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
