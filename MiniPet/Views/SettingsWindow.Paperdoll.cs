@@ -396,7 +396,9 @@ public partial class SettingsWindow
         return row;
     }
 
-    /// <summary>打开素材选择器（预选部位分类），选件草稿应用该部位到当前外观。</summary>
+    /// <summary>打开素材选择器（预选部位分类），选件草稿应用到当前外观。
+    /// 2026-08-16：回调改为整体应用草稿——从「帽子」打开后切到「上衣」选件的场景，
+    /// 原按打开时分类取单部位（ApplyDraftPartToCurrent(category,…)）会丢失跨分类选择（用户反馈：应用不生效）。</summary>
     private void OpenEquipPicker(string category, Button btn)
     {
         var browser = new MaterialBrowserWindow(_wzService, _config, _paperdollSvc, category);
@@ -406,10 +408,14 @@ public partial class SettingsWindow
             {
                 try
                 {
-                    ApplyDraftPartToCurrent(category, appearance);
-                    btn.Content = CategoryDisplayName(category);
-                    FlashEquipButton(btn); // 选件应用后边框闪 accent 蓝 0.6s（体验 A-2）
+                    // 整体应用草稿（草稿初始化自当前搭配，其他部位不变；SyncInputsFromPaperdoll 刷新全部部位按钮文案）
+                    _paperdollCurrent = CloneAppearance(appearance);
+                    SyncInputsFromPaperdoll();
                     UpdatePaperdollPreview();
+                    if (_statusBarText != null)
+                    {
+                        _statusBarText.Text = "✅ 已应用素材选择";
+                    }
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] EquipPick {category}: {ex.Message}"); }
             });
