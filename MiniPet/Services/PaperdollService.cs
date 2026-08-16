@@ -386,21 +386,23 @@ public class PaperdollService : IEntityFrameProvider
                 AddChairPieces(sources, a, root, frame);
                 continue;
             }
-
-            string act = category == "face" ? ResolveFaceAction(root, expression) : action;
-            string framePath;
+            // R14 脸型：表情结构（对齐 MapleSalon2 CharacterFaceItem）——default 无数字帧（直接 piece），
+            // blink/angry 等为数字帧（blink/0/face…）；帧号取模循环（对齐 MapleSalon2 frame % frames.length）。
             if (category == "face")
             {
-                // face 无数字帧号（default/blink 下直接是 piece）：恒用 {root}/{act}，
-                // 避免 body 帧号越界时脸缺失 → 呼吸动画脸闪烁抖动（对齐旧合成图条行为）
-                framePath = $"{root}/{act}";
-                if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
+                AddExpressionPieces(sources, a, category, root, ResolveFaceAction(root, expression), frame);
+                continue;
             }
-            else
+            // R14 饰品（101 面饰 / 102 眼饰 / 103 耳环）：动作结构优先，动作缺失回退 default 静态帧；
+            // 101 面饰与脸型同构（表情结构 default/blink…），走表情收集。
+            if (category == "earring")
             {
-                framePath = $"{root}/{act}/{frame}";
-                if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
+                AddAccessoryPieces(sources, a, root, action, expression, frame);
+                continue;
             }
+
+            string framePath = $"{root}/{action}/{frame}";
+            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
 
             string itemId = GetCategoryItemId(a, category);
             foreach (var pieceName in _wz.GetFramePieceNames(framePath))
@@ -426,6 +428,87 @@ public class PaperdollService : IEntityFrameProvider
 
         _frameSourcesCache[key] = sources;
         return sources;
+    }
+
+    /// <summary>
+    /// 表情结构部件收集（脸型 + 101 面饰，对齐 MapleSalon2 CharacterFaceItem）：
+    /// 结构 A：{root}/{expr}/{frame}/{piece} —— blink/angry 等数字帧（blink/0/face…），帧号取模循环
+    /// （对齐 MapleSalon2 getPiecesByFrame 的 frame % frames.length）；本 WZ probe 实测：face blink 有 0/1/2 三帧。
+    /// 结构 B：{root}/{expr}/{piece} —— default 无数字帧，piece 直接挂在表情节点下（default/face）。
+    /// </summary>
+    private void AddExpressionPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string expression, int frame)
+    {
+        string itemId = GetCategoryItemId(a, category);
+        string exprPath = $"{root}/{expression}";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(exprPath) != null)) return;
+
+        // 结构 A：数字帧
+        int numericFrames = CountNumericChildren(exprPath);
+        if (numericFrames > 0)
+        {
+            int f = frame % numericFrames;
+            string framePath = $"{exprPath}/{f}";
+            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) return;
+            foreach (var pieceName in _wz.GetFramePieceNames(framePath))
+            {
+                if (pieceName == "delay" || pieceName == "move") continue;
+                if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
+                sources.Add(new PieceSource(category, pieceName, $"{framePath}/{pieceName}", itemId));
+            }
+            return;
+        }
+        // 结构 B：直接 piece（default/face）
+        foreach (var pieceName in _wz.GetFramePieceNames(exprPath))
+        {
+            if (pieceName == "delay" || pieceName == "move" || pieceName == "info") continue;
+            if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
+            sources.Add(new PieceSource(category, pieceName, $"{exprPath}/{pieceName}", itemId));
+        }
+    }
+
+    /// <summary>
+    /// 饰品部件收集（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 分类）：
+    /// ① 动作结构（102/103 实测：{root}/stand1/0/default，piece 为 uol 指向静态帧）——动作节点存在即用；
+    /// ② 动作节点存在但帧缺失（少见）→ 回退 {root}/default 静态帧（piece 名同节点名 "default"）；
+    /// ③ 无动作结构（101 面饰实测：仅 default/blink/hit… 表情结构，与脸型同构）→ 走表情收集 AddExpressionPieces。
+    /// 修复前 101 面饰被当动作结构走 {root}/stand1/0 → 不存在 → 永不渲染（用户反馈「面饰不显示」）。
+    /// </summary>
+    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string root, string action, string expression, int frame)
+    {
+        string itemId = GetCategoryItemId(a, "earring");
+        // ① 动作结构
+        if (_wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/{action}") != null))
+        {
+            string framePath = $"{root}/{action}/{frame}";
+            if (_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null))
+            {
+                foreach (var pieceName in _wz.GetFramePieceNames(framePath))
+                {
+                    if (pieceName == "delay" || pieceName == "move") continue;
+                    if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
+                    sources.Add(new PieceSource("earring", pieceName, $"{framePath}/{pieceName}", itemId));
+                }
+                return;
+            }
+            // ② 帧缺失 → 静态 default 回退
+            AddDefaultStaticPiece(sources, a, root, itemId);
+            return;
+        }
+        // ③ 表情结构（101 面饰）：default 直接 piece / blink 数字帧
+        AddExpressionPieces(sources, a, "earring", root, ResolveFaceAction(root, expression), frame);
+    }
+
+    /// <summary>静态默认帧收集：{root}/default 直接 piece（102/103 动作缺失时的回退；piece 名同节点名 "default"，z 指向对应 accessory 层）。</summary>
+    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string root, string itemId)
+    {
+        string defaultPath = $"{root}/default";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(defaultPath) != null)) return;
+        foreach (var pieceName in _wz.GetFramePieceNames(defaultPath))
+        {
+            if (pieceName == "delay" || pieceName == "move" || pieceName == "info") continue;
+            if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
+            sources.Add(new PieceSource("earring", pieceName, $"{defaultPath}/{pieceName}", itemId));
+        }
     }
 
     /// <summary>部件名是否为特效帧：effect / effect1 / effect2 …（对齐 MapleSalon2 chair effectReg /effect[0-9]?/）。</summary>
