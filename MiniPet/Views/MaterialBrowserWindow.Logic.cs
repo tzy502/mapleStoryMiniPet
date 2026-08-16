@@ -881,8 +881,34 @@ public partial class MaterialBrowserWindow
         };
         stack.Children.Add(input);
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-        var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
-        var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+        // 确认（主操作）：accent 蓝底白字（2026-08-16 统一规范，同素材选择器「✅ 选择」）
+        var okBtn = new Button
+        {
+            Content = "确定",
+            FontSize = 11,
+            FontWeight = FontWeight.Medium,
+            Padding = new Thickness(16, 6),
+            Background = BrushAccent,
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        // 取消（次级）：透明底 + 边框 + 次级亮字（2026-08-16 统一规范，同素材选择器「取消」）
+        var cancelBtn = new Button
+        {
+            Content = "取消",
+            FontSize = 11,
+            Padding = new Thickness(16, 6),
+            Background = Brushes.Transparent,
+            Foreground = BrushTxtSecondary,
+            BorderBrush = BrushBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
         UiStyle.ApplyHover(okBtn);
         UiStyle.ApplyHover(cancelBtn);
         okBtn.Click += (_, _) =>
