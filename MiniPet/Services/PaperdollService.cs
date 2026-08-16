@@ -1267,8 +1267,9 @@ public class PaperdollService : IEntityFrameProvider
     }
 
     /// <summary>
-    /// 椅子 img 根路径探测：Item/Install（或 Cash）/{id/1000:D5}.img 或 {id/10000:D4}.img 或旧版 0301.img，
-    /// 节点 = id 补零 8 位（本 WZ 实测：3010000 → Item/Install/03010.img/03010000；3020000 → 0302.img/03020000）。
+    /// 椅子 img 根路径探测：Item/Install（或 Cash）/{id/1000:D5}.img 或 {id/100:D6}.img 或 {id/10000:D4}.img 或旧版 0301.img，
+    /// 节点 = id 补零 8 位。2026-08-16 probe 实证分组：3010xxx→03010.img（id/1000）、3015xxx→030150.img（id/100）、
+    /// 3020xxx→0302.img（id/10000）；缺 id/100 分组时 3015000 系渲染找不到（原只试 id/1000 和 id/10000）。
     /// 未命中返回 ""（渲染跳过，不崩溃）。
     /// </summary>
     private string ChairRoot(string id)
@@ -1278,9 +1279,11 @@ public class PaperdollService : IEntityFrameProvider
         string[] candidates =
         {
             $"Item/Install/{n / 1000:D5}.img/{node}",
+            $"Item/Install/{n / 100:D6}.img/{node}",
             $"Item/Install/{n / 10000:D4}.img/{node}",
             $"Item/Install/0301.img/{node}",
             $"Item/Cash/{n / 1000:D5}.img/{node}",
+            $"Item/Cash/{n / 100:D6}.img/{node}",
             $"Item/Cash/{n / 10000:D4}.img/{node}",
         };
         foreach (var c in candidates)
