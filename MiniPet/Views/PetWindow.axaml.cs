@@ -969,14 +969,17 @@ public partial class PetWindow : Window
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] EnsureBalloonAnchor: {ex.Message}"); }
     }
 
-    private static List<string> GetCachedActionList(string mobId)
+    /// <summary>
+    /// 读磁盘缓存的动作清单（无 WZ 时菜单/锚点仍可用）。缓存目录统一走 CacheManager.GetCacheDir()
+    /// —— macOS 为 ~/Library/Caches/MiniPet/v1，Windows 为 %LOCALAPPDATA%/MiniPet/cache/v1（原硬编码
+    /// macOS 路径在 Windows 上读不到任何动作，属于跨平台兼容性 bug，2026-08-16 修复）。
+    /// </summary>
+    private List<string> GetCachedActionList(string mobId)
     {
         var result = new List<string>();
         try
         {
-            var cacheDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Library", "Caches", "MiniPet", "v1", "sprites", mobId);
+            var cacheDir = Path.Combine(_cacheManager.GetCacheDir(), "sprites", mobId);
             if (!Directory.Exists(cacheDir)) { return result; }
 
             foreach (var file in Directory.GetFiles(cacheDir, "*.json"))

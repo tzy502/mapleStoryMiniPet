@@ -6,6 +6,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
+using MiniPet.Utils;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -256,10 +257,16 @@ public class BackgroundWindow : Window
             {
                 try
                 {
-                    var handle = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
-                    if (handle != IntPtr.Zero)
+                    // #4 根因：Activate()/Focus() 对 ShowActivated=false 的窗口首次不可靠，窗口未成为 key window 接收 mouseDown。
+                    // 修复（macOS 专属）：makeKeyAndOrderFront: 强制 AppKit 把窗口重挂事件链 + 刷新 ignoresMouseEvents 切换后的 hit-test 状态。
+                    // Windows 无此问题（Focus 即可），且 objc 调用在 Windows 上会抛 DllNotFoundException——平台守卫跳过。
+                    if (!OperatingSystem.IsWindows())
                     {
-                        objc_msgSend(handle, sel_registerName("makeKeyAndOrderFront:"), IntPtr.Zero);
+                        var handle = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                        if (handle != IntPtr.Zero)
+                        {
+                            objc_msgSend(handle, sel_registerName("makeKeyAndOrderFront:"), IntPtr.Zero);
+                        }
                     }
                     Focus();
                 }
@@ -325,11 +332,25 @@ public class BackgroundWindow : Window
     [DllImport("/usr/lib/libobjc.dylib")]
     private static extern IntPtr objc_getClass(string name);
 
-    /// <summary>取全局鼠标坐标（DIP，左上原点）。NSEvent.mouseLocation 是左下原点 y 向上，翻转成 Avalonia 屏幕坐标。</summary>
+    /// <summary>取全局鼠标坐标（DIP，左上原点），交互模式手动拖动用。</summary>
     private Point GetGlobalMousePosition()
     {
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                // Windows：user32 GetCursorPos 返回物理像素 → 除以 RenderScaling 转 DIP，
+                // 与 macOS NSEvent.mouseLocation（DIP）语义对齐，拖动 delta 统一乘 RenderScaling。
+                // 注：光标在异缩放显示器时按本窗口 RenderScaling 换算，多显示器混缩放属已知边角。
+                var pos = WindowsNative.GetCursorPosition();
+                if (pos.HasValue)
+                {
+                    double scale = RenderScaling > 0 ? RenderScaling : 1.0;
+                    return new Point(pos.Value.X / scale, pos.Value.Y / scale);
+                }
+                return new Point(0, 0);
+            }
+            // macOS：NSEvent.mouseLocation 是左下原点 y 向上，翻转成 Avalonia 屏幕坐标。
             var cls = objc_getClass("NSEvent");
             var sel = sel_registerName("mouseLocation");
             var p = objc_msgSend_NSPoint(cls, sel);
@@ -349,6 +370,13 @@ public class BackgroundWindow : Window
         {
             var handle = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
             if (handle == IntPtr.Zero) return;
+            if (OperatingSystem.IsWindows())
+            {
+                // Windows：WS_EX_TRANSPARENT 点击穿透（等价 macOS ignoresMouseEvents）；
+                // 失败最坏 = 窗口拦截点击（与旧实现 macOS-only 时的 Windows 行为一致，不抛）。
+                WindowsNative.SetClickThrough(handle, ignore);
+                return;
+            }
             // macOS 上 TryGetPlatformHandle().Handle 即 AvnWindow（NSWindow 子类），直接调 setIgnoresMouseEvents
             objc_msgSend(handle, sel_registerName("setIgnoresMouseEvents:"), ignore ? new IntPtr(1) : IntPtr.Zero);
         }
