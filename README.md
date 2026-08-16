@@ -76,13 +76,6 @@ dotnet run --project MiniPet/MiniPet.csproj
 - macOS（Dock 不显示桌宠，设置中心正常）
 - Windows 10/11 x64
 
-## 📖 技术要点
-
-- **WZ 解析**：WzComparerR2.WzLib（本地 DLL 引用），全链路锁串行化 + 位图/尺寸/move 多层缓存
-- **渲染管线**：CollectPieces → ResolveAnchors → AssignLayers（zmap 183 层）→ ApplyLocks（smap 槽码遮挡锁）→ 合成——逐帧像素级对齐参考实现
-- **数据校准**：皮肤名（Skin id = Body id + 10000）、坐骑名（Taming 分类）、椅子（Install 分组 img）、装备特效（ItemEff.img）等均以本 WZ 实测为准
-- **性能**：换装预热不打断动画（WarmupFor）、动画热帧零锁、空闲随机动画不阻塞渲染
-
 ## 📚 参考与致谢
 
 本项目参考/借鉴了以下开源项目（算法与数据结构对齐其实现，代码为独立重写）：
@@ -91,12 +84,6 @@ dotnet run --project MiniPet/MiniPet.csproj
 |---|---|---|
 | **MapleSalon2** | 纸娃娃渲染参考 | https://github.com/spd789562/MapleSalon2 |
 | **WzComparerR2** | WZ 解析库与地图渲染参考 | https://github.com/MapleStoryMaple/WzComparerR2 |
-
-## 🧪 测试与自检
-
-- `MiniPet.Tests`：248 项单元测试（动作/渲染/素材逻辑）
-- `MiniPet.CrashSelfTest`：无头自检（设置窗口全流程 + 渲染压测 300 帧）
-- 数据探针：皮肤名 / 坐骑名 / 椅子结构 / 特效帧 / 发型全量扫描等 20+ 探针（`MiniPet.CrashSelfTest/`）
 
 ## ⚠️ 版权声明
 
