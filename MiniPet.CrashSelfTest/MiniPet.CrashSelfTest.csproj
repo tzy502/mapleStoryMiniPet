@@ -7,6 +7,7 @@
     <!-- 多入口点（Program / IconProbe / SettingsPreviewSelfTest / DshProbe）：
          默认入口 Program，命令行 -p:StartupObject=MiniPet.CrashSelfTest.DshProbe 等可覆盖。 -->
     <StartupObject>MiniPet.CrashSelfTest.Program</StartupObject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <!-- StartupObject 是命令行全局属性，会穿透到 MiniPet.csproj（其程序集没有该入口类 → CS1555）。
