@@ -107,6 +107,10 @@ public class MaterialBrowserLogicTests
     [InlineData("坐骑", "1902000", "Character/TamingMob/01902000.img")]
     [InlineData("椅子", "3010000", "Item/Install/0301.img/03010000")]
     [InlineData("怪物", "8880150", null)]
+    // 饰品三分类（对齐 MapleSalon2 拆分）：101 面饰 / 102 眼饰 / 103 耳环 → 同一 Accessory 目录
+    [InlineData("面饰", "1010000", "Character/Accessory/01010000.img")]
+    [InlineData("眼饰", "1020000", "Character/Accessory/01020000.img")]
+    [InlineData("耳环", "1030000", "Character/Accessory/01030000.img")]
     public void CategoryWzRoot_MapsCategoryToIconRoot(string category, string id, string? expected)
     {
         Assert.Equal(expected, MaterialBrowserWindow.CategoryWzRoot(category, id));

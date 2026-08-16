@@ -129,7 +129,8 @@ public partial class SettingsWindow : Window
     private ComboBox? _genderCombo;
     private ComboBox? _earCombo;
     private Button? _hairIdInput, _faceIdInput;
-    private Button? _capIdInput, _capeIdInput, _coatIdInput, _pantsIdInput, _overallIdInput, _earringIdInput;
+    private Button? _capIdInput, _capeIdInput, _coatIdInput, _pantsIdInput, _overallIdInput;
+    private Button? _faceAccessoryIdInput, _eyeAccessoryIdInput, _earringIdInput;
     private Button? _shoesIdInput, _weaponIdInput, _shieldIdInput, _gloveIdInput;
     private Button? _mountIdInput, _chairIdInput;
 

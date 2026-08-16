@@ -366,20 +366,22 @@ public static class AccessoryProbe
             Ear = PaperdollService.EarHuman,
             Face = new ItemInfo { Id = faceId },
             Hair = new ItemInfo { Id = hairId },
+            // 饰品三分类同穿（对齐 MapleSalon2：101 面饰 / 102 眼饰 / 103 耳环）
+            FaceAccessory = new ItemInfo { Id = acc101 },
+            EyeAccessory = new ItemInfo { Id = acc102 },
             Earring = new ItemInfo { Id = acc103 },
-            // 101 面饰 / 102 眼饰 也塞进 Earring（当前 UI 就这么映射）
         };
         foreach (var act in new[] { "stand1", "walk1", "jump" })
         {
             var items = paperdoll.ProbeLayerResolution(appearance, act, 0);
-            Console.WriteLine($"\n  == 动作 {act} 帧0: 收集 {items.Count} 件, 其中 face={items.Count(x => x.Category == "face")} earring={items.Count(x => x.Category == "earring")} ==");
-            foreach (var it in items.Where(x => x.Category is "face" or "earring" or "head" or "hair" or "body"))
+            Console.WriteLine($"\n  == 动作 {act} 帧0: 收集 {items.Count} 件, 其中 face={items.Count(x => x.Category == "face")} faceaccessory={items.Count(x => x.Category == "faceaccessory")} eyeaccessory={items.Count(x => x.Category == "eyeaccessory")} earring={items.Count(x => x.Category == "earring")} ==");
+            foreach (var it in items.Where(x => x.Category is "face" or "faceaccessory" or "eyeaccessory" or "earring" or "head" or "hair" or "body"))
             {
-                Console.WriteLine($"    [{it.Category,-7}] piece={it.PieceName,-18} z={it.ZField,-16} → 层={it.ResolvedLayer,-22} idx={it.ZIndex,4} map={it.HasMap,5} locked={it.Locked,5} hidden={it.Hidden,5}");
+                Console.WriteLine($"    [{it.Category,-14}] piece={it.PieceName,-18} z={it.ZField,-16} → 层={it.ResolvedLayer,-22} idx={it.ZIndex,4} map={it.HasMap,5} locked={it.Locked,5} hidden={it.Hidden,5}");
             }
         }
 
-        // 面饰 101 / 眼饰 102 单独测（当前 UI 都映射到 Earring → 验证是否错误）
+        // 面饰 101 / 眼饰 102 / 耳环 103 单独测（各自独立字段，验证三槽可同穿）
         foreach (var (label, accId) in new[] { ("面饰101", acc101), ("眼饰102", acc102), ("耳环103", acc103) })
         {
             if (string.IsNullOrEmpty(accId)) continue;
@@ -390,11 +392,13 @@ public static class AccessoryProbe
                 Ear = PaperdollService.EarHuman,
                 Face = new ItemInfo { Id = faceId },
                 Hair = new ItemInfo { Id = hairId },
+                FaceAccessory = new ItemInfo { Id = accId },
+                EyeAccessory = new ItemInfo { Id = accId },
                 Earring = new ItemInfo { Id = accId },
             };
             var items2 = paperdoll.ProbeLayerResolution(a2, "stand1", 0);
-            Console.WriteLine($"\n  == {label} {accId}: 收集 {items2.Count} 件, earring={items2.Count(x => x.Category == "earring")} ==");
-            foreach (var it in items2.Where(x => x.Category == "earring"))
+            Console.WriteLine($"\n  == {label} {accId}: 收集 {items2.Count} 件, faceaccessory={items2.Count(x => x.Category == "faceaccessory")} eyeaccessory={items2.Count(x => x.Category == "eyeaccessory")} earring={items2.Count(x => x.Category == "earring")} ==");
+            foreach (var it in items2.Where(x => x.Category is "faceaccessory" or "eyeaccessory" or "earring"))
             {
                 Console.WriteLine($"    piece={it.PieceName,-18} z={it.ZField,-16} → 层={it.ResolvedLayer,-22} idx={it.ZIndex,4} map={it.HasMap,5} locked={it.Locked,5} hidden={it.Hidden,5}");
             }

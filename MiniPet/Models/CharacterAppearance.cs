@@ -25,6 +25,11 @@ namespace MiniPet.Models
         public ItemInfo? Weapon { get; set; }
         public ItemInfo? Shield { get; set; }
         public ItemInfo? Glove { get; set; }
+        /// <summary>面饰（101xxxxx，Accessory 目录，表情结构 default/blink，渲染走 accessoryFace 层；与眼饰/耳环可同穿）。</summary>
+        public ItemInfo? FaceAccessory { get; set; }
+        /// <summary>眼饰（102xxxxx，Accessory 目录，动作结构，渲染走 accessoryEyeOverCap 层；与面饰/耳环可同穿）。</summary>
+        public ItemInfo? EyeAccessory { get; set; }
+        /// <summary>耳环（103xxxxx，Accessory 目录，动作结构，渲染走 accessoryEar 层；与面饰/眼饰可同穿）。</summary>
         public ItemInfo? Earring { get; set; }
         public MountInfo? Mount { get; set; }
         public ChairInfo? Chair { get; set; }

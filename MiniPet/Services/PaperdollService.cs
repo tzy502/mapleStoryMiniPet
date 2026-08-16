@@ -428,11 +428,11 @@ public class PaperdollService : IEntityFrameProvider
                 AddExpressionPieces(sources, a, category, root, ResolveFaceAction(root, expression), frame);
                 continue;
             }
-            // R14 饰品（101 面饰 / 102 眼饰 / 103 耳环）：动作结构优先，动作缺失回退 default 静态帧；
-            // 101 面饰与脸型同构（表情结构 default/blink…），走表情收集。
-            if (category == "earring")
+            // R14 饰品三分类（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 拆分，可同时穿戴）：
+            // 动作结构优先，动作缺失回退 default 静态帧；101 面饰与脸型同构（表情结构 default/blink…），走表情收集。
+            if (category is "faceaccessory" or "eyeaccessory" or "earring")
             {
-                AddAccessoryPieces(sources, a, root, renderAction, expression, renderFrame);
+                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame);
                 continue;
             }
 
@@ -514,15 +514,15 @@ public class PaperdollService : IEntityFrameProvider
     }
 
     /// <summary>
-    /// 饰品部件收集（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 分类）：
+    /// 饰品部件收集（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 分类，category 传三路各自分类名）：
     /// ① 动作结构（102/103 实测：{root}/stand1/0/default，piece 为 uol 指向静态帧）——动作节点存在即用；
     /// ② 动作节点存在但帧缺失（少见）→ 回退 {root}/default 静态帧（piece 名同节点名 "default"）；
     /// ③ 无动作结构（101 面饰实测：仅 default/blink/hit… 表情结构，与脸型同构）→ 走表情收集 AddExpressionPieces。
     /// 修复前 101 面饰被当动作结构走 {root}/stand1/0 → 不存在 → 永不渲染（用户反馈「面饰不显示」）。
     /// </summary>
-    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string root, string action, string expression, int frame)
+    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, string expression, int frame)
     {
-        string itemId = GetCategoryItemId(a, "earring");
+        string itemId = GetCategoryItemId(a, category);
         // ① 动作结构
         if (_wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/{action}") != null))
         {
@@ -533,20 +533,20 @@ public class PaperdollService : IEntityFrameProvider
                 {
                     if (pieceName == "delay" || pieceName == "move") continue;
                     if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
-                    sources.Add(new PieceSource("earring", pieceName, $"{framePath}/{pieceName}", itemId));
+                    sources.Add(new PieceSource(category, pieceName, $"{framePath}/{pieceName}", itemId));
                 }
                 return;
             }
             // ② 帧缺失 → 静态 default 回退
-            AddDefaultStaticPiece(sources, a, root, itemId);
+            AddDefaultStaticPiece(sources, a, category, root, itemId);
             return;
         }
         // ③ 表情结构（101 面饰）：default 直接 piece / blink 数字帧
-        AddExpressionPieces(sources, a, "earring", root, ResolveFaceAction(root, expression), frame);
+        AddExpressionPieces(sources, a, category, root, ResolveFaceAction(root, expression), frame);
     }
 
     /// <summary>静态默认帧收集：{root}/default 直接 piece（102/103 动作缺失时的回退；piece 名同节点名 "default"，z 指向对应 accessory 层）。</summary>
-    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string root, string itemId)
+    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string category, string root, string itemId)
     {
         string defaultPath = $"{root}/default";
         if (!_wz.WithWzLock(() => _wz.FindNodeByPath(defaultPath) != null)) return;
@@ -554,7 +554,7 @@ public class PaperdollService : IEntityFrameProvider
         {
             if (pieceName == "delay" || pieceName == "move" || pieceName == "info") continue;
             if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
-            sources.Add(new PieceSource("earring", pieceName, $"{defaultPath}/{pieceName}", itemId));
+            sources.Add(new PieceSource(category, pieceName, $"{defaultPath}/{pieceName}", itemId));
         }
     }
 
@@ -939,6 +939,7 @@ public class PaperdollService : IEntityFrameProvider
         "pants" => a.Pants?.Id ?? "", "shoe" => a.Shoes?.Id ?? "",
         "glove" => a.Glove?.Id ?? "", "shield" => a.Shield?.Id ?? "",
         "weapon" => a.Weapon?.Id ?? "", "earring" => a.Earring?.Id ?? "",
+        "faceaccessory" => a.FaceAccessory?.Id ?? "", "eyeaccessory" => a.EyeAccessory?.Id ?? "",
         "mount" => a.Mount?.Id ?? "", "chair" => a.Chair?.Id ?? "",
         _ => ""
     };
@@ -1323,12 +1324,14 @@ public class PaperdollService : IEntityFrameProvider
 
     /// <summary>
     /// 类别 → islot 槽位层码（本 WZ 实际数据校准：cap→Cp、hair→Hr、cape→Sr、上衣→Ma、套服→MaPn、
-    /// 盾→Si、耳环→Ae；饰品按 id 前缀动态取——R8：101 面饰→Af、102 肩饰→Ay、103 耳环→Ae）。
+    /// 盾→Si、耳环→Ae；饰品三分类按 id 前缀动态取——R8：101 面饰→Af、102 眼饰→Ay、103 耳环→Ae）。
     /// </summary>
     private static string GetIslotForCategory(string cat, string itemId = "") => cat switch
     {
         "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc",
         "earring" => EarringSlots(itemId),
+        "faceaccessory" => EarringSlots(itemId),
+        "eyeaccessory" => EarringSlots(itemId),
         "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
         "glove" => "Gv", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
         "body" => "Bd", _ => ""
@@ -1343,12 +1346,14 @@ public class PaperdollService : IEntityFrameProvider
     {
         "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc",
         "earring" => EarringSlots(itemId),
+        "faceaccessory" => EarringSlots(itemId),
+        "eyeaccessory" => EarringSlots(itemId),
         "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
         "glove" => "GlGw", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
         "body" => "Bd", _ => ""
     };
 
-    /// <summary>饰品槽位按 id 前缀（R8 校准真实 WZ：101→Af 面饰、102→Ay 肩饰、103→Ae 耳环；其余回退 Ae）。</summary>
+    /// <summary>饰品槽位按 id 前缀（R8 校准真实 WZ：101→Af 面饰、102→Ay 眼饰、103→Ae 耳环；其余回退 Ae）。</summary>
     private static string EarringSlots(string? itemId)
     {
         if (!string.IsNullOrEmpty(itemId) && int.TryParse(itemId, out var n))
@@ -1429,7 +1434,10 @@ public class PaperdollService : IEntityFrameProvider
             "hair" => ResolveHairLayer(p),
             "cap" => "cap", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove",
-            "weapon" => "weapon", "shield" => "shield", "cape" => "cape", "earring" => "accessory",
+            "weapon" => "weapon", "shield" => "shield", "cape" => "cape",
+            // 饰品三分类缺省层统一回退 accessory（WZ 真实 z 字段 accessoryFace/accessoryEyeOverCap/accessoryEar
+            // 由 ResolveLayer 按 zmap 直接命中，此回退仅在部件无 z 时兜底）
+            "earring" => "accessory", "faceaccessory" => "accessory", "eyeaccessory" => "accessory",
             // R13 节点级装备特效：恒落 effect 层（zmap 顶部注册，见 GetZmapTopToBottom）
             "effect" => "effect",
             // R1 坐骑/椅子：z 字段缺失时回退层——坐骑 tamingMobMid（角色身下）、椅子 tamingMobRear（角色身后）
@@ -1581,6 +1589,9 @@ public class PaperdollService : IEntityFrameProvider
         if (HasId(a.Glove)) list.Add(("glove", ItemRoot(a.Glove!.Id)));
         if (HasId(a.Shield)) list.Add(("shield", ItemRoot(a.Shield!.Id)));
         if (HasId(a.Weapon)) list.Add(("weapon", ItemRoot(a.Weapon!.Id)));
+        // 饰品三分类（对齐 MapleSalon2 101 面饰 / 102 眼饰 / 103 耳环，可同时穿戴，各自独立槽位）
+        if (HasId(a.FaceAccessory)) list.Add(("faceaccessory", ItemRoot(a.FaceAccessory!.Id)));
+        if (HasId(a.EyeAccessory)) list.Add(("eyeaccessory", ItemRoot(a.EyeAccessory!.Id)));
         if (HasId(a.Earring)) list.Add(("earring", ItemRoot(a.Earring!.Id)));
         // R1 坐骑/椅子：穿戴配置进渲染链路（TamingMob/Install；椅子路径探测命中才加）
         if (!string.IsNullOrEmpty(a.Mount?.Id))
@@ -1873,7 +1884,9 @@ public class PaperdollService : IEntityFrameProvider
         sb.Append(a.Gender).Append('|').Append(a.Skin).Append('|').Append(a.BodyId).Append('|').Append(a.Ear ?? "").Append('|');
         AppendId(sb, a.Hair); AppendId(sb, a.Face); AppendId(sb, a.Cap); AppendId(sb, a.Cape);
         AppendId(sb, a.Coat); AppendId(sb, a.Overall); AppendId(sb, a.Pants); AppendId(sb, a.Shoes);
-        AppendId(sb, a.Glove); AppendId(sb, a.Shield); AppendId(sb, a.Weapon); AppendId(sb, a.Earring);
+        AppendId(sb, a.Glove); AppendId(sb, a.Shield); AppendId(sb, a.Weapon);
+        // 饰品三分类（101 面饰 / 102 眼饰 / 103 耳环）各自进指纹：换任一分类自动失效相关缓存 + 离线条缓存键
+        AppendId(sb, a.FaceAccessory); AppendId(sb, a.EyeAccessory); AppendId(sb, a.Earring);
         // R1：坐骑/椅子 id 进指纹（换坐骑/椅子自动失效相关缓存 + 离线条缓存键）
         sb.Append(a.Mount?.Id ?? "").Append('|').Append(a.Chair?.Id ?? "").Append('|');
         // R13：装备特效开关进指纹（切换开关自动失效特效相关缓存 + 离线条缓存键）
@@ -1945,7 +1958,8 @@ public class PaperdollService : IEntityFrameProvider
                         if (p.Category == "body" || p.Category == "head" || p.Category == "hair" || p.Category == "face"
                             || p.Category == "cap" || p.Category == "cape" || p.Category == "coat" || p.Category == "pants"
                             || p.Category == "shoe" || p.Category == "glove" || p.Category == "weapon" || p.Category == "shield"
-                            || p.Category == "earring" || p.Category == "effect")
+                            || p.Category == "earring" || p.Category == "faceaccessory" || p.Category == "eyeaccessory"
+                            || p.Category == "effect")
                         {
                             GetBmp(p.PiecePath);
                         }

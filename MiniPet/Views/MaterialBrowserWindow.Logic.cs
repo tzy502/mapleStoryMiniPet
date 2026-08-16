@@ -552,7 +552,7 @@ public partial class MaterialBrowserWindow
             "武器" => $"Character/Weapon/{id.PadLeft(8, '0')}.img",
             "盾牌" => $"Character/Shield/{id.PadLeft(8, '0')}.img",
             "披风" => $"Character/Cape/{id.PadLeft(8, '0')}.img",
-            "饰品" => $"Character/Accessory/{id.PadLeft(8, '0')}.img",
+            "面饰" or "眼饰" or "耳环" => $"Character/Accessory/{id.PadLeft(8, '0')}.img",
             "坐骑" => $"Character/TamingMob/{id.PadLeft(8, '0')}.img",
             "椅子" => $"Item/Install/0301.img/{id.PadLeft(8, '0')}",
             _ => null
@@ -561,7 +561,7 @@ public partial class MaterialBrowserWindow
 
     /// <summary>
     /// 尝试提取条目 icon PNG（对齐 MapleSalon2 getIconPath 语义，真实 WZ 实测存在）：
-    /// 装备 → {root}/info/icon（帽/衣/裤/鞋/手套/武器/盾/披风/饰品/坐骑）；
+    /// 装备 → {root}/info/icon（帽/衣/裤/鞋/手套/武器/盾/披风/面饰/眼饰/耳环/坐骑）；
     /// 发型 → {root}/default/hair；脸型 → {root}/blink/0/face；
     /// 椅子 → {root}/info/icon（Item/Install/0301.img/{id}）；
     /// 回退根 icon/iconRaw；均无返回 null。
@@ -836,7 +836,9 @@ public partial class MaterialBrowserWindow
             case "武器": _draftAppearance.Weapon = it; return;
             case "盾牌": _draftAppearance.Shield = it; return;
             case "披风": _draftAppearance.Cape = it; return;
-            case "饰品": _draftAppearance.Earring = it; return;
+            case "面饰": _draftAppearance.FaceAccessory = it; return;
+            case "眼饰": _draftAppearance.EyeAccessory = it; return;
+            case "耳环": _draftAppearance.Earring = it; return;
             case "坐骑": _draftAppearance.Mount = new MountInfo { Id = id }; return;
             case "椅子": _draftAppearance.Chair = new ChairInfo { Id = id }; return;
         }
@@ -849,8 +851,9 @@ public partial class MaterialBrowserWindow
         switch (part)
         {
             case 100: _draftAppearance.Cap = it; break;
-            case 101:
-            case 102:
+            // 饰品三分类（对齐 MapleSalon2）：101 面饰 / 102 眼饰 / 103 耳环
+            case 101: _draftAppearance.FaceAccessory = it; break;
+            case 102: _draftAppearance.EyeAccessory = it; break;
             case 103: _draftAppearance.Earring = it; break;
             case 104: _draftAppearance.Coat = it; break;
             case 105: _draftAppearance.Overall = it; break;
@@ -1022,6 +1025,7 @@ public partial class MaterialBrowserWindow
             Cap = CloneItem(src.Cap), Cape = CloneItem(src.Cape), Coat = CloneItem(src.Coat),
             Overall = CloneItem(src.Overall), Pants = CloneItem(src.Pants), Shoes = CloneItem(src.Shoes),
             Glove = CloneItem(src.Glove), Shield = CloneItem(src.Shield), Weapon = CloneItem(src.Weapon),
+            FaceAccessory = CloneItem(src.FaceAccessory), EyeAccessory = CloneItem(src.EyeAccessory),
             Earring = CloneItem(src.Earring),
             Mount = src.Mount != null ? new MountInfo { Id = src.Mount.Id } : null,
             Chair = src.Chair != null ? new ChairInfo { Id = src.Chair.Id } : null,
@@ -1135,11 +1139,13 @@ public partial class MaterialBrowserWindow
                 ("Cap", "帽子", "⛑️"), ("Coat", "上衣", "🛡️"), ("Longcoat", "长袍", "🧥"),
                 ("Pants", "裤子", "👖"), ("Shoes", "鞋子", "👢"), ("Glove", "手套", "🧤"),
                 ("Weapon", "武器", "🗡️"), ("Shield", "盾牌", "🛡️"), ("Cape", "披风", "🧣"),
-                ("Accessory", "饰品", "💍"), ("TamingMob", "坐骑", "🏍️"),
+                ("TamingMob", "坐骑", "🏍️"),
             })
             {
                 AddCharacterCategory(wz, entries, folder, cat, emoji);
             }
+            // 饰品三分类（对齐 MapleSalon2 拆分）：Accessory 目录按 id 前缀拆「面饰 101 / 眼饰 102 / 耳环 103」，可同时穿戴
+            AddAccessoryCategories(wz, entries);
             // 椅子：Item/Install/{分组}.img（03010.img…03019.img / 030150.img…030159.img / 0302.img，
             // 按 id/1000、id/100、id/10000 分组；本 WZ 无 0301.img）。
             // 2026-08-16 修复：img 文件是 Wz_Image 节点，GetDirectoryChildren（目录专用，.img 后缀过滤 +
@@ -1182,6 +1188,40 @@ public partial class MaterialBrowserWindow
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] AddCharacterCategory({folder}): {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 饰品分类加载：Character/Accessory 目录按 id 前缀拆三分类（101 面饰 / 102 眼饰 / 103 耳环，可同时穿戴）。
+    /// 名字仍走 GetItemName("Accessory", id)（String.wz Item.img/Accessory 分类）；其余前缀（如 112/113 戒指）不展示。
+    /// </summary>
+    private static void AddAccessoryCategories(WzService wz, List<MaterialEntry> entries)
+    {
+        try
+        {
+            foreach (var (id, _) in wz.GetDirectoryChildren("Character/Accessory"))
+            {
+                if (!int.TryParse(id, out var n))
+                {
+                    continue;
+                }
+                int part = n / 10000;
+                string cat = part switch
+                {
+                    101 => "面饰",
+                    102 => "眼饰",
+                    103 => "耳环",
+                    _ => "",
+                };
+                if (cat.Length == 0)
+                {
+                    continue;
+                }
+                var cn = wz.GetItemName("Accessory", id);
+                string emoji = part == 103 ? "💍" : part == 102 ? "👁️" : "🎭";
+                entries.Add(new MaterialEntry(cat, id, string.IsNullOrEmpty(cn) ? $"{cat}_{id}" : cn, emoji));
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] AddAccessoryCategories: {ex.Message}"); }
     }
 
 

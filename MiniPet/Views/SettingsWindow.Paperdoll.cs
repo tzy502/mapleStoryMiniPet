@@ -325,7 +325,10 @@ public partial class SettingsWindow
         content.Children.Add(BuildEquipSelectRow("武 器", "武器", out _weaponIdInput));
         content.Children.Add(BuildEquipSelectRow("盾 牌", "盾牌", out _shieldIdInput));
         content.Children.Add(BuildEquipSelectRow("手 套", "手套", out _gloveIdInput));
-        content.Children.Add(BuildEquipSelectRow("饰 品", "饰品", out _earringIdInput));
+        // 饰品三分类（对齐 MapleSalon2 拆分：101 面饰 / 102 眼饰 / 103 耳环，可同时穿戴，各占一行）
+        content.Children.Add(BuildEquipSelectRow("面 饰", "面饰", out _faceAccessoryIdInput));
+        content.Children.Add(BuildEquipSelectRow("眼 饰", "眼饰", out _eyeAccessoryIdInput));
+        content.Children.Add(BuildEquipSelectRow("耳 环", "耳环", out _earringIdInput));
 
         // R13 装备特效开关（默认开）：写 _paperdollCurrent.EnableEffect（全局开关，参与外观 hash）。
         // 关闭后跳过节点级 {root}/effect 与帧级 "effect" 部件（披风/武器/坐骑帧内特效）。
@@ -446,7 +449,9 @@ public partial class SettingsWindow
             case "手套": _paperdollCurrent.Glove = draft.Glove; break;
             case "武器": _paperdollCurrent.Weapon = draft.Weapon; break;
             case "盾牌": _paperdollCurrent.Shield = draft.Shield; break;
-            case "饰品": _paperdollCurrent.Earring = draft.Earring; break;
+            case "面饰": _paperdollCurrent.FaceAccessory = draft.FaceAccessory; break;
+            case "眼饰": _paperdollCurrent.EyeAccessory = draft.EyeAccessory; break;
+            case "耳环": _paperdollCurrent.Earring = draft.Earring; break;
             case "坐骑": _paperdollCurrent.Mount = draft.Mount; break;
             case "椅子": _paperdollCurrent.Chair = draft.Chair; break;
         }
@@ -459,7 +464,9 @@ public partial class SettingsWindow
         "上衣" => _paperdollCurrent.Coat?.Id ?? "", "长袍" => _paperdollCurrent.Overall?.Id ?? "",
         "裤子" => _paperdollCurrent.Pants?.Id ?? "", "鞋子" => _paperdollCurrent.Shoes?.Id ?? "",
         "手套" => _paperdollCurrent.Glove?.Id ?? "", "武器" => _paperdollCurrent.Weapon?.Id ?? "",
-        "盾牌" => _paperdollCurrent.Shield?.Id ?? "", "饰品" => _paperdollCurrent.Earring?.Id ?? "",
+        "盾牌" => _paperdollCurrent.Shield?.Id ?? "",
+        "面饰" => _paperdollCurrent.FaceAccessory?.Id ?? "", "眼饰" => _paperdollCurrent.EyeAccessory?.Id ?? "",
+        "耳环" => _paperdollCurrent.Earring?.Id ?? "",
         "坐骑" => _paperdollCurrent.Mount?.Id ?? "", "椅子" => _paperdollCurrent.Chair?.Id ?? "",
         _ => ""
     };
@@ -468,7 +475,8 @@ public partial class SettingsWindow
     {
         "发型" => "Hair", "脸型" => "Face", "帽子" => "Cap", "上衣" => "Coat",
         "长袍" => "Longcoat", "裤子" => "Pants", "鞋子" => "Shoes", "手套" => "Glove",
-        "武器" => "Weapon", "盾牌" => "Shield", "披风" => "Cape", "饰品" => "Accessory",
+        "武器" => "Weapon", "盾牌" => "Shield", "披风" => "Cape",
+        "面饰" or "眼饰" or "耳环" => "Accessory",
         "坐骑" => "TamingMob", "椅子" => "Install",
         _ => ""
     };
@@ -499,7 +507,9 @@ public partial class SettingsWindow
             case "手套": _paperdollCurrent.Glove = null; break;
             case "武器": _paperdollCurrent.Weapon = null; break;
             case "盾牌": _paperdollCurrent.Shield = null; break;
-            case "饰品": _paperdollCurrent.Earring = null; break;
+            case "面饰": _paperdollCurrent.FaceAccessory = null; break;
+            case "眼饰": _paperdollCurrent.EyeAccessory = null; break;
+            case "耳环": _paperdollCurrent.Earring = null; break;
             case "坐骑": _paperdollCurrent.Mount = null; break;
             case "椅子": _paperdollCurrent.Chair = null; break;
         }
@@ -703,7 +713,9 @@ public partial class SettingsWindow
             if (_gloveIdInput != null) { _gloveIdInput.Content = CategoryDisplayName("手套"); }
             if (_weaponIdInput != null) { _weaponIdInput.Content = CategoryDisplayName("武器"); }
             if (_shieldIdInput != null) { _shieldIdInput.Content = CategoryDisplayName("盾牌"); }
-            if (_earringIdInput != null) { _earringIdInput.Content = CategoryDisplayName("饰品"); }
+            if (_faceAccessoryIdInput != null) { _faceAccessoryIdInput.Content = CategoryDisplayName("面饰"); }
+            if (_eyeAccessoryIdInput != null) { _eyeAccessoryIdInput.Content = CategoryDisplayName("眼饰"); }
+            if (_earringIdInput != null) { _earringIdInput.Content = CategoryDisplayName("耳环"); }
             if (_mountIdInput != null) { _mountIdInput.Content = CategoryDisplayName("坐骑"); }
             if (_chairIdInput != null) { _chairIdInput.Content = CategoryDisplayName("椅子"); }
         }
@@ -836,7 +848,10 @@ public partial class SettingsWindow
                 ("上衣", _paperdollCurrent.Coat?.Id), ("长袍", _paperdollCurrent.Overall?.Id),
                 ("裤子", _paperdollCurrent.Pants?.Id), ("鞋子", _paperdollCurrent.Shoes?.Id),
                 ("武器", _paperdollCurrent.Weapon?.Id), ("盾牌", _paperdollCurrent.Shield?.Id),
-                ("手套", _paperdollCurrent.Glove?.Id), ("饰品", _paperdollCurrent.Earring?.Id),
+                ("手套", _paperdollCurrent.Glove?.Id),
+                // 饰品三分类（对齐 MapleSalon2）：面饰 101 / 眼饰 102 / 耳环 103 分别展示
+                ("面饰", _paperdollCurrent.FaceAccessory?.Id), ("眼饰", _paperdollCurrent.EyeAccessory?.Id),
+                ("耳环", _paperdollCurrent.Earring?.Id),
                 ("坐骑", _paperdollCurrent.Mount?.Id), ("椅子", _paperdollCurrent.Chair?.Id),
             };
             foreach (var (label, id) in parts)
@@ -1131,6 +1146,8 @@ public partial class SettingsWindow
             Weapon = src.Weapon != null ? CloneItemFull(src.Weapon) : null,
             Shield = src.Shield != null ? CloneItemFull(src.Shield) : null,
             Glove = src.Glove != null ? CloneItemFull(src.Glove) : null,
+            FaceAccessory = src.FaceAccessory != null ? CloneItemFull(src.FaceAccessory) : null,
+            EyeAccessory = src.EyeAccessory != null ? CloneItemFull(src.EyeAccessory) : null,
             Earring = src.Earring != null ? CloneItemFull(src.Earring) : null,
             Mount = src.Mount != null ? new MountInfo { Id = src.Mount.Id } : null,
             Chair = src.Chair != null ? new ChairInfo { Id = src.Chair.Id } : null,

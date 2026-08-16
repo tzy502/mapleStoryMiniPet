@@ -66,16 +66,18 @@ public partial class MaterialBrowserWindow : Window
         Face = new ItemInfo { Id = "20000" },
     };
 
-    /// <summary>纸娃娃部件分类（皮肤/发型/脸型/各部位/坐骑/椅子）：选中走草稿 + 穿身上预览。</summary>
+    /// <summary>纸娃娃部件分类（皮肤/发型/脸型/各部位/坐骑/椅子）：选中走草稿 + 穿身上预览。
+    /// 饰品按 MapleSalon2 拆三分类（面饰 101 / 眼饰 102 / 耳环 103，可同时穿戴）。</summary>
     private static bool IsPaperdollCategory(string category) =>
         category is "皮肤" or "发型" or "脸型" or "帽子" or "上衣" or "长袍" or "裤子" or "鞋子"
-            or "手套" or "武器" or "盾牌" or "披风" or "饰品" or "坐骑" or "椅子";
+            or "手套" or "武器" or "盾牌" or "披风" or "面饰" or "眼饰" or "耳环" or "坐骑" or "椅子";
 
-    /// <summary>分类树「🧍 纸娃娃」组：部件分类顺序（参考 MapleSalon2 分类体系，皮肤/发型/脸型在前）。</summary>
+    /// <summary>分类树「🧍 纸娃娃」组：部件分类顺序（参考 MapleSalon2 分类体系，皮肤/发型/脸型在前；
+    /// 饰品三分类顺序参考 MapleSalon2：眼饰、面饰、耳环）。</summary>
     private static readonly string[] PaperdollCategories =
     {
         "皮肤", "发型", "脸型", "帽子", "披风", "上衣", "长袍", "裤子", "鞋子", "手套",
-        "武器", "盾牌", "饰品", "坐骑", "椅子"
+        "武器", "盾牌", "眼饰", "面饰", "耳环", "坐骑", "椅子"
     };
 
     /// <summary>分类树「👾 素材」组：怪物/NPC（地图素材当前未从 WZ 加载，暂无）。</summary>
