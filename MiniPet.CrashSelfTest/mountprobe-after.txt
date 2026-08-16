@@ -1,0 +1,220 @@
+[WzService] 加载 WZ 目录: /Volumes/homes/15080035319/Backup/MS/客户端/冒险岛online/mxd/Data/Base
+[WzService] Base 加载成功, imgs: 0
+[WzService] Mob.wz 文件模式加载成功, 根节点: 7
+[WzService] Packs 加载: Mob_00000.ms
+[WzService] Packs 加载: Skill_00000.ms
+[WzService] 加载完成, imgs: 0
+[WzService] 顶层节点(24): Character, Effect, Etc, Item, Map, Mob, Morph, Npc, Quest, Reactor, Skill, Sound, String, TamingMob, UI, Consume_KR.img, Eqp_KR.img, Etc_KR.img, Ins_KR.img, Mob_KR.img, smap.img, StandardPDD.img, zmap.img, zmap_cn.img
+[WzService] Character 子节点(125): Accessory, Afterimage, Android, ArcaneForce, AuthenticForce, Bits, Cap, Cape, Coat, Dragon, Face, Familiar, Glove, Hair, Jewel, Longcoat, Mechanic, Pants, PetEquip, Ring, Shield, Shoes, SkillSkin, TamingMob, Totem, Weapon, _Canvas, 00002000.img, 00002001.img, 00002002.img, 00002003.img, 00002004.img, 00002006.img, 00002007.img, 00002008.img, 00002009.img, 00002010.img, 00002011.img, 00002012.img, 00002013.img
+[WzService] 诊断 存在[Character/Hair]: True
+[WzService] 诊断 存在[Character/Face]: True
+[WzService] 诊断 存在[Character/Hair/00030000.img]: True
+[WzService] 诊断 存在[Character/Face/00020000.img]: True
+[WzService] 诊断 存在[Character/00002000.img]: True
+[WzService] 诊断 存在[Character/00012000.img]: True
+WZ 加载: True
+=== 0901 系列坐骑存在性（任务指定，本 WZ 缺失则跳过）===
+  存在[Character/TamingMob/09010000.img]: False
+  存在[Character/TamingMob/09010001.img]: False
+  存在[Character/TamingMob/09010002.img]: False
+
+=== 扫描代表坐骑: 01902000, 01902001, 01902002, 01930001, 01992031, 01932294, 01992033 ===
+
+--- 01902000 ---
+  动作节点(10): walk1, walk2, stand1, stand2, tired, jump, prone, ladder, rope, fly
+  characterAction: 无
+  各动作帧数:
+    walk1: 4 帧
+    walk2: 4 帧
+    stand1: 6 帧
+    stand2: 6 帧
+    tired: 1 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 2 帧
+    rope: 2 帧
+    fly: 2 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:stand1     
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01902001 ---
+[MapCatalogService] 地图目录构建完成: 21206 个
+  动作节点(10): walk1, walk2, stand1, stand2, tired, jump, prone, ladder, rope, fly
+  characterAction: 无
+  各动作帧数:
+    walk1: 6 帧
+    walk2: 6 帧
+    stand1: 6 帧
+    stand2: 6 帧
+    tired: 1 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 2 帧
+    rope: 2 帧
+    fly: 2 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:stand1     
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01902002 ---
+  动作节点(10): walk1, walk2, stand1, stand2, tired, jump, prone, ladder, rope, fly
+  characterAction: 无
+  各动作帧数:
+    walk1: 6 帧
+    walk2: 6 帧
+    stand1: 12 帧
+    stand2: 12 帧
+    tired: 1 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 2 帧
+    rope: 2 帧
+    fly: 3 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:stand1     
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01930001 ---
+  动作节点(10): walk1, walk2, stand1, stand2, tired, jump, prone, ladder, rope, fly
+  characterAction:
+    prone → fly
+    walk1 → fly
+    walk2 → fly
+    stand1 → fly
+    stand2 → fly
+    jump → fly
+    alert → fly
+  各动作帧数:
+    walk1: 12 帧
+    walk2: 12 帧
+    stand1: 6 帧
+    stand2: 6 帧
+    tired: 6 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 1 帧
+    rope: 1 帧
+    fly: 12 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:stand1     
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01992031 ---
+  动作节点(10): stand1, stand2, walk1, walk2, tired, jump, prone, ladder, rope, fly
+  characterAction:
+    walk1 → StabT2
+    walk2 → StabT2
+    tired → sit
+    prone → sit
+  各动作帧数:
+    stand1: 4 帧
+    stand2: 4 帧
+    walk1: 4 帧
+    walk2: 4 帧
+    tired: 5 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 2 帧
+    rope: 2 帧
+    fly: 4 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:tired    ←差异
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01932294 ---
+  动作节点(11): stand1, stand2, walk1, walk2, tired, jump, ladder, prone, rope, fly, plane_die
+  characterAction:
+    prone → hideBody
+    walk1 → hideBody
+    walk2 → hideBody
+    stand1 → hideBody
+    stand2 → hideBody
+    jump → hideBody
+    alert → hideBody
+  各动作帧数:
+    stand1: 4 帧
+    stand2: 4 帧
+    walk1: 4 帧
+    walk2: 4 帧
+    tired: 4 帧
+    jump: 1 帧
+    ladder: 2 帧
+    prone: 1 帧
+    rope: 2 帧
+    fly: 4 帧
+    plane_die: 10 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:stand1     
+    角色 prone  → 旧:prone    新:prone      
+
+--- 01992033 ---
+  动作节点(10): stand1, stand2, walk1, walk2, tired, jump, prone, ladder, rope, fly
+  characterAction:
+    prone → sit
+    walk1 → sit
+    walk2 → sit
+    stand1 → sit
+    stand2 → sit
+  各动作帧数:
+    stand1: 12 帧
+    stand2: 12 帧
+    walk1: 12 帧
+    walk2: 12 帧
+    tired: 4 帧
+    jump: 1 帧
+    prone: 1 帧
+    ladder: 2 帧
+    rope: 2 帧
+    fly: 6 帧
+  动作选择对比（修复前 → 修复后）:
+    角色 stand1 → 旧:stand1   新:stand1     
+    角色 walk1  → 旧:walk1    新:walk1      
+    角色 jump   → 旧:jump     新:jump       
+    角色 fly    → 旧:fly      新:fly        
+    角色 sit    → 旧:stand1   新:prone    ←差异
+    角色 prone  → 旧:prone    新:prone      
+
+=== hideBody 真实管线验证（01932294，角色 stand1/0）===
+[WzService] GetZmapOrder: top=Base/zmap.img node=NULL
+[WzService] GetZmapOrder: top=zmap.img node=zmap.img
+[WzService] GetZmapOrder: zmap.img 顶层子节点前30=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle,tamingMobMid,characterStart,emotionOverBody,weaponWristOverGloveEffectOver,weaponWristOverGlove,weaponWristOverGloveEffectUnder,capeOverHead,weaponOverGloveEffectOver,weaponOverGlove,weaponOverGloveEffectUnder,gloveWristOverHair,gloveOverHair,handOverHair,weaponOverHandEffectOver,weaponOverHand,weaponOverHandEffectUnder,shieldOverHair,gloveWristBelowWeapon,gloveBelowWeapon,handBelowWeapon,weaponOverArmEffectOver,weaponOverArm,weaponOverArmEffectUnder,gloveWristBelowMailArm,capeOverArm]
+[WzService] GetZmapOrder: 从 zmap.img 读到 183 层, 前5=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle] 后5=[At,Fc,Hr,Hd,Bd]
+  部件总数: 1, 分类: [mount]
+  含角色部件(body/head/hair/face): False（期望 False=hideBody 生效）
+  含坐骑部件: True（期望 True）
+  hideBody 验证: PASS
+
+=== 对照：普通坐骑 01902000（角色 stand1/0）===
+[WzService] GetZmapOrder: top=Base/zmap.img node=NULL
+[WzService] GetZmapOrder: top=zmap.img node=zmap.img
+[WzService] GetZmapOrder: zmap.img 顶层子节点前30=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle,tamingMobMid,characterStart,emotionOverBody,weaponWristOverGloveEffectOver,weaponWristOverGlove,weaponWristOverGloveEffectUnder,capeOverHead,weaponOverGloveEffectOver,weaponOverGlove,weaponOverGloveEffectUnder,gloveWristOverHair,gloveOverHair,handOverHair,weaponOverHandEffectOver,weaponOverHand,weaponOverHandEffectUnder,shieldOverHair,gloveWristBelowWeapon,gloveBelowWeapon,handBelowWeapon,weaponOverArmEffectOver,weaponOverArm,weaponOverArmEffectUnder,gloveWristBelowMailArm,capeOverArm]
+[WzService] GetZmapOrder: 从 zmap.img 读到 183 层, 前5=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle] 后5=[At,Fc,Hr,Hd,Bd]
+  部件总数: 11, 分类: [body, face, hair, head, mount]
+  含角色部件: True（期望 True）
+  含坐骑部件: True（期望 True）
+  普通坐骑对照: PASS
