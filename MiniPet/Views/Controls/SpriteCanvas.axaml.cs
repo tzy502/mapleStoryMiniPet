@@ -68,7 +68,10 @@ public partial class SpriteCanvas : UserControl
             return;
         }
 
-        _currentBitmap?.Dispose();
+        // ⚠️ 先换 Source 再 Dispose 旧图：Avalonia 布局是延迟批处理，若先 Dispose 旧位图，
+        // 拖拽结束/尺寸变化触发的布局 pass 会测量仍引用旧位图的 Image.Source → ObjectDisposedException 崩溃
+        // （实测 SIGABRT，Ref<IBitmapImpl> 已释放仍被读取）。A3 同款顺序。
+        var oldBitmap = _currentBitmap;
         using var ms = new MemoryStream(pngData);
         _currentBitmap = new Bitmap(ms);
 
@@ -96,6 +99,8 @@ public partial class SpriteCanvas : UserControl
         }
         // Source 必须每帧设（换帧核心）
         SpriteImage.Source = _currentBitmap;
+        // 换源后再释放旧图（布局延迟 pass 不会引用已释放位图，同上）
+        oldBitmap?.Dispose();
         Canvas.SetLeft(SpriteImage, 0);
         Canvas.SetTop(SpriteImage, 0);
     }
@@ -140,7 +145,8 @@ public partial class SpriteCanvas : UserControl
         // 直拷 BGRA premul 像素。
         // ⚠️ 必须每次 new WriteableBitmap（Source 引用变化 → Image 必然重绘）：
         // 复用同引用时 Avalonia 不重绘 → 画面静止 = 动画"不动"（回归 bug，旧代码每帧 new Bitmap 所以动）
-        _wb?.Dispose();
+        // ⚠️ 先换 Source 再 Dispose 旧 wb（与 SetFrame 同：布局延迟 pass 引用已释放位图会崩）
+        var oldWb = _wb;
         _wb = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
         using (var fb = _wb.Lock())
         {
@@ -164,6 +170,8 @@ public partial class SpriteCanvas : UserControl
             }
         }
         SpriteImage.Source = _wb;
+        // 换源后再释放旧 wb
+        oldWb?.Dispose();
         Canvas.SetLeft(SpriteImage, 0);
         Canvas.SetTop(SpriteImage, 0);
     }

@@ -443,14 +443,15 @@ namespace MiniPet.Services
                 }
                 _tileCache[data.Id] = decoded;
                 _tileOrder.Enqueue(data.Id);
-                // FIFO 淘汰（气泡瓦片小，24 条 ≈ 1MB 级，封顶足够）
+                // FIFO 淘汰（气泡瓦片小，24 条 ≈ 1MB 级，封顶足够）。
+                // ⚠️ 只移除不 Dispose：渲染（RenderBalloon）在后台 Task 持锁外引用瓦片合成，
+                // 此处显式 Dispose 会与在途 DrawBitmap 竞态（SKBitmap 原生句柄已释放仍被使用
+                // → SkiaSharp abort，实测崩溃）；原生内存交 GC 终结器回收（与 PaperdollService
+                // 位图缓存上限同结论）。
                 while (_tileCache.Count > MaxTileCacheEntries)
                 {
                     var oldest = _tileOrder.Dequeue();
-                    if (_tileCache.Remove(oldest, out var evicted))
-                    {
-                        evicted.Dispose();
-                    }
+                    _tileCache.Remove(oldest);
                 }
                 return decoded;
             }
