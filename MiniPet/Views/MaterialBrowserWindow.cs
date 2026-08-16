@@ -29,6 +29,12 @@ public partial class MaterialBrowserWindow : Window
     private static readonly Color TxtSecondary = Color.FromArgb(255, 155, 155, 170);
     private static readonly Color TxtDim = Color.FromArgb(255, 100, 100, 115);
     private static readonly Color InputBg = Color.FromArgb(180, 38, 38, 46);
+    // ── 分类分组/类型徽标颜色（2026-08-16：纸娃娃 accent 蓝 / 素材橙绿，Mob·NPC 与纸娃娃一眼区分）──
+    private static readonly Color MaterialGroupColor = Color.FromArgb(255, 240, 160, 70);   // 「👾 素材」组头：橙
+    private static readonly Color MobBadgeColor = Color.FromArgb(255, 235, 125, 115);       // 怪物徽标：红橙
+    private static readonly Color MobBadgeBg = Color.FromArgb(40, 235, 125, 115);
+    private static readonly Color NpcBadgeColor = Color.FromArgb(255, 130, 215, 155);       // NPC 徽标：绿
+    private static readonly Color NpcBadgeBg = Color.FromArgb(40, 130, 215, 155);
 
     private static readonly SolidColorBrush BrushBg = new(BgColor);
     private static readonly SolidColorBrush BrushCard = new(CardColor);
@@ -64,6 +70,16 @@ public partial class MaterialBrowserWindow : Window
     private static bool IsPaperdollCategory(string category) =>
         category is "皮肤" or "发型" or "脸型" or "帽子" or "上衣" or "长袍" or "裤子" or "鞋子"
             or "手套" or "武器" or "盾牌" or "披风" or "饰品" or "坐骑" or "椅子";
+
+    /// <summary>分类树「🧍 纸娃娃」组：部件分类顺序（参考 MapleSalon2 分类体系，皮肤/发型/脸型在前）。</summary>
+    private static readonly string[] PaperdollCategories =
+    {
+        "皮肤", "发型", "脸型", "帽子", "披风", "上衣", "长袍", "裤子", "鞋子", "手套",
+        "武器", "盾牌", "饰品", "坐骑", "椅子"
+    };
+
+    /// <summary>分类树「👾 素材」组：怪物/NPC（地图素材当前未从 WZ 加载，暂无）。</summary>
+    private static readonly string[] MaterialCategories = { "怪物", "NPC" };
 
     // ── 分页 ──
     private int _currentPage = 1;
@@ -230,8 +246,23 @@ public partial class MaterialBrowserWindow : Window
         };
         stack.Children.Add(title);
 
-        var categories = new[] { "全部", "怪物", "NPC", "皮肤", "发型", "脸型", "帽子", "上衣", "长袍", "裤子", "鞋子", "手套", "武器", "盾牌", "披风", "饰品", "坐骑", "椅子" };
-        foreach (var cat in categories)
+        // 「全部」置顶：跨组混排，条目行带类型徽标（👾 怪物 / 🧑 NPC / 💇 发型…）区分
+        var allBtn = BuildCategoryButton("全部");
+        _categoryButtons["全部"] = allBtn;
+        stack.Children.Add(allBtn);
+
+        // ── 🧍 纸娃娃组（accent 蓝组头）──
+        stack.Children.Add(BuildCategoryGroupHeader("🧍 纸娃娃", AccentColor));
+        foreach (var cat in PaperdollCategories)
+        {
+            var btn = BuildCategoryButton(cat);
+            _categoryButtons[cat] = btn;
+            stack.Children.Add(btn);
+        }
+
+        // ── 👾 素材组（橙色组头：怪物/NPC 与纸娃娃部件一眼区分）──
+        stack.Children.Add(BuildCategoryGroupHeader("👾 素材", MaterialGroupColor));
+        foreach (var cat in MaterialCategories)
         {
             var btn = BuildCategoryButton(cat);
             _categoryButtons[cat] = btn;
@@ -290,6 +321,29 @@ public partial class MaterialBrowserWindow : Window
         };
 
         return container;
+    }
+
+    /// <summary>分类组头（「🧍 纸娃娃」accent 蓝 / 「👾 素材」橙）：彩色底 + 边框 + 图标，
+    /// 纸娃娃部件与 Mob/NPC 两大组一眼区分；非可点按钮，不注册进 _categoryButtons。</summary>
+    private static Border BuildCategoryGroupHeader(string text, Color color)
+    {
+        var header = new Border
+        {
+            Margin = new Thickness(2, 8, 2, 2),
+            Padding = new Thickness(8, 4),
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.FromArgb(28, color.R, color.G, color.B)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(90, color.R, color.G, color.B)),
+            BorderThickness = new Thickness(1)
+        };
+        header.Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = FontWeight.Bold,
+            Foreground = new SolidColorBrush(color)
+        };
+        return header;
     }
 
     // ═══════════════════════════════════════════
