@@ -1128,7 +1128,10 @@ namespace MiniPet.Services
             var result = new List<(string Id, string Name)>();
             try
             {
-                var node = FindNodeByPath($"{wzDirectory}/_Canvas");
+                // 2026-08-16：改直接遍历目录子节点——原只读 {dir}/_Canvas 内部容器，
+                // 实测大量 img 不在其中（Hair 15886/17337、Face 9918/12256、Weapon 4070/7506 → 素材列表全部缺件）。
+                // 目录 Nodes 为 lazyload 全量子节点（含 _Canvas 等内部节点，按 .img 后缀过滤）。
+                var node = FindNodeByPath(wzDirectory);
                 if (node == null) return result;
                 foreach (Wz_Node child in node.Nodes)
                 {
