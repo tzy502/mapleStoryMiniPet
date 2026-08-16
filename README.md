@@ -89,8 +89,8 @@ dotnet run --project MiniPet/MiniPet.csproj
 
 | 项目 | 用途 | 地址 |
 |---|---|---|
-| **MapleSalon2** | 纸娃娃渲染语义参考（分类体系、表情/动作结构、遮挡锁、特效层、锚点规则） | https://github.com/spd789562/MapleSalon2 |
-| **WzComparerR2** | WZ 文件解析库（`lib/WzComparerR2.WzLib.dll`）与地图渲染算法参考（RenderViewport 对齐） | https://github.com/MapleStoryMaple/WzComparerR2 |
+| **MapleSalon2** | 纸娃娃渲染参考 | https://github.com/spd789562/MapleSalon2 |
+| **WzComparerR2** | WZ 解析库与地图渲染参考 | https://github.com/MapleStoryMaple/WzComparerR2 |
 
 ## 🧪 测试与自检
 
