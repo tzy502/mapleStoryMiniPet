@@ -677,6 +677,9 @@ namespace MiniPet.Services
                     $"String/Item.img/{category}/{pad}",
                     $"String/Ins.img/{key}",
                     $"String/Ins.img/{pad}",
+                    // 坐骑专用：String 分类名是 Taming 不是 TamingMob（2026-08-16 probe 实测
+                    // String/Eqp.img/Eqp/Taming/1902000 = 멧돼지/银色野猪…，原候选全落空 → 坐骑名全 fallback「坐骑_N」）
+                    $"String/Eqp.img/Eqp/Taming/{key}",
                     $"String/Eqp.img/Eqp/{category}/{key}",
                     $"String/Eqp.img/{category}/{key}",
                     $"String/Eqp.img/Eqp/{key}",
