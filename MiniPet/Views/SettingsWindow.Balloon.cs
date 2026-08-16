@@ -391,12 +391,11 @@ public partial class SettingsWindow
                         var frameRect = new PixelRect(frameWidth * _previewFrameIndex, 0, frameWidth, frameHeight);
                         try
                         {
-                            // 替换前释放旧 CroppedBitmap（防每帧泄漏；S4 同源修复）
-                            if (img2.Source is IDisposable oldSrc)
-                            {
-                                oldSrc.Dispose();
-                            }
+                            // ⚠️ 先换 Source 再 Dispose 旧 CroppedBitmap（防每帧泄漏 + 防布局测量已释放位图崩溃）
+                            var oldSrc = img2.Source;
                             img2.Source = new CroppedBitmap(_previewSourceBitmap, frameRect);
+                            (oldSrc as IDisposable)?.Dispose();
+                            _balloonPreviewImage = img2;
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] TickFrame: {ex.Message}"); }
                         _previewFrameIndex++;

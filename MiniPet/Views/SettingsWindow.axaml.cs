@@ -66,6 +66,8 @@ public partial class SettingsWindow : Window
     private SpriteStrip? _previewStrip;
     private Avalonia.Media.Imaging.Bitmap? _previewSourceBitmap;
     private Avalonia.Controls.Image? _previewSpriteImage;
+    /// <summary>气泡 tab 预览 Image（与素材预览共享 _previewSourceBitmap；源重建时必须一并摘除）。</summary>
+    private Avalonia.Controls.Image? _balloonPreviewImage;
     private int _previewGen;
     private string _previewAction = "";
     private List<string> _previewActions = new();
@@ -1347,20 +1349,15 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>从 _previewPngData 构建源 Bitmap（切换动作时重建一次，避免每帧重新解码 + 磁盘 IO）。
-    /// S4：先换 Image.Source 再 Dispose 旧位图——在飞 CroppedBitmap 不再引用已释放位图。</summary>
+    /// S4：先换 Image.Source 再 Dispose 旧位图——在飞 CroppedBitmap 不再引用已释放位图。
+    /// ⚠️ 必须同时清理所有共享 _previewSourceBitmap 的 Image（素材预览 + 气泡 tab 预览），
+    /// 否则旧源 Dispose 后另一预览的 CroppedBitmap 悬空 → 布局测量崩（实测 SIGABRT）。</summary>
     private void RebuildPreviewSourceBitmap()
     {
         var old = _previewSourceBitmap;
         _previewSourceBitmap = null;
         // 先摘掉在飞 Image.Source（旧 CroppedBitmap 引用旧源位图）并释放，再 Dispose 旧源位图
-        if (_previewSpriteImage != null)
-        {
-            if (_previewSpriteImage.Source is IDisposable oldSrc)
-            {
-                oldSrc.Dispose();
-            }
-            _previewSpriteImage.Source = null;
-        }
+        ClearPreviewSourceRefs();
         old?.Dispose();
         if (_previewPngData == null || _previewPngData.Length == 0)
         {
@@ -1372,6 +1369,27 @@ public partial class SettingsWindow : Window
             _previewSourceBitmap = new Bitmap(ms);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SrcBmp: {ex.Message}"); }
+    }
+
+    /// <summary>把引用旧预览源的 Image.Source 全部摘掉（素材预览 + 气泡 tab 预览共享同一源位图）。</summary>
+    private void ClearPreviewSourceRefs()
+    {
+        try
+        {
+            if (_previewSpriteImage != null)
+            {
+                var s1 = _previewSpriteImage.Source;
+                _previewSpriteImage.Source = null;
+                (s1 as IDisposable)?.Dispose();
+            }
+            if (_balloonPreviewImage != null)
+            {
+                var s2 = _balloonPreviewImage.Source;
+                _balloonPreviewImage.Source = null;
+                (s2 as IDisposable)?.Dispose();
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ClearPreviewRefs: {ex.Message}"); }
     }
 
     /// <summary>把精灵图条第 frameIndex 帧设到 image（CroppedBitmap 轻量包装，不重新解码、不落盘；
@@ -1391,11 +1409,11 @@ public partial class SettingsWindow : Window
         int idx = frameIndex % _previewStrip.FrameCount;
         try
         {
-            if (image.Source is IDisposable oldSrc)
-            {
-                oldSrc.Dispose();
-            }
+            // ⚠️ 先换 Source 再 Dispose 旧 CroppedBitmap：先 Dispose 会让 Image 在下一布局 pass
+            // 测量已释放位图 → ObjectDisposedException（实测 SIGABRT，Ref<IBitmapImpl>）
+            var oldSrc = image.Source;
             image.Source = new CroppedBitmap(_previewSourceBitmap, new PixelRect(fw * idx, 0, fw, fh));
+            (oldSrc as IDisposable)?.Dispose();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ShowFrame: {ex.Message}"); }
     }
