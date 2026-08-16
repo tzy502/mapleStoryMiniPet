@@ -181,6 +181,9 @@ public partial class MaterialBrowserWindow
     private static int NumericId(string id) => int.TryParse(id, out var n) ? n : int.MaxValue;
 
     /// <summary>性别联动过滤：男（Gender=0）只显示 30000–30999 发型 / 20000–20999 脸型，女相反；非发型/脸型不过滤。纯函数，可单测。</summary>
+    /// <summary>发型/脸型性别过滤（2026-08-16 对齐 MapleSalon2 getHairGender/getFaceGender）：
+    /// 按 id 千位判定——发型 0/3/5/6 男、1/4/7/8 女、其余通用；脸型 0/3/5/7 男、1/4/6/8 女、其余通用。
+    /// 原规则 n>=31000 为女（36633 黄色电蓬发型千位 6 是男发却被当女发 → 男性角色搜索「黄色电」被过滤，用户反馈缺件）。</summary>
     internal static bool MatchesGender(string category, string id, int gender)
     {
         if (category != "发型" && category != "脸型")
@@ -191,11 +194,24 @@ public partial class MaterialBrowserWindow
         {
             return true;
         }
+        int tag = (n / 1000) % 10;
         if (category == "发型")
         {
-            return gender == 1 ? n >= 31000 : n < 31000;
+            int hairGender = tag switch
+            {
+                0 or 3 or 5 or 6 => 0,   // 男
+                1 or 4 or 7 or 8 => 1,   // 女
+                _ => 2,                  // 通用（2/9）
+            };
+            return hairGender == 2 || hairGender == gender;
         }
-        return gender == 1 ? n >= 21000 : n < 21000;
+        int faceGender = tag switch
+        {
+            0 or 3 or 5 or 7 => 0,   // 男
+            1 or 4 or 6 or 8 => 1,   // 女
+            _ => 2,                  // 通用
+        };
+        return faceGender == 2 || faceGender == gender;
     }
 
     // ═══════════════════════════════════════════
