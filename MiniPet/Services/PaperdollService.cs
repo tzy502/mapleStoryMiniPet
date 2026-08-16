@@ -1271,18 +1271,20 @@ public class PaperdollService : IEntityFrameProvider
                 // （H1H2H3H4H5H6HfHsHb），帽子 vslot（CpH1H5）锁 H1/H5 → 整层头发被隐藏
                 // （probe 实证：cap=1000000/1002149 时 hair 件 0 可见）。smap 单码（H2 等）
                 // 不被帽子锁定 → 后发保持可见，仅前发（H1）被帽子遮挡，对齐 MapleSalon2 smap 语义。
+                // 2026-08-17 修复：smap **无该层条目**时 layerOk 恒真——对齐 MapleSalon2 refreshLock
+                // （requireLocks = smap[name] ?? []，空 requireLocks 的 hasAllLocks 恒 true → 部件可见）。
+                // 原回退「本层穿戴部件 vslot 并集 / 自身 vslot」会被帽子锁定的槽误伤：hairBelowHead
+                // 部件（zmap 有 hairBelowHead 层，但 smap 无该层——smap 只有 backHairBelowHead=Hf）
+                // 在 cap=1003953（vslot CpH5 锁 H5）下 selfOk 失败且回退 vslot 也被锁 → 整部件被
+                // 错误隐藏（probe 实测 8 个发型受影响，用户反馈「发型部分内容被错误隐藏」）。
                 var smapCodes = GetSmapLayerCodes(p.ResolvedLayer);
                 if (smapCodes.Count > 0)
                 {
                     layerOk = SlotsOk(locks, p.ItemId, smapCodes);
                 }
-                else if (layerSlots.TryGetValue(p.ResolvedLayer, out var hs))
-                {
-                    layerOk = SlotsOk(locks, p.ItemId, hs);
-                }
                 else
                 {
-                    layerOk = SlotsOk(locks, p.ItemId, slots);
+                    layerOk = true;
                 }
             }
             else if (layerSlots.TryGetValue(p.ResolvedLayer, out var ls))

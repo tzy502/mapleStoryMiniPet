@@ -150,6 +150,28 @@ public static class HairOutfitProbe
             Console.WriteLine($"  cap={capId} 真实vslot=[{realVslot}] hair件={hair.Count} 可见={hair.Count(x => x.Locked && !x.Hidden)} hairOverHead隐藏={overHead?.Hidden}");
         }
 
+        // smap 缺失层回归（2026-08-17 修复：smap 无该层条目时 layerOk 恒真，对齐 MapleSalon2
+        // 空 requireLocks——hairBelowHead 部件 zmap 有层但 smap 无条目（smap 只有 backHairBelowHead=Hf），
+        // 原回退 vslot 被帽子锁 H5 误伤 → 8 个发型（33550-33557/36440-36447）在帽下被错误隐藏）
+        Console.WriteLine("\n--- smap 缺失层回归（hairBelowHead 系列在帽下应全可见）---");
+        foreach (var hid in new[] { "33550", "33551", "33552", "33553", "33554", "33555", "33556", "33557", "36440", "36441", "36442", "36443", "36444", "36445", "36446", "36447" })
+        {
+            foreach (var capId in new[] { "1003953", "1000000" })
+            {
+                var a = MakeSample(hid);
+                a.Face = new ItemInfo { Id = "20000" };
+                a.Cap = new ItemInfo { Id = capId };
+                var items = paperdoll.ProbeLayerResolution(a, "stand1", 0);
+                var hair = items.Where(x => x.Category == "hair").ToList();
+                var belowHead = hair.FirstOrDefault(x => x.PieceName == "hairBelowHead");
+                if (belowHead == null || belowHead.Hidden)
+                {
+                    Console.WriteLine($"  hair={hid} cap={capId}: hairBelowHead {(belowHead == null ? "缺失" : "被隐藏!")}");
+                }
+            }
+        }
+        Console.WriteLine("  (无输出=全部 hairBelowHead 可见)");
+
         // ── ⑤ 搭配存档加载（SavedPaperdolls → LoadDraftOutfit 等价路径）──
         Console.WriteLine("\n========== ⑤ SavedPaperdolls 存档加载 ==========");
         foreach (var (name, app) in settings.SavedPaperdolls)
