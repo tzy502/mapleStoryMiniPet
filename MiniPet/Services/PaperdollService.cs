@@ -409,7 +409,15 @@ public class PaperdollService : IEntityFrameProvider
                 if (category == "head" && IsEarPiece(pieceName) && pieceName != (a.Ear ?? EarHuman)) continue;
                 // R13 装备特效开关：帧级 "effect"/"effectN" 部件视为特效帧（对齐 MapleSalon2 isKindOfEffect），关闭时跳过
                 if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
-                sources.Add(new PieceSource(category, pieceName, $"{framePath}/{pieceName}", itemId));
+                string piecePath = $"{framePath}/{pieceName}";
+                // 2026-08-16 发型 canvas 列表解析：部分发型部件（hairShade 等）帧内 UOL 目标是
+                // 「canvas 列表」容器（如 default/hairShade 下挂 {0,1,2,...} 数字子节点），
+                // 直接按容器路径取 PNG/origin/map/z 为空 → 部件被收集但永不绘制（该显示不显示）。
+                if (category == "hair")
+                {
+                    piecePath = ResolveHairPieceCanvasPath(piecePath, frame.ToString());
+                }
+                sources.Add(new PieceSource(category, pieceName, piecePath, itemId));
             }
         }
 
@@ -578,6 +586,46 @@ public class PaperdollService : IEntityFrameProvider
         _ => ""
     };
 
+    /// <summary>
+    /// 发型部件路径 canvas 化（2026-08-16，probe 证实：HairProbe 扫描 17337 个发型，
+    /// hairShade 部件 16319 个的帧内 UOL 目标是「canvas 列表」容器）。
+    /// 结构：stand1/0/hairShade（Wz_Uol）→ default/hairShade（容器节点，value=null）→
+    /// default/hairShade/{0,1,2,...}（数字子节点，PNG + origin/map/z 在子节点上；各槽位 UOL 均指向 0）。
+    /// 直接按容器路径 ExtractPng/GetOrigin/GetPieceMap 全为空 → 部件被收集但永不绘制。
+    /// 本方法把路径落到具体子节点（优先当前帧号槽位，回退 0，再回退首个数字子节点）。
+    /// </summary>
+    private string ResolveHairPieceCanvasPath(string piecePath, string frame)
+    {
+        return _wz.WithWzLock(() =>
+        {
+            var node = _wz.FindNodeByPath(piecePath);
+            if (node == null) { return piecePath; }
+            var resolved = node.ResolveUol() ?? node;
+            // 已是 canvas（hair/hairOverHead/hairBelowBody 等常规部件）：无需调整
+            if (resolved.GetValue<Wz_Png>() != null) { return piecePath; }
+            string? chosen = null;
+            var frameNode = resolved.FindNodeByPath(frame);
+            if (frameNode != null && (frameNode.ResolveUol() ?? frameNode).GetValue<Wz_Png>() != null)
+            {
+                chosen = frame;
+            }
+            if (chosen == null)
+            {
+                foreach (Wz_Node child in resolved.Nodes)
+                {
+                    if (!int.TryParse(child.Text, out _)) { continue; }
+                    if ((child.ResolveUol() ?? child).GetValue<Wz_Png>() != null)
+                    {
+                        chosen = child.Text;
+                        break;
+                    }
+                }
+            }
+            if (chosen == null) { return piecePath; }
+            return $"{resolved.FullPathToFile.Replace('\\', '/')}/{chosen}";
+        });
+    }
+
     private List<Piece> MaterializePieces(List<PieceSource> sources)
     {
         var pieces = new List<Piece>();
@@ -714,6 +762,28 @@ public class PaperdollService : IEntityFrameProvider
                 // MapleSalon2 force Cap using vslot：帽子的 hasLayerLock 与 hasSelfLock 等价，只判自身 vslot
                 layerOk = false;
             }
+            else if (p.Category == "hair")
+            {
+                // 2026-08-16 发型层 requireLocks 用 smap.img 真实槽码（hair→H2、hairOverHead→H1、
+                // hairShade→Hs、hairBelowBody→Hb…，probe 实证 smap.img 183 层）。
+                // 修复：旧实现用「本层穿戴部件 vslot 并集」近似，发型层并集 = 头发自身 vslot
+                // （H1H2H3H4H5H6HfHsHb），帽子 vslot（CpH1H5）锁 H1/H5 → 整层头发被隐藏
+                // （probe 实证：cap=1000000/1002149 时 hair 件 0 可见）。smap 单码（H2 等）
+                // 不被帽子锁定 → 后发保持可见，仅前发（H1）被帽子遮挡，对齐 MapleSalon2 smap 语义。
+                var smapCodes = GetSmapLayerCodes(p.ResolvedLayer);
+                if (smapCodes.Count > 0)
+                {
+                    layerOk = SlotsOk(locks, p.ItemId, smapCodes);
+                }
+                else if (layerSlots.TryGetValue(p.ResolvedLayer, out var hs))
+                {
+                    layerOk = SlotsOk(locks, p.ItemId, hs);
+                }
+                else
+                {
+                    layerOk = SlotsOk(locks, p.ItemId, slots);
+                }
+            }
             else if (layerSlots.TryGetValue(p.ResolvedLayer, out var ls))
             {
                 layerOk = SlotsOk(locks, p.ItemId, ls);
@@ -724,6 +794,45 @@ public class PaperdollService : IEntityFrameProvider
             }
             if (!selfOk && !layerOk) p.Hidden = true;
         }
+    }
+
+    // smap.img 层 → requireLocks 槽码（MapleSalon2 用 smap 而非本层穿戴部件 vslot 并集；懒加载缓存，全局只读）
+    private Dictionary<string, string>? _smapLayerCache;
+    private readonly object _smapCacheLock = new();
+
+    /// <summary>smap.img 中某层的 requireLocks 槽码（如 hair→H2、hairOverHead→H1、hairShade→Hs）。无该层/空值返回空列表。</summary>
+    private List<string> GetSmapLayerCodes(string layer)
+    {
+        if (string.IsNullOrEmpty(layer)) { return new List<string>(); }
+        var cache = _smapLayerCache;
+        if (cache == null)
+        {
+            lock (_smapCacheLock)
+            {
+                if (_smapLayerCache == null)
+                {
+                    var built = new Dictionary<string, string>(StringComparer.Ordinal);
+                    _wz.WithWzLock(() =>
+                    {
+                        var smap = _wz.FindNodeByPath("smap.img");
+                        if (smap == null) { return true; }
+                        foreach (Wz_Node c in smap.Nodes)
+                        {
+                            var val = c.GetValueEx<string>(null);
+                            if (!string.IsNullOrEmpty(val)) { built[c.Text] = val; }
+                        }
+                        return true;
+                    });
+                    _smapLayerCache = built;
+                }
+                cache = _smapLayerCache;
+            }
+        }
+        if (cache.TryGetValue(layer, out var codes))
+        {
+            return VslotCodes(codes).ToList();
+        }
+        return new List<string>();
     }
 
     /// <summary>

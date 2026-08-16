@@ -1,0 +1,946 @@
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(99,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(127,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(256,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(300,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(391,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/ClaudeCodeAdapter.cs(251,53): warning CS8600: Converting null literal or possible null value to non-nullable type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/ClaudeCodeAdapter.cs(333,54): warning CS8600: Converting null literal or possible null value to non-nullable type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Agent.cs(507,13): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/HermesAdapter.cs(538,67): warning CS8604: Possible null reference argument for parameter 'raw' in 'DateTime? HermesAdapter.ParseDateTime(object raw)'. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/ClaudeCodeAdapter.cs(453,21): warning CS0219: The variable 'lastToolUseId' is assigned but its value is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(380,102): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(381,97): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(440,45): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(474,57): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/CacheManager.cs(621,45): warning CS8604: Possible null reference argument for parameter 'data' in 'void CacheManager.RemoveMemoryEntry(string key, byte[] data)'. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(492,88): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(493,109): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(509,50): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(144,17): warning CS0618: 'SKPaint.TextSize' is obsolete: 'Use SKFont.Size instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(147,17): warning CS0618: 'SKPaint.TextAlign' is obsolete: 'Use SKTextAlign method overloads instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(148,17): warning CS0618: 'SKPaint.Typeface' is obsolete: 'Use SKFont.Typeface instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(249,22): warning CS0618: 'SKPaint.FontMetrics' is obsolete: 'Use SKFont.Metrics instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(252,17): warning CS0618: 'SKCanvas.DrawText(string, float, float, SKPaint)' is obsolete: 'Use DrawText(string text, float x, float y, SKTextAlign textAlign, SKFont font, SKPaint paint) instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(270,39): warning CS0618: 'SKPaint.MeasureText(string)' is obsolete: 'Use SKFont.MeasureText() instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(563,53): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(578,53): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(367,17): warning CS0618: 'SKPaint.TextSize' is obsolete: 'Use SKFont.Size instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(369,17): warning CS0618: 'SKPaint.Typeface' is obsolete: 'Use SKFont.Typeface instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(373,27): warning CS0618: 'SKPaint.MeasureText(string)' is obsolete: 'Use SKFont.MeasureText() instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/BalloonService.cs(377,39): warning CS0618: 'SKPaint.TextSize' is obsolete: 'Use SKFont.Size instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(627,77): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(637,90): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(110,98): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(111,104): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(711,88): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(66,74): warning CS0618: 'SKPaint.FilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(66,90): warning CS0618: 'SKFilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/HermesAdapter.cs(1516,30): warning CS8600: Converting null literal or possible null value to non-nullable type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(960,73): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(202,98): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(203,104): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(225,125): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(226,114): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(1055,81): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(1059,79): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(418,98): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(419,104): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(1198,76): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(1206,75): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/WzService.cs(1214,77): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/MaterialBrowserWindow.Logic.cs(280,28): warning CS8604: Possible null reference argument for parameter 'entry' in 'void MaterialBrowserWindow.LoadThumbAsync(MaterialEntry entry, Control emojiText)'. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(508,98): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/TrayService.cs(18,12): warning CS8618: Non-nullable field '_eventBus' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the field as nullable. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/PaperdollService.cs(304,108): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(643,78): warning CS0618: 'SKPaint.FilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(643,94): warning CS0618: 'SKFilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(666,78): warning CS0618: 'SKPaint.FilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(666,94): warning CS0618: 'SKFilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(1121,56): warning CS8604: Possible null reference argument for parameter 'id' in 'List<string> WzService.GetActionList(string id, string type = "Mob")'. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(732,74): warning CS0618: 'SKPaint.FilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapService.cs(732,90): warning CS0618: 'SKFilterQuality' is obsolete: 'Use SKSamplingOptions instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(1231,40): warning CS8604: Possible null reference argument for parameter 'id' in 'void SettingsWindow.UpdatePreviewContent(string name, string id)'. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/SpriteService.cs(277,43): warning CS8620: Argument of type 'IEnumerable<(WzService wz, string mobId, string a, string type)>' cannot be used for parameter 'collection' of type 'IEnumerable<(WzService? wz, string mobId, string action, string type)>' in 'void List<(WzService? wz, string mobId, string action, string type)>.AddRange(IEnumerable<(WzService? wz, string mobId, string action, string type)> collection)' due to differences in the nullability of reference types. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(592,125): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(595,117): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(614,123): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(615,111): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(665,90): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/MapCatalogService.cs(675,46): warning CS8601: Possible null reference assignment. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/MaterialBrowserWindow.Logic.cs(852,20): warning CS8601: Possible null reference assignment. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/MaterialBrowserWindow.Logic.cs(852,48): warning CS8601: Possible null reference assignment. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/PaperdollService.cs(1096,108): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Background.cs(57,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/PaperdollService.cs(1477,94): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Balloon.cs(53,17): warning CS0618: 'TextBox.Watermark' is obsolete: 'Use PlaceholderText instead.' [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Balloon.cs(134,25): warning CS8602: Dereference of a possibly null reference. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Paperdoll.cs(113,89): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Paperdoll.cs(127,94): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Paperdoll.cs(523,21): warning CS8602: Dereference of a possibly null reference. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Paperdoll.cs(931,29): warning CS8602: Dereference of a possibly null reference. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.Paperdoll.cs(975,21): warning CS8602: Dereference of a possibly null reference. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(104,21): warning CS0169: The field 'SettingsWindow._zoomSlider' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(105,24): warning CS0169: The field 'SettingsWindow._zoomLabel' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/MapViewportWindow.cs(57,26): warning CS0067: The event 'MapViewportWindow.RequestSwitchMap' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(106,30): warning CS0169: The field 'SettingsWindow._zoomSaveTimer' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Services/Adapters/ClaudeCodeAdapter.cs(57,22): warning CS0169: The field 'ClaudeCodeAdapter._disposed' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/SettingsWindow.axaml.cs(140,21): warning CS0649: Field 'SettingsWindow._mapPreviewCanvas' is never assigned to, and will always have its default value null [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/MapViewportWindow.cs(56,26): warning CS0067: The event 'MapViewportWindow.RequestHide' is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/Controls/SpriteCanvas.axaml.cs(23,17): warning CS0414: The field 'SpriteCanvas._wbW' is assigned but its value is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/Views/Controls/SpriteCanvas.axaml.cs(24,17): warning CS0414: The field 'SpriteCanvas._wbH' is assigned but its value is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet/MiniPet.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(50,27): warning CS8600: Converting null literal or possible null value to non-nullable type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(62,27): warning CS8600: Converting null literal or possible null value to non-nullable type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/SettingsPreviewSelfTest.cs(61,66): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/SettingsPreviewSelfTest.cs(90,87): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapePathProbe.cs(57,87): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapePathProbe.cs(65,65): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(148,44): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(223,47): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(189,48): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(269,62): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(269,104): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(270,55): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/CapeProbe.cs(271,43): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(230,48): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(243,48): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(257,61): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(296,22): warning CS0219: The variable 'actionHairOk' is assigned but its value is never used [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(439,50): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(574,44): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/HairProbe.cs(595,39): warning CS8625: Cannot convert null literal to non-nullable reference type. [/Users/a502/IdeaProjects/mapleStoryMiniPet/.worktrees/hair-fix/MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj]
+WZ 路径: /Volumes/homes/15080035319/Backup/MS/客户端/冒险岛online/mxd/Data/
+[WzService] 加载 WZ 目录: /Volumes/homes/15080035319/Backup/MS/客户端/冒险岛online/mxd/Data/Base
+[WzService] Base 加载成功, imgs: 0
+[WzService] Mob.wz 文件模式加载成功, 根节点: 7
+[WzService] Packs 加载: Mob_00000.ms
+[WzService] Packs 加载: Skill_00000.ms
+[WzService] 加载完成, imgs: 0
+[WzService] 顶层节点(24): Character, Effect, Etc, Item, Map, Mob, Morph, Npc, Quest, Reactor, Skill, Sound, String, TamingMob, UI, Consume_KR.img, Eqp_KR.img, Etc_KR.img, Ins_KR.img, Mob_KR.img, smap.img, StandardPDD.img, zmap.img, zmap_cn.img
+[WzService] Character 子节点(125): Accessory, Afterimage, Android, ArcaneForce, AuthenticForce, Bits, Cap, Cape, Coat, Dragon, Face, Familiar, Glove, Hair, Jewel, Longcoat, Mechanic, Pants, PetEquip, Ring, Shield, Shoes, SkillSkin, TamingMob, Totem, Weapon, _Canvas, 00002000.img, 00002001.img, 00002002.img, 00002003.img, 00002004.img, 00002006.img, 00002007.img, 00002008.img, 00002009.img, 00002010.img, 00002011.img, 00002012.img, 00002013.img
+[WzService] 诊断 存在[Character/Hair]: True
+[WzService] 诊断 存在[Character/Face]: True
+[WzService] 诊断 存在[Character/Hair/00030000.img]: True
+[WzService] 诊断 存在[Character/Face/00020000.img]: True
+[WzService] 诊断 存在[Character/00002000.img]: True
+[WzService] 诊断 存在[Character/00012000.img]: True
+WZ 加载: True
+[MapCatalogService] 地图目录构建完成: 21206 个
+
+========== 发型目录扫描 ==========
+发型 img 总数: 17337
+前 30 个 id: 30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30010, 30020, 30021, 30022, 30023, 30024, 30025, 30026, 30027, 30030, 30031, 30032, 30033, 30034, 30035, 30036, 30037, 30040, 30041, 30042, 30043, 30044
+末 10 个 id: 71386, 71387, 71390, 71391, 71392, 71393, 71394, 71395, 71396, 71397
+
+========== 全量发型结构分类 + 管线收集（stand1/0）==========
+[WzService] GetZmapOrder: top=Base/zmap.img node=NULL
+[WzService] GetZmapOrder: top=zmap.img node=zmap.img
+[WzService] GetZmapOrder: zmap.img 顶层子节点前30=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle,tamingMobMid,characterStart,emotionOverBody,weaponWristOverGloveEffectOver,weaponWristOverGlove,weaponWristOverGloveEffectUnder,capeOverHead,weaponOverGloveEffectOver,weaponOverGlove,weaponOverGloveEffectUnder,gloveWristOverHair,gloveOverHair,handOverHair,weaponOverHandEffectOver,weaponOverHand,weaponOverHandEffectUnder,shieldOverHair,gloveWristBelowWeapon,gloveBelowWeapon,handBelowWeapon,weaponOverArmEffectOver,weaponOverArm,weaponOverArmEffectUnder,gloveWristBelowMailArm,capeOverArm]
+[WzService] GetZmapOrder: 从 zmap.img 读到 183 层, 前5=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle] 后5=[At,Fc,Hr,Hd,Bd]
+
+结构分类（共 17337）:
+  有 stand1/0 帧结构: 0
+  有 default 结构: 0
+  两者都有: 17337
+  两者都无: 0
+  stand1/0/hair 出图: 17325, default/hair 出图: 17325
+  帧内 hair 部件出图失败分布: hairShade=16319, hairSahde=24
+  ⚠ stand1/0 存在但无 hair 子节点: 12 个
+    列表: 35400, 36320, 36321, 45751, 61720, 61721, 61722, 61723, 61724, 61725, 61726, 61727
+
+== [35400] Character/Hair/00035400.img ==
+  stand1/0 全部子节点: hairOverHead, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=962字节
+    UOL 目标: Character\Hair\00035400.img\default\hairOverHead
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00035400.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=962字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [36320] Character/Hair/00036320.img ==
+  stand1/0 全部子节点: hairOverHead, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=988字节
+    UOL 目标: Character\Hair\00036320.img\default\hairOverHead
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00036320.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=988字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [36321] Character/Hair/00036321.img ==
+  stand1/0 全部子节点: hairOverHead, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=990字节
+    UOL 目标: Character\Hair\00036321.img\default\hairOverHead
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00036321.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=990字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [45751] Character/Hair/00045751.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1055字节
+    UOL 目标: Character\Hair\00045751.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=226字节
+    UOL 目标: Character\Hair\00045751.img\default\hairBelowBody
+  default/hairOverHead: value=Wz_Png 出图=1055字节
+  default/hairBelowBody: value=Wz_Png 出图=226字节
+
+== [61720] Character/Hair/00061720.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1283字节
+    UOL 目标: Character\Hair\00061720.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=547字节
+    UOL 目标: Character\Hair\00061720.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061720.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1283字节
+  default/hairBelowBody: value=Wz_Png 出图=547字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [61721] Character/Hair/00061721.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1232字节
+    UOL 目标: Character\Hair\00061721.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=561字节
+    UOL 目标: Character\Hair\00061721.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061721.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1232字节
+  default/hairBelowBody: value=Wz_Png 出图=561字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [61722] Character/Hair/00061722.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1209字节
+    UOL 目标: Character\Hair\00061722.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=565字节
+    UOL 目标: Character\Hair\00061722.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061722.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1209字节
+  default/hairBelowBody: value=Wz_Png 出图=565字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [61723] Character/Hair/00061723.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1315字节
+    UOL 目标: Character\Hair\00061723.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=585字节
+    UOL 目标: Character\Hair\00061723.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061723.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1315字节
+  default/hairBelowBody: value=Wz_Png 出图=585字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [61724] Character/Hair/00061724.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1237字节
+    UOL 目标: Character\Hair\00061724.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=544字节
+    UOL 目标: Character\Hair\00061724.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061724.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1237字节
+  default/hairBelowBody: value=Wz_Png 出图=544字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [61725] Character/Hair/00061725.img ==
+  stand1/0 全部子节点: hairOverHead, hairBelowBody, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=1257字节
+    UOL 目标: Character\Hair\00061725.img\default\hairOverHead
+  hairBelowBody: value=Wz_Uol uol="../../default/hairBelowBody" 出图=537字节
+    UOL 目标: Character\Hair\00061725.img\default\hairBelowBody
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00061725.img\default\hairShade
+  default/hairOverHead: value=Wz_Png 出图=1257字节
+  default/hairBelowBody: value=Wz_Png 出图=537字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [12]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 5:Wz_Uol+png, 6:Wz_Uol+png, 7:Wz_Uol+png, 8:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+管线收集（stand1/0）:
+  收集到 hair 件: 17337
+  未收集到 hair 件: 0
+  hairShade 件: 共 16327 个发型, 锁定可见 15, 仍未锁定 16312
+    仍未锁定示例: 30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30020, 30021, 30022, 30023, 30024, 30025, 30026, 30027, 30040, 30041, 30042, 30043
+
+== [30000] Character/Hair/00030000.img ==
+  stand1/0 全部子节点: hairOverHead, hair, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=418字节
+    UOL 目标: Character\Hair\00030000.img\default\hairOverHead
+  hair: value=Wz_Uol uol="../../default/hair" 出图=326字节
+    UOL 目标: Character\Hair\00030000.img\default\hair
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00030000.img\default\hairShade
+  default/hair: value=Wz_Png 出图=326字节
+  default/hairOverHead: value=Wz_Png 出图=418字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [30001] Character/Hair/00030001.img ==
+  stand1/0 全部子节点: hairOverHead, hair, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=580字节
+    UOL 目标: Character\Hair\00030001.img\default\hairOverHead
+  hair: value=Wz_Uol uol="../../default/hair" 出图=442字节
+    UOL 目标: Character\Hair\00030001.img\default\hair
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00030001.img\default\hairShade
+  default/hair: value=Wz_Png 出图=442字节
+  default/hairOverHead: value=Wz_Png 出图=580字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [30002] Character/Hair/00030002.img ==
+  stand1/0 全部子节点: hairOverHead, hair, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=573字节
+    UOL 目标: Character\Hair\00030002.img\default\hairOverHead
+  hair: value=Wz_Uol uol="../../default/hair" 出图=443字节
+    UOL 目标: Character\Hair\00030002.img\default\hair
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00030002.img\default\hairShade
+  default/hair: value=Wz_Png 出图=443字节
+  default/hairOverHead: value=Wz_Png 出图=573字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+== [30003] Character/Hair/00030003.img ==
+  stand1/0 全部子节点: hairOverHead, hair, hairShade
+  hairOverHead: value=Wz_Uol uol="../../default/hairOverHead" 出图=574字节
+    UOL 目标: Character\Hair\00030003.img\default\hairOverHead
+  hair: value=Wz_Uol uol="../../default/hair" 出图=440字节
+    UOL 目标: Character\Hair\00030003.img\default\hair
+  hairShade: value=Wz_Uol uol="../../default/hairShade" 出图=✗无
+    UOL 目标: Character\Hair\00030003.img\default\hairShade
+  default/hair: value=Wz_Png 出图=440字节
+  default/hairOverHead: value=Wz_Png 出图=574字节
+  default/hairShade: value= 出图=✗无
+    default/hairShade 子节点 [8]: 0:Wz_Png+png, 1:Wz_Uol+png, 2:Wz_Uol+png, 3:Wz_Uol+png, 4:Wz_Uol+png, 9:Wz_Uol+png, 10:Wz_Uol+png, 11:Wz_Uol+png
+
+========== 帽子遮挡锁测试（cap + hair）==========
+  cap=1000000: hair 件 3 个, 可见(hidden=false) 0 个
+    piece=hairOverHead     层=hairOverHead     locked= True hidden= True
+    piece=hair             层=hair             locked= True hidden= True
+    piece=hairShade        层=hairShade        locked=False hidden= True
+  对照无 cap: hair 可见 3 个
+  cap=1002149: hair 件 3 个, 可见(hidden=false) 0 个
+    piece=hairOverHead     层=hairOverHead     locked= True hidden= True
+    piece=hair             层=hair             locked= True hidden= True
+    piece=hairShade        层=hairShade        locked=False hidden= True
+  对照无 cap: hair 可见 3 个
+  [1003000] Cap img 不存在，跳过
+
+========== smap.img hair 相关层 ==========
+  gloveWristOverHair = "Gw"
+  gloveOverHair = "Gl"
+  handOverHair = "Bd"
+  shieldOverHair = "Si"
+  mailArmOverHair = "MaGw"
+  armOverHair = "Bd"
+  mailArmOverHairBelowWeapon = "MaGw"
+  armOverHairBelowWeapon = "Bd"
+  accessoryEyeOverCapOverHair = "Ay"
+  capOverHair = "CpHdH1H2H3H4H5H6HsHfHbAfAyAsAe"
+  accessoryEarOverHair = "Ae"
+  accessoryOverHair = "CpHdH1H2H3H4H5H6HsHfHbAfAyAsAe"
+  hairOverHead = "H1"
+  hair = "H2"
+  hairShade = "Hs"
+  hairBelowBody = "Hb"
+  backHairOverCape = "Hc"
+  backCapOverHair = "CpHdH1H2H3H4H5H6HsHfHbAfAyAsAe"
+  backHair = "H1"
+  backHairBelowCapWide = "H4"
+  backHairBelowCapNarrow = "H5"
+  backHairBelowCap = "H6"
+  backHairBelowHead = "Hf"
+  Cp = ""
+  Hr = ""
+  smap.img 总层数: 183
+
+========== hairShade 结构诊断 [30000] ==========
+  stand1/0/hairOverHead: value=Wz_Uol uol="../../default/hairOverHead"
+    ResolveUol → Character\Hair\00030000.img\default\hairOverHead value=Wz_Png
+    ExtractPng → 418 字节
+  stand1/0/hair: value=Wz_Uol uol="../../default/hair"
+    ResolveUol → Character\Hair\00030000.img\default\hair value=Wz_Png
+    ExtractPng → 326 字节
+  stand1/0/hairShade: value=Wz_Uol uol="../../default/hairShade"
+    ResolveUol → Character\Hair\00030000.img\default\hairShade value=
+    ExtractPng → ✗无
+  default/hairOverHead: value=Wz_Png uol=无 子节点=[origin,map,z,_outlink]
+    ExtractPng → 418 字节
+  default/hair: value=Wz_Png uol=无 子节点=[origin,map,z,_outlink]
+    ExtractPng → 326 字节
+  default/hairShade: value= uol=无 子节点=[0,1,2,3,4,9,10,11]
+    ExtractPng → ✗无
+    default/hairShade/0: value=Wz_Png uol=无 出图=236字节
+    default/hairShade/1: value=Wz_Uol uol="0" 出图=236字节
+    default/hairShade/2: value=Wz_Uol uol="0" 出图=236字节
+[导出] 30000-hair.png 326 字节 → /tmp/hairprobe-pngs
+[导出] 30000-hairOverHead.png 418 字节 → /tmp/hairprobe-pngs
+[导出] 30000-hairShade0.png 236 字节 → /tmp/hairprobe-pngs
+[导出] 30000-hairShade1.png 236 字节 → /tmp/hairprobe-pngs
+default/hairShade 全部子节点:
+  0: value=Wz_Png uol=无 出图=236字节 origin=True map=True z=True
+  1: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  2: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  3: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  4: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  9: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  10: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+  11: value=Wz_Uol uol="0" 出图=236字节 origin=False map=False z=False
+[default/hair] origin=(14,12) z=hair
+[default/hairOverHead] origin=(15,14) z=hairOverHead
+[default/hairShade/0] origin=(13,8) z=hairShade
+
+== 无 hair 子节点发型 [35400] 候选检查 ==
+
+== 无 hair 子节点发型 [45751] 候选检查 ==
+
+== 无 hair 子节点发型 [61720] 候选检查 ==
+
+========== 测试发型详细结构 ==========
+
+== [30000] Character/Hair/00030000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 326 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 326 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1672 字节
+
+== [30001] Character/Hair/00030001.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 442 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 442 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1838 字节
+
+== [30002] Character/Hair/00030002.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 443 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 443 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1783 字节
+
+== [30003] Character/Hair/00030003.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 440 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 440 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1796 字节
+
+== [30004] Character/Hair/00030004.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 434 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 434 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1865 字节
+
+== [30005] Character/Hair/00030005.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 443 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 443 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1802 字节
+
+== [30006] Character/Hair/00030006.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 446 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 446 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1860 字节
+
+== [31000] Character/Hair/00031000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 511 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 511 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2091 字节
+
+== [31001] Character/Hair/00031001.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 583 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 583 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2174 字节
+
+== [31002] Character/Hair/00031002.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 615 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 615 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2214 字节
+
+== [31100] Character/Hair/00031100.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 371 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 371 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1883 字节
+
+== [31101] Character/Hair/00031101.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 360 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 360 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1881 字节
+
+== [32000] Character/Hair/00032000.img 不存在（本 WZ 无此发型）==
+
+== [32001] Character/Hair/00032001.img 不存在（本 WZ 无此发型）==
+
+== [32002] Character/Hair/00032002.img 不存在（本 WZ 无此发型）==
+
+== [32100] Character/Hair/00032100.img 不存在（本 WZ 无此发型）==
+
+== [33000] Character/Hair/00033000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 780 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 780 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2949 字节
+
+== [33001] Character/Hair/00033001.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 947 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 947 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3241 字节
+
+== [33002] Character/Hair/00033002.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 923 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 923 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3238 字节
+
+== [33100] Character/Hair/00033100.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 365 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 365 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2045 字节
+
+== [34000] Character/Hair/00034000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 468 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 468 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3201 字节
+
+== [34001] Character/Hair/00034001.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 434 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node)
+    default/hair 出图: 434 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2878 字节
+
+== [35000] Character/Hair/00035000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 414 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 414 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1981 字节
+
+========== 各系列代表（每 1000 段第一个）==========
+
+== [32120] Character/Hair/00032120.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 540 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 540 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2781 字节
+
+== [36000] Character/Hair/00036000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade"), hairBelowBody(uol→"../../default/hairBelowBody")
+    stand1/0/hair 出图: 534 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 534 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+  CompositeFrame(stand1/0) 出图: 2113 字节
+
+== [37000] Character/Hair/00037000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 544 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 544 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3302 字节
+
+== [38000] Character/Hair/00038000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 849 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 849 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2485 字节
+
+== [39090] Character/Hair/00039090.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 536 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairBelowBodyProne(png,o,m,z), hairShade(node)
+    default/hair 出图: 536 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2522 字节
+
+== [40000] Character/Hair/00040000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 549 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 549 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2336 字节
+
+== [41060] Character/Hair/00041060.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 538 字节
+  default 子节点: hairShade(node), hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z)
+    default/hair 出图: 538 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2476 字节
+
+== [42000] Character/Hair/00042000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade"), hairBelowBody(uol→"../../default/hairBelowBody")
+    stand1/0/hair 出图: 327 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 327 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+  CompositeFrame(stand1/0) 出图: 2481 字节
+
+== [43000] Character/Hair/00043000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 425 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairShade(node), hairBelowBody(png,o,m,z)
+    default/hair 出图: 425 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2584 字节
+
+== [44000] Character/Hair/00044000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 538 字节
+  default 子节点: hairShade(node), hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z)
+    default/hair 出图: 538 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2953 字节
+
+== [45000] Character/Hair/00045000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 1213 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 1213 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3797 字节
+
+== [46000] Character/Hair/00046000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade"), hairBelowBody(uol→"../../default/hairBelowBody")
+    stand1/0/hair 出图: 473 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 473 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+  CompositeFrame(stand1/0) 出图: 1971 字节
+
+== [47000] Character/Hair/00047000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 555 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 555 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2777 字节
+
+== [48000] Character/Hair/00048000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade"), hairBelowBody(uol→"../../default/hairBelowBody")
+    stand1/0/hair 出图: 456 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 456 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+  CompositeFrame(stand1/0) 出图: 2089 字节
+
+== [60000] Character/Hair/00060000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 521 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 521 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1885 字节
+
+== [61000] Character/Hair/00061000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairShade(uol→"../../default/hairShade"), hairOverHead(uol→"../../default/hairOverHead"), hairBelowBody(uol→"../../default/hairBelowBody"), hair(uol→"../../default/hair")
+    stand1/0/hair 出图: 603 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 603 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+  CompositeFrame(stand1/0) 出图: 2364 字节
+
+== [63000] Character/Hair/00063000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 572 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 572 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2148 字节
+
+== [64000] Character/Hair/00064000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hairBelowBody(uol→"../../default/hairBelowBody"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 502 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 502 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 1924 字节
+
+== [65000] Character/Hair/00065000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 611 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 611 字节
+  管线 stand1/0 总件数=9, hair 件=3
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2209 字节
+
+== [66000] Character/Hair/00066000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 551 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 551 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2267 字节
+
+== [67000] Character/Hair/00067000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), prone(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 542 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 542 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 3010 字节
+
+== [68020] Character/Hair/00068020.img ==
+  顶层子节点: info(node), default(node), backDefault(node), prone(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 710 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 710 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2263 字节
+
+== [71000] Character/Hair/00071000.img ==
+  顶层子节点: info(node), default(node), backDefault(node), prone(node), walk1(node), walk2(node), stand1(node), stand2(node), alert(node), swingO1(node), swingO2(node), swingO3(node), swingOF(node), swingT1(node), swingT2(node), swingT3(node), swingTF(node), swingP1(node), swingP2(node), swingPF(node), stabO1(node), stabO2(node), stabOF(node), stabT1(node), stabT2(node), stabTF(node), shoot1(node), shoot2(node), shootF(node), proneStab(node), heal(node), fly(node), jump(node), sit(node), ladder(node), rope(node)
+  stand1/0 子节点: hairOverHead(uol→"../../default/hairOverHead"), hair(uol→"../../default/hair"), hairBelowBody(uol→"../../default/hairBelowBody"), hairShade(uol→"../../default/hairShade")
+    stand1/0/hair 出图: 670 字节
+  default 子节点: hairOverHead(png,o,m,z), hair(png,o,m,z), hairBelowBody(png,o,m,z), hairShade(node)
+    default/hair 出图: 670 字节
+  管线 stand1/0 总件数=10, hair 件=4
+    ▶ piece=hairOverHead     z=hairOverHead   → 层=hairOverHead     idx=  42 map= True locked= True hidden=False
+    ▶ piece=hair             z=hair           → 层=hair             idx=  46 map= True locked= True hidden=False
+    ▶ piece=hairBelowBody    z=hairBelowBody  → 层=hairBelowBody    idx= 103 map= True locked= True hidden=False
+    ▶ piece=hairShade        z=               → 层=hairShade        idx=  58 map=False locked=False hidden=False
+  CompositeFrame(stand1/0) 出图: 2490 字节
