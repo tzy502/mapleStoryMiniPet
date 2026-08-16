@@ -534,96 +534,38 @@ public partial class SettingsWindow
         try
         {
             // 先弹输入框让用户输入自定义名字（复用「重命名」对话框的弹窗/输入/按钮写法），默认值 = 自动名「预设 N」
-            var defaultName = NextPresetName();
-            var win = new Window
+            PromptPresetName("新建预设", NextPresetName(), name =>
             {
-                Title = "新建预设",
-                Width = 340,
-                Height = 170,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
-                CanResize = false,
-            };
-            var stack = new StackPanel { Margin = new Thickness(18), Spacing = 12 };
-            stack.Children.Add(new TextBlock { Text = "输入新的预设名称：", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 240, 244)) });
-            var input = new TextBox
-            {
-                Text = defaultName,
-                FontSize = 12,
-                Foreground = Brushes.Black,
-                Background = Brushes.White,
-                BorderBrush = new SolidColorBrush(InputBorder),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6),
-            };
-            stack.Children.Add(input);
-            var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-            var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
-            var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
-            UiStyle.ApplyHover(okBtn);
-            UiStyle.ApplyHover(cancelBtn);
-            okBtn.Click += (_, _) =>
-            {
+                _paperdollCurrent = CreateDefaultAppearance();
+                var clone = CloneAppearance(_paperdollCurrent);
+                _paperdollPresets.Add((name, clone));
+                // 磁盘持久化（重启保留）
                 try
                 {
-                    var name = input.Text?.Trim() ?? "";
-                    // 空输入或取消：不创建（与重命名对话框行为一致）
-                    if (string.IsNullOrEmpty(name))
-                    {
-                        win.Close();
-                        return;
-                    }
-                    // 重名：状态栏提示且不创建（与重命名对话框行为一致）
-                    if (_paperdollPresets.Any(p => p.Name == name))
-                    {
-                        if (_statusBarText != null) { _statusBarText.Text = $"预设名已存在: {name}"; }
-                        win.Close();
-                        return;
-                    }
-                    _paperdollCurrent = CreateDefaultAppearance();
-                    var clone = CloneAppearance(_paperdollCurrent);
-                    _paperdollPresets.Add((name, clone));
-                    // 磁盘持久化（重启保留）
-                    try
-                    {
-                        var s = _config.LoadSettings();
-                        s.SavedPaperdolls[name] = clone;
-                        _config.SaveSettings(s);
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] NewPresetPersist: {ex.Message}"); }
-                    RefreshPresetList();
-                    foreach (var p in _paperdollPresets)
-                    {
-                        if (p.Name == name)
-                        {
-                            _presetListBox.SelectedItem = p;
-                            _presetListBox.ScrollIntoView(p); // 新建后滚动到可见（体验 A-1：预设多时不盲选）
-                            break;
-                        }
-                    }
-                    if (_statusBarText != null)
-                    {
-                        _statusBarText.Text = "已新建预设";
-                    }
-                    SyncInputsFromPaperdoll();
-                    UpdatePaperdollPreview();
-                    win.Close();
+                    var s = _config.LoadSettings();
+                    s.SavedPaperdolls[name] = clone;
+                    _config.SaveSettings(s);
                 }
-                catch (Exception ex)
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] NewPresetPersist: {ex.Message}"); }
+                RefreshPresetList();
+                foreach (var p in _paperdollPresets)
                 {
-                    Console.Error.WriteLine($"[SettingsWindow] NewPreset: {ex.Message}");
-                    win.Close();
+                    if (p.Name == name)
+                    {
+                        _presetListBox.SelectedItem = p;
+                        _presetListBox.ScrollIntoView(p); // 新建后滚动到可见（体验 A-1：预设多时不盲选）
+                        break;
+                    }
                 }
-            };
-            cancelBtn.Click += (_, _) => win.Close();
-            btnRow.Children.Add(cancelBtn);
-            btnRow.Children.Add(okBtn);
-            stack.Children.Add(btnRow);
-            win.Content = stack;
-            win.ShowDialog(this);
+                if (_statusBarText != null)
+                {
+                    _statusBarText.Text = "已新建预设";
+                }
+                SyncInputsFromPaperdoll();
+                UpdatePaperdollPreview();
+            });
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] NewPresetWin: {ex.Message}"); }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] NewPreset: {ex.Message}"); }
     }
 
     private void SavePaperdollPreset()
@@ -631,20 +573,92 @@ public partial class SettingsWindow
         try
         {
             SyncPaperdollFromInputs();
-            var name = NextPresetName();
-            var clone = CloneAppearance(_paperdollCurrent);
-            _paperdollPresets.Add((name, clone));
-            // 磁盘持久化（重启保留）
-            try
+            // 2026-08-16：保存也弹名字输入框（与「新建」一致；原自动命名「预设 N」用户反馈没有设置名字的地方）
+            PromptPresetName("保存预设", NextPresetName(), name =>
             {
-                var s = _config.LoadSettings();
-                s.SavedPaperdolls[name] = clone;
-                _config.SaveSettings(s);
-            }
-            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePresetPersist: {ex.Message}"); }
-            RefreshPresetList();
+                var clone = CloneAppearance(_paperdollCurrent);
+                _paperdollPresets.Add((name, clone));
+                // 磁盘持久化（重启保留）
+                try
+                {
+                    var s = _config.LoadSettings();
+                    s.SavedPaperdolls[name] = clone;
+                    _config.SaveSettings(s);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePresetPersist: {ex.Message}"); }
+                RefreshPresetList();
+            });
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePreset: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 预设名字输入弹窗（「新建」「保存」共用；复用重命名对话框的弹窗/输入/按钮写法）：
+    /// 默认值 defaultName；空输入/取消 → 不动作关窗；重名 → 状态栏提示不动作；合法名 → onOk(name) 后关窗。
+    /// </summary>
+    private void PromptPresetName(string title, string defaultName, Action<string> onOk)
+    {
+        var win = new Window
+        {
+            Title = title,
+            Width = 340,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
+            CanResize = false,
+        };
+        var stack = new StackPanel { Margin = new Thickness(18), Spacing = 12 };
+        stack.Children.Add(new TextBlock { Text = "输入新的预设名称：", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 240, 244)) });
+        var input = new TextBox
+        {
+            Text = defaultName,
+            FontSize = 12,
+            Foreground = Brushes.Black,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(InputBorder),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
+        };
+        stack.Children.Add(input);
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
+        var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+        UiStyle.ApplyHover(okBtn);
+        UiStyle.ApplyHover(cancelBtn);
+        okBtn.Click += (_, _) =>
+        {
+            try
+            {
+                var name = input.Text?.Trim() ?? "";
+                // 空输入或取消：不动作（与重命名对话框行为一致）
+                if (string.IsNullOrEmpty(name))
+                {
+                    win.Close();
+                    return;
+                }
+                // 重名：状态栏提示且不动作
+                if (_paperdollPresets.Any(p => p.Name == name))
+                {
+                    if (_statusBarText != null) { _statusBarText.Text = $"预设名已存在: {name}"; }
+                    win.Close();
+                    return;
+                }
+                onOk(name);
+                win.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[SettingsWindow] PromptPresetName: {ex.Message}");
+                win.Close();
+            }
+        };
+        cancelBtn.Click += (_, _) => win.Close();
+        btnRow.Children.Add(cancelBtn);
+        btnRow.Children.Add(okBtn);
+        stack.Children.Add(btnRow);
+        win.Content = stack;
+        win.ShowDialog(this);
     }
 
     private void LoadPaperdollPreset()

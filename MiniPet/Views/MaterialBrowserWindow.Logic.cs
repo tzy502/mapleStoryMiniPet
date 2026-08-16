@@ -791,7 +791,7 @@ public partial class MaterialBrowserWindow
         }
     }
 
-    /// <summary>保存当前草稿为搭配存档（SavedPaperdolls）。</summary>
+    /// <summary>保存当前草稿为搭配存档（SavedPaperdolls）；2026-08-16 弹名字输入框（原自动命名「搭配 N」无输入处）。</summary>
     private void SaveDraftOutfit()
     {
         var cfg = _configService?.LoadSettings();
@@ -799,10 +799,63 @@ public partial class MaterialBrowserWindow
         {
             return;
         }
-        string name = $"搭配 {cfg.SavedPaperdolls.Count + 1}";
-        cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
-        _configService!.SaveSettings(cfg);
-        RefreshOutfitList();
+        string defaultName = $"搭配 {cfg.SavedPaperdolls.Count + 1}";
+        var win = new Window
+        {
+            Title = "保存搭配",
+            Width = 340,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromArgb(255, 30, 30, 38)),
+            CanResize = false,
+        };
+        var stack = new StackPanel { Margin = new Thickness(18), Spacing = 12 };
+        stack.Children.Add(new TextBlock { Text = "输入搭配名称：", FontSize = 12, Foreground = new SolidColorBrush(Color.FromArgb(255, 240, 240, 244)) });
+        var input = new TextBox
+        {
+            Text = defaultName,
+            FontSize = 12,
+            Foreground = Brushes.Black,
+            Background = Brushes.White,
+            BorderBrush = InputBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
+        };
+        stack.Children.Add(input);
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
+        var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+        UiStyle.ApplyHover(okBtn);
+        UiStyle.ApplyHover(cancelBtn);
+        okBtn.Click += (_, _) =>
+        {
+            try
+            {
+                var name = input.Text?.Trim() ?? "";
+                if (string.IsNullOrEmpty(name))
+                {
+                    win.Close();
+                    return;
+                }
+                if (cfg.SavedPaperdolls.ContainsKey(name))
+                {
+                    win.Close();
+                    return;
+                }
+                cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
+                _configService!.SaveSettings(cfg);
+                RefreshOutfitList();
+                win.Close();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] SaveOutfit: {ex.Message}"); win.Close(); }
+        };
+        cancelBtn.Click += (_, _) => win.Close();
+        btnRow.Children.Add(cancelBtn);
+        btnRow.Children.Add(okBtn);
+        stack.Children.Add(btnRow);
+        win.Content = stack;
+        win.ShowDialog(this);
     }
 
     /// <summary>从搭配存档加载草稿并合成预览。</summary>
