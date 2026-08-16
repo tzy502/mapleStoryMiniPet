@@ -271,6 +271,33 @@ public class PaperdollService : IEntityFrameProvider
         return (part >= 141 && part <= 146) || part == 170;
     }
 
+    /// <summary>
+    /// 当前武器在该动作下是否有帧（weapon 根节点下 action 含数字帧；无武器/无效 id → false）。
+    /// 与渲染路径同条件：CollectPiecesForFrame 对装备检查 {root}/{action}/{frame} 存在才收部件
+    /// （不存在则该动作不会画出这把武器）——用于「该动画会不会展示这个武器」的可用性判断
+    /// （AnimService 空闲随机展示动作过滤；无武器时不选武器展示动画）。
+    /// </summary>
+    public bool WeaponHasAction(string action)
+    {
+        if (_current?.Weapon == null || string.IsNullOrEmpty(_current.Weapon.Id)) return false;
+        string root = ItemRoot(_current.Weapon.Id);
+        if (string.IsNullOrEmpty(root)) return false;
+        try
+        {
+            return _wz.WithWzLock(() =>
+            {
+                var node = _wz.FindNodeByPath($"{root}/{action}");
+                if (node == null) return false;
+                foreach (Wz_Node child in node.Nodes)
+                {
+                    if (int.TryParse(child.Text, out _)) return true;
+                }
+                return false;
+            });
+        }
+        catch { return false; }
+    }
+
     public (SKBitmap? Frame, int OriginX, int OriginY, int FrameW, int FrameH) RenderFrame(string action, int frame)
     {
         if (_current == null) return (null, 0, 0, 0, 0);

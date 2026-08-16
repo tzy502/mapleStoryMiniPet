@@ -67,9 +67,12 @@ namespace MiniPet.Services
         // 实体帧提供者（纸娃娃实时合成；Mob/NPC 为 null 走图条）
         private IEntityFrameProvider? _frameProvider;
 
-        // 空闲随机动作池缓存（A13）：避免每次空闲触发都枚举磁盘动作列表；mob 变化时失效重建
-        private string _idlePoolMobId = string.Empty;
-        private List<string> _idleActionPool = new();
+        // 空闲随机动作池缓存（A13）：避免每次空闲触发都枚举磁盘动作列表；缓存键含 mobId + 外观指纹，
+        // mob/外观/武器变化自动失效重建（A15：纸娃娃换武器必须重建展示池，否则展示动作永不上池）
+        private string _idlePoolKey = string.Empty;
+        private List<string> _idleActionPool = new();        // Loop 池（stand/walk/fly/jump 等循环微动效）
+        private List<string> _idleDisplayPool = new();       // 展示 OneShot 池-首选（武器类型匹配 + 武器有帧）
+        private List<string> _idleDisplayAltPool = new();    // 展示 OneShot 池-兜底（武器有帧即可展示；族匹配空时用）
 
         public AnimService(SpriteService spriteService)
         {
@@ -290,13 +293,15 @@ namespace MiniPet.Services
                 _idleAccumulated += deltaMs;
                 if (_currentMode == PlayMode.Loop && _idleAccumulated >= _currentIdleThreshold)
                 {
-                    var randomAction = GetRandomAction();
+                    var (randomAction, randomMode) = GetRandomIdleAction();
                     if (randomAction != null && randomAction != _currentAction)
                     {
-                        Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction}");
-                        // A10：同 mob 路径——只选 Loop 类动作，直接 Loop 播放，不预置 pending
+                        Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction} 模式={randomMode}");
+                        // A15：空闲随机除 Loop 微动效外，还会选中武器展示 OneShot（swing*/stab*/shoot*）
+                        // ——按 OneShot 播放，播完走本方法 OneShot 完成回调自动回 stand1/2（有 pending 则先执行）。
+                        // 直接 Play 会清残留 pending（用户 move/fly 请求在 OneShot 播放期由 SwitchTo 记入 pending）。
                         _pendingAction = string.Empty;
-                        Play(randomAction, PlayMode.Loop);
+                        Play(randomAction, randomMode);
                         return TickProvider(provider, 0);
                     }
                     ResetIdleThreshold();
@@ -495,10 +500,11 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 获取随机空闲动作：只从「Loop 类动作」池中选（A10 统一 Loop/OneShot 分裂；A13 池缓存免每触发磁盘枚举）。
+        /// 获取随机动作（Loop 池）：只从「Loop 类动作」池中选（A10 统一 Loop/OneShot 分裂；A13 池缓存免每触发磁盘枚举）。
         /// 旧逻辑问题：mob 路径会选中 walk1 等 OneShot（走一遍就停）、skill/attack 优先导致其他动作永轮不到、
-        /// 纸娃娃路径会选中 fly（Loop 无限循环且 pending 悬挂）。统一后空闲随机只播站/走/飞等循环微动效，
-        /// 由空闲阈值周期性替换，OneShot 完成回调不再参与。
+        /// 纸娃娃路径会选中 fly（Loop 无限循环且 pending 悬挂）。统一后只播站/走/飞等循环微动效。
+        /// 供 EffectLayerService（Agent 随机动作）与 mob 路径空闲随机使用；纸娃娃空闲随机走
+        /// <see cref="GetRandomIdleAction"/>（Loop + 武器展示 OneShot）。
         /// </summary>
         public string? GetRandomAction()
         {
@@ -525,18 +531,96 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 空闲随机动作池（仅 Loop 类动作）：按 mob 缓存，mob 变化/动作集变化时失效重建（A13）。
-        /// 纸娃娃走 provider 动作列表；Mob/NPC 走精灵图条动作列表（内存 ∪ 磁盘）。
+        /// 空闲随机动作（A15）：Loop 池 + 武器展示 OneShot 池合并随机，返回 (动作, 播放模式)。
+        /// 展示动作（swing*/stab*/shoot*）按 <see cref="PlayMode.OneShot"/> 播放——播完由 TickProvider
+        /// 的 OneShot 完成回调自动回 stand1/2（「展示完回归 stand」）；无武器/该武器所有展示动作均无帧时
+        /// 展示池为空，退化为纯 Loop（与旧行为一致）。
         /// </summary>
+        private (string? Action, PlayMode Mode) GetRandomIdleAction()
+        {
+            var loopPool = GetIdleActionPool();
+            var displayPool = GetIdleDisplayPool();
+            var displayAltPool = GetIdleDisplayAltPool();
+            // 首选族匹配展示池；族匹配为空（武器类型未知/映射未覆盖本 WZ）→ 用兜底池（武器有帧即展示）
+            var effectiveDisplay = displayPool.Count > 0 ? displayPool : displayAltPool;
+
+            // 合并候选（排除当前动作；两池无交集：Loop 池只含循环动作，展示池只含非循环武器动作）
+            var candidates = new List<string>(loopPool.Count + effectiveDisplay.Count);
+            foreach (var a in loopPool)
+            {
+                if (a != _currentAction)
+                {
+                    candidates.Add(a);
+                }
+            }
+            foreach (var a in effectiveDisplay)
+            {
+                if (a != _currentAction)
+                {
+                    candidates.Add(a);
+                }
+            }
+            if (candidates.Count == 0)
+            {
+                return (null, PlayMode.Loop);
+            }
+
+            var chosen = candidates[Random.Shared.Next(candidates.Count)];
+            var mode = effectiveDisplay.Contains(chosen) ? PlayMode.OneShot : PlayMode.Loop;
+            return (chosen, mode);
+        }
+
+        /// <summary>空闲随机 Loop 池：仅 Loop 类动作（A13 缓存；与展示池同键同建）。</summary>
         private List<string> GetIdleActionPool()
         {
-            if (_idlePoolMobId == _currentMobId && _idleActionPool.Count > 0)
+            BuildIdlePools();
+            return _idleActionPool;
+        }
+
+        /// <summary>
+        /// 空闲随机展示池-首选（A15）：纸娃娃 + 有武器时，从「与武器类型匹配的展示动作」中选。
+        /// 过滤规则：① 动作在 provider 可用列表（身体有帧 + 合成有界）；② 动作族前缀匹配武器类型
+        /// （swingO=单手、swingT=双手、swingP=枪矛、shoot=弓弩、stab=匕首/拳套；映射按本 WZ 实测校正）；
+        /// ③ 武器自身该动作有帧（WeaponHasAction——该动画会画出这把武器，否则跳过换另一个）。
+        /// 无武器/武器类型未知 → 首选池为空（回退 <see cref="GetIdleDisplayAltPool"/>，再空则只 Loop）。
+        /// </summary>
+        private List<string> GetIdleDisplayPool()
+        {
+            BuildIdlePools();
+            return _idleDisplayPool;
+        }
+
+        /// <summary>
+        /// 空闲随机展示池-兜底（A15）：纸娃娃 + 有武器时，所有「武器自身有帧」的展示动作
+        /// （该动画会画出这把武器），供武器类型映射未覆盖/不匹配时回退（避免本 WZ 编号异常段无展示）。
+        /// </summary>
+        private List<string> GetIdleDisplayAltPool()
+        {
+            BuildIdlePools();
+            return _idleDisplayAltPool;
+        }
+
+        /// <summary>
+        /// 构建空闲随机三池（Loop + 展示首选 + 展示兜底）。缓存键 = mobId + 外观指纹（纸娃娃 CurrentHash，
+        /// 含武器 id；mob 为空串），外观/武器变化自动失效重建（A15：原 A13 只按 mobId 缓存，
+        /// 纸娃娃 mobId 恒为哨兵 → 换武器后展示池永不刷新，展示动作永不上池）。
+        /// 纸娃娃走 provider 动作列表；Mob/NPC 走精灵图条动作列表（内存 ∪ 磁盘）。
+        /// </summary>
+        private void BuildIdlePools()
+        {
+            string providerKey = string.Empty;
+            var provider = ActiveProvider;
+            if (provider is PaperdollService pd)
             {
-                return _idleActionPool;
+                providerKey = pd.CurrentHash;
+            }
+            string key = $"{_currentMobId}|{providerKey}";
+            if (_idlePoolKey == key && _idleActionPool.Count > 0)
+            {
+                return;
             }
 
             List<string>? available;
-            var provider = ActiveProvider;
             if (provider != null)
             {
                 available = provider.GetAvailableActions();
@@ -546,26 +630,129 @@ namespace MiniPet.Services
                 available = _spriteService.GetAvailableActions(_currentMobId);
             }
 
-            var pool = new List<string>();
-            foreach (var a in available)
+            // 纸娃娃 + 有武器 → 展示动作族（swingO/swingT/swingP/shoot/stab）；无武器/未知 → 空
+            string family = string.Empty;
+            var paperdoll = provider as PaperdollService;
+            if (paperdoll != null)
             {
-                if (a.StartsWith("die", StringComparison.OrdinalIgnoreCase))
+                family = GetWeaponActionFamily(paperdoll.Current?.Weapon?.Id);
+            }
+
+            var loopPool = new List<string>();
+            var displayPool = new List<string>();
+            var displayAltPool = new List<string>();
+            if (available != null)
+            {
+                foreach (var a in available)
                 {
-                    continue;
-                }
-                if (a.StartsWith("hit", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-                if (IsLoopAction(a))
-                {
-                    pool.Add(a);
+                    if (a.StartsWith("die", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    if (a.StartsWith("hit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    if (IsLoopAction(a))
+                    {
+                        loopPool.Add(a);
+                        continue;
+                    }
+                    // 展示动作：武器自身该动作有帧（该动画会画出这把武器）才进池；
+                    // 族匹配进首选池，其余（映射未覆盖的展示动作）进兜底池
+                    if (paperdoll == null || !IsWeaponDisplayAction(a) || !paperdoll.WeaponHasAction(a))
+                    {
+                        continue;
+                    }
+                    if (family.Length > 0 && IsFamilyMatch(a, family))
+                    {
+                        displayPool.Add(a);
+                    }
+                    else
+                    {
+                        displayAltPool.Add(a);
+                    }
                 }
             }
 
-            _idlePoolMobId = _currentMobId;
-            _idleActionPool = pool;
-            return pool;
+            _idlePoolKey = key;
+            _idleActionPool = loopPool;
+            _idleDisplayPool = displayPool;
+            _idleDisplayAltPool = displayAltPool;
+        }
+
+        /// <summary>
+        /// 武器类型 → 展示动作族前缀（本 WZ 实测校正，WeaponActionProbe 实图验证）：
+        /// 121-132 系为 swingO 帧集、133-134 枪矛 swingP、137-138 弓弩 shoot、140-146 双手 swingT
+        /// （对齐 PaperdollService.IsTwoHandWeapon 的 141-146）、153 系 swingT/swingP、170 系无展示帧。
+        /// 映射未覆盖/不匹配时由兜底池接管（武器有帧即展示），不会因编号异常而无展示。
+        /// </summary>
+        private static string GetWeaponActionFamily(string? weaponId)
+        {
+            if (string.IsNullOrEmpty(weaponId) || !int.TryParse(weaponId, out var n))
+            {
+                return string.Empty;
+            }
+            int part = n / 10000;
+            if (part >= 121 && part <= 123)
+            {
+                return "swingO";   // 单手剑/斧/钝器
+            }
+            if (part >= 124 && part <= 125)
+            {
+                return "stab";     // 匕首/拳套（本 WZ 亦有 swingO 帧，stab 更贴匕首特征）
+            }
+            if (part >= 130 && part <= 132)
+            {
+                return "swingO";   // 本 WZ 实测 130-132 为 swingO 帧集（非常规双手编号）
+            }
+            if (part >= 133 && part <= 134)
+            {
+                return "swingP";   // 枪/矛（swingPF 帧）
+            }
+            if (part >= 137 && part <= 138)
+            {
+                return "shoot";    // 弓/弩（shoot1/shootF 帧）
+            }
+            if (part >= 140 && part <= 146)
+            {
+                return "swingT";   // 本 WZ 实测 140-146 为 swingT 帧集（对齐 IsTwoHandWeapon）
+            }
+            if (part == 153)
+            {
+                return "swingT";   // 本 WZ 实测 153 系 swingT/swingP 帧
+            }
+            if (part == 170)
+            {
+                return "swingP";   // 本 WZ 170 系无展示帧 → 两池皆空，兜底只 Loop
+            }
+            return string.Empty;
+        }
+
+        /// <summary>动作名是否为武器展示动作（swingO*/swingT*/swingP*/shoot*/stabO*/stabT*）。</summary>
+        private static bool IsWeaponDisplayAction(string action)
+        {
+            return action.StartsWith("swingO", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("swingT", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("swingP", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("shoot", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("stabO", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("stabT", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>动作名是否匹配武器动作族（stab 族含 stabO*/stabT*；其余按族前缀匹配）。</summary>
+        private static bool IsFamilyMatch(string action, string family)
+        {
+            if (family.Length == 0)
+            {
+                return false;
+            }
+            if (family == "stab")
+            {
+                return action.StartsWith("stabO", StringComparison.OrdinalIgnoreCase)
+                    || action.StartsWith("stabT", StringComparison.OrdinalIgnoreCase);
+            }
+            return action.StartsWith(family, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>动作是否为 Loop 类（A10）：_animDefs 显式 Loop，或常见站立/移动循环动作名（stand*/walk*/fly/jump）。</summary>
@@ -622,8 +809,8 @@ namespace MiniPet.Services
         public void SetCurrentMobId(string mobId)
         {
             _currentMobId = mobId ?? string.Empty;
-            // 随机动作池缓存失效（A13）：mob 变化后按新 mob 重建
-            _idlePoolMobId = string.Empty;
+            // 随机动作池缓存失效（A13）：mob 变化后按新 mob 重建（A15：键含外观指纹，纸娃娃换外观/武器亦失效）
+            _idlePoolKey = string.Empty;
         }
 
         // ─── IActionDriver（Agent Run 实体忙碌动作驱动；PLAN-agent-integration.md §2）───
