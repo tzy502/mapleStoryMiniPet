@@ -516,7 +516,7 @@ public class AnimServiceTests
 
         Assert.Contains("stand1", loop);
         Assert.DoesNotContain("walk1", loop);   // 2026-08-17：空闲随机不用 walk/fly
-        Assert.Contains("jump", loop);          // jump 保留为循环微动效
+        Assert.DoesNotContain("jump", loop);    // jump 也不用——只要站姿 + 攻击展示
         Assert.Contains("swingO1", preferred);
         Assert.Contains("swingO3", preferred);
         Assert.Contains("swingOF", preferred);
@@ -650,21 +650,14 @@ public class AnimServiceTests
         {
             if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase)
                 || action.StartsWith("fly", StringComparison.OrdinalIgnoreCase)
-                || action.StartsWith("move", StringComparison.OrdinalIgnoreCase))
+                || action.StartsWith("move", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
             return true;
         }
-        if (action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-        if (action.StartsWith("stand", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-        return false;
+        return action.StartsWith("stand", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>与 AnimService.GetWeaponActionFamily 一致（本 WZ 实测校正）。</summary>

@@ -768,33 +768,26 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 空闲随机 Loop 池过滤（A10 + 2026-08-17 用户要求「默认不使用 walk 和 fly，更多攻击动作」）：
-        /// 只保留 stand*/jump* 循环微动效（纸娃娃与 mob/npc 一致）；walk*/fly*/move* 不再进空闲随机池
-        /// ——空闲随机以攻击（展示）动作为主（swing*/stab*/shoot* OneShot），站姿/跳为回归基准。
+        /// 空闲随机 Loop 池过滤（A10 + 2026-08-17 用户要求「walk/fly/jump 都不要，更多攻击动作」）：
+        /// 只保留 stand* 站姿循环（纸娃娃与 mob/npc 一致）；walk*/fly*/move*/jump* 不再进空闲随机池
+        /// ——空闲随机以攻击（展示）动作为主（swing*/stab*/shoot* OneShot），站姿为回归基准。
         /// 注意：与 IsLooping（OneShot 完成回调的 Loop/OneShot 判定）无关，勿混用。
         /// </summary>
         private bool IsLoopAction(string action)
         {
             if (_animDefs.TryGetValue(action, out var def) && def.IsLoop)
             {
-                // _animDefs 里 move/fly 是 Loop——但空闲随机默认不用移动/飞行
+                // _animDefs 里 move/fly 是 Loop——但空闲随机只要站姿
                 if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase)
                     || action.StartsWith("fly", StringComparison.OrdinalIgnoreCase)
-                    || action.StartsWith("move", StringComparison.OrdinalIgnoreCase))
+                    || action.StartsWith("move", StringComparison.OrdinalIgnoreCase)
+                    || action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }
                 return true;
             }
-            if (action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-            if (action.StartsWith("stand", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-            return false;
+            return action.StartsWith("stand", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
