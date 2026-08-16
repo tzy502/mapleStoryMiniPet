@@ -67,6 +67,11 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, Wz_Vector?> _moveCache = new();
     // 坐骑/椅子动作帧数缓存（R1：CollectPiecesForFrame 每帧查一次，避免重复 WZ 遍历）
     private readonly ConcurrentDictionary<string, int> _rideFrameCountCache = new();
+    // 坐骑 characterAction 映射缓存（R18：坐骑动作名 → 角色动作名，MapleSalon2 tamingMob.ts 同源；
+    // 反向映射供 ResolveMountAction 选动作，hideBody 供隐藏角色身体；坐骑数据不随外观变，WZ 重载后随 SetAppearance 清）
+    private readonly ConcurrentDictionary<string, Dictionary<string, string>> _mountCharActionCache = new();
+    // 坐骑 characterAction 反向映射缓存（R18：角色动作名 → 坐骑动作名；见 GetMountCharActionReverse）
+    private readonly ConcurrentDictionary<string, Dictionary<string, string>> _mountCharActionReverseCache = new();
     // 诊断去重（R5/R6：body 未锁定 / locked.Count==0 只打一次，防 30fps 刷屏）
     private readonly ConcurrentDictionary<string, byte> _loggedFrameFailures = new();
 
@@ -117,6 +122,8 @@ public class PaperdollService : IEntityFrameProvider
         _rootCache.Clear();
         _delayCache.Clear();
         _rideFrameCountCache.Clear();
+        _mountCharActionCache.Clear();
+        _mountCharActionReverseCache.Clear();
         _loggedFrameFailures.Clear();
         _validActionsCache = null;
         _actionValidCache.Clear();
@@ -377,8 +384,12 @@ public class PaperdollService : IEntityFrameProvider
         if (_frameSourcesCache.TryGetValue(key, out var cached)) return cached;
 
         var sources = new List<PieceSource>();
+        // R18 hideBody：坐骑动作映射 hideBody（characterAction[坐骑动作] == "hideBody"，坐骑完全覆盖角色）
+        // → 只收集坐骑部件，跳过 body/head/hair/face 等角色部件（对齐 MapleSalon2 isHideBodyAction 处理）。
+        bool mountHideBody = IsMountHideBodyForAction(a, action);
         foreach (var (category, root) in GetRoots(hash, a))
         {
+            if (mountHideBody && category != "mount") continue;
             // R1 坐骑：TamingMob/{id}.img/{mountAction}/{mountFrame}/0 —— 结构同角色部件（origin/map.navel/z），
             // 走同一 Piece 管线；动作缺省时回退 stand1/stand2（骑乘姿态），帧号 clamp 到坐骑帧数（最小联动）。
             if (category == "mount")
@@ -432,7 +443,8 @@ public class PaperdollService : IEntityFrameProvider
 
         // R13 节点级装备特效：{root}/effect（真实客户端披风/武器特效结构，如 110249；本 WZ 披风仅帧级 effect）。
         // 按 EnableEffect 开关收集，effect 帧 clamp 到特效自身帧数（最小可用联动，同椅子 effect 的处理）。
-        if (a.EnableEffect)
+        // R18：hideBody 时角色部件全隐藏，装备特效同样不收集（避免悬空显示）。
+        if (a.EnableEffect && !mountHideBody)
         {
             foreach (var (category, root) in GetRoots(hash, a))
             {
@@ -611,8 +623,10 @@ public class PaperdollService : IEntityFrameProvider
 
     /// <summary>
     /// R1 坐骑部件收集：TamingMob/{id}.img/{mountAction}/{mountFrame}/0。
-    /// 坐骑动作优先跟随当前角色动作（同名动作直接联动），缺省回退 stand1/stand2（骑乘姿态）；
-    /// 帧号 clamp 到坐骑动作帧数（最小可用联动，不做 MapleSalon2 的逐帧 instruction 同步）。
+    /// 坐骑动作优先跟随当前角色动作（characterAction 反向映射优先，其次同名动作直接联动），
+    /// 缺省回退 stand1/stand2（骑乘姿态）；帧号 clamp 到坐骑动作帧数（最小可用联动，不做 MapleSalon2 的逐帧 instruction 同步）。
+    /// R18 hideBody：坐骑动作映射 hideBody（characterAction[坐骑动作] == "hideBody"）时坐骑完全覆盖角色，
+    /// 角色身体部件由 CollectPiecesForFrame 跳过（见 IsMountHideBodyForAction），此处只收坐骑部件。
     /// </summary>
     private void AddMountPieces(List<PieceSource> sources, CharacterAppearance a, string mountRoot, string action, int frame)
     {
@@ -650,9 +664,117 @@ public class PaperdollService : IEntityFrameProvider
         sources.Add(new PieceSource("chair", effectFrame.ToString(), piecePath, a.Chair?.Id ?? ""));
     }
 
-    /// <summary>坐骑动作解析：同名字动作优先；缺省回退 stand1/stand2（骑乘姿态）；再无则任意可用动作。</summary>
+    /// <summary>坐骑 characterAction 正向映射（缓存）：坐骑动作名 → 角色动作名（MapleSalon2 tamingMob.ts 同源）。</summary>
+    private Dictionary<string, string> GetMountCharActionMap(string mountRoot)
+    {
+        if (_mountCharActionCache.TryGetValue(mountRoot, out var cached)) return cached;
+        var map = _wz.WithWzLock(() =>
+        {
+            var m = new Dictionary<string, string>(StringComparer.Ordinal);
+            var imgNode = _wz.FindNodeByPath(mountRoot);
+            if (imgNode == null) return m;
+            var img = imgNode.GetValue<Wz_Image>();
+            Wz_Node? inner = img != null ? img.Node : imgNode;
+            if (inner == null) return m;
+            var ca = inner.FindNodeByPath("characterAction");
+            if (ca == null) return m;
+            foreach (Wz_Node kv in ca.Nodes)
+            {
+                var v = kv.GetValueEx<string>(null);
+                if (!string.IsNullOrEmpty(v)) m[kv.Text] = v;
+            }
+            return m;
+        });
+        _mountCharActionCache[mountRoot] = map;
+        return map;
+    }
+
+    /// <summary>
+    /// 坐骑 characterAction 反向映射（缓存）：角色动作名 → 坐骑动作名。
+    /// characterAction 节点 = {坐骑动作名: 角色动作名}（如 01930001 飞行坐骑：walk1→fly、stand1→fly；
+    /// 01932294 全覆盖坐骑：stand1→hideBody 等）。反向映射供 ResolveMountAction 按角色当前动作名选坐骑动作：
+    /// ① 隐式同名（坐骑动作名 == 角色动作名，如 stand1→stand1）优先；
+    /// ② 显式 characterAction 反向（角色动作名 → 映射到它的坐骑动作名，如 fly → walk1）。
+    /// hideBody 值不参与反向（它不是角色真实动作名）。
+    /// </summary>
+    private Dictionary<string, string> GetMountCharActionReverse(string mountRoot)
+    {
+        if (_mountCharActionReverseCache.TryGetValue(mountRoot, out var cached)) return cached;
+        var reverse = _wz.WithWzLock(() =>
+        {
+            var r = new Dictionary<string, string>(StringComparer.Ordinal);
+            var imgNode = _wz.FindNodeByPath(mountRoot);
+            if (imgNode == null) return r;
+            var img = imgNode.GetValue<Wz_Image>();
+            Wz_Node? inner = img != null ? img.Node : imgNode;
+            if (inner == null) return r;
+            // ① 隐式同名：坐骑动作名 → 同名角色动作
+            foreach (Wz_Node top in inner.Nodes)
+            {
+                if (top.Text == "info" || top.Text == "characterAction" || top.Text == "forcingItem") continue;
+                if (!r.ContainsKey(top.Text)) r[top.Text] = top.Text;
+            }
+            // ② 显式 characterAction：坐骑动作 A → 角色动作 X；X 无条目时取 A，同名条目（A == X）优先覆盖
+            var ca = inner.FindNodeByPath("characterAction");
+            if (ca != null)
+            {
+                foreach (Wz_Node kv in ca.Nodes)
+                {
+                    var x = kv.GetValueEx<string>(null);
+                    if (string.IsNullOrEmpty(x) || x.Equals("hideBody", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!r.TryGetValue(x, out var existing))
+                    {
+                        r[x] = kv.Text;
+                    }
+                    else if (kv.Text == x && existing != x)
+                    {
+                        r[x] = x;
+                    }
+                }
+            }
+            return r;
+        });
+        _mountCharActionReverseCache[mountRoot] = reverse;
+        return reverse;
+    }
+
+    /// <summary>坐骑动作是否映射 hideBody（characterAction[坐骑动作] == "hideBody" → 坐骑完全覆盖角色，角色身体隐藏）。</summary>
+    private bool IsMountActionHideBody(string mountRoot, string mountAction)
+    {
+        if (string.IsNullOrEmpty(mountAction)) return false;
+        return GetMountCharActionMap(mountRoot).TryGetValue(mountAction, out var v)
+            && v.Equals("hideBody", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>当前外观 + 当前角色动作下，坐骑动作是否映射 hideBody（R18：坐骑完全覆盖角色，只渲染坐骑）。</summary>
+    private bool IsMountHideBodyForAction(CharacterAppearance a, string action)
+    {
+        if (string.IsNullOrEmpty(a.Mount?.Id)) return false;
+        var mountRoot = MountRoot(a.Mount!.Id);
+        if (mountRoot.Length == 0) return false;
+        string mountAction = ResolveMountAction(mountRoot, action);
+        if (mountAction.Length == 0) return false;
+        return IsMountActionHideBody(mountRoot, mountAction);
+    }
+
+    /// <summary>
+    /// R18 坐骑动作解析（对齐 MapleSalon2 tamingMob.ts characterAction 映射）：
+    /// ① characterAction 反向映射：坐骑 img 有 characterAction 节点时，按「坐骑动作 → 角色动作」反向
+    /// （角色动作名 → 坐骑动作名）优先选择坐骑动作（隐式同名映射内置，stand1/walk1 等直接命中同名坐骑动作）；
+    /// ② 无映射时保留原回退链：同名字动作 → stand1/stand2（骑乘姿态）→ walk1/walk2/jump/fly/tired/prone 枚举。
+    /// </summary>
     private string ResolveMountAction(string mountRoot, string requested)
     {
+        // ① characterAction 反向映射：角色当前动作名 → 坐骑动作名（含隐式同名）
+        if (!string.IsNullOrEmpty(requested))
+        {
+            if (GetMountCharActionReverse(mountRoot).TryGetValue(requested, out var mapped)
+                && GetRideActionFrameCount(mountRoot, mapped) > 0)
+            {
+                return mapped;
+            }
+        }
+        // ② 原回退链（保留）：同名 → stand1/stand2（骑乘姿态）→ 枚举
         if (!string.IsNullOrEmpty(requested) && GetRideActionFrameCount(mountRoot, requested) > 0) return requested;
         if (GetRideActionFrameCount(mountRoot, "stand1") > 0) return "stand1";
         if (GetRideActionFrameCount(mountRoot, "stand2") > 0) return "stand2";
