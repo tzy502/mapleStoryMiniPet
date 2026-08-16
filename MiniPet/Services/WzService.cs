@@ -610,6 +610,22 @@ namespace MiniPet.Services
                 var key = id.TrimStart('0');
                 if (string.IsNullOrEmpty(key)) key = "0";
                 var pad = PadId(id, 8);
+                // 皮肤专用：String Skin 分类 id = Body id + 10000（12000 系列；MapleSalon2 规则实测，
+                // String/Eqp.img/Eqp 分类表无 Body 只有 Skin，2000 系列直接查永远落空 → 皮肤名全 fallback「皮肤 N」）
+                if (string.Equals(category, "Body", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(key, out var skinBodyId))
+                {
+                    var skinKey = (skinBodyId + 10000).ToString();
+                    foreach (var p in new[]
+                    {
+                        $"String/Eqp.img/Eqp/Skin/{skinKey}",
+                        $"String/Item.img/{category}/{skinKey}",
+                    })
+                    {
+                        var n = FindNodeByPath($"{p}/name")?.GetValueEx<string>(null);
+                        if (!string.IsNullOrEmpty(n)) return n;
+                    }
+                }
                 var candidates = new[]
                 {
                     $"String/Item.img/{category}/{key}",

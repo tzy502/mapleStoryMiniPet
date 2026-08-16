@@ -262,16 +262,16 @@ public partial class SettingsWindow
 
         content.Children.Add(new TextBlock { Text = "👤 基础设置", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
 
-        var genderRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        genderRow.Children.Add(new TextBlock { Text = "性别", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
+        var genderRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
+        genderRow.Children.Add(new TextBlock { Text = "性别", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 44, TextAlignment = TextAlignment.Right });
         _genderCombo = new ComboBox { Height = 26, FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), ItemsSource = new[] { "男 (0)", "女 (1)" }, SelectedIndex = _paperdollCurrent.Gender };
         _genderCombo.SelectionChanged += (_, _) => { try { _paperdollCurrent.Gender = _genderCombo.SelectedIndex; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Gender: {ex.Message}"); } };
         genderRow.Children.Add(_genderCombo);
         content.Children.Add(genderRow);
 
         // 皮肤：body id 选择（head=body+10000 成对）
-        var skinRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        skinRow.Children.Add(new TextBlock { Text = "皮肤", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
+        var skinRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
+        skinRow.Children.Add(new TextBlock { Text = "皮肤", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 44, TextAlignment = TextAlignment.Right });
         _skinCombo = new ComboBox { Height = 26, FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
         // WZ 刷新成功后重建皮肤下拉（配置保存自动刷新也走 OnWzRefreshed；只挂一次防重复订阅）
         if (!_skinRefreshHooked)
@@ -285,8 +285,8 @@ public partial class SettingsWindow
         skinRow.Children.Add(_skinCombo);
         content.Children.Add(skinRow);
 
-        var earRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        earRow.Children.Add(new TextBlock { Text = "耳朵", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 40 });
+        var earRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
+        earRow.Children.Add(new TextBlock { Text = "耳朵", FontSize = 10, Foreground = BrushTxtSecondary, VerticalAlignment = VerticalAlignment.Center, Width = 44, TextAlignment = TextAlignment.Right });
         _earCombo = new ComboBox { Height = 26, FontSize = 12, Foreground = Brushes.Black, Background = Brushes.White, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), ItemsSource = new[] { "人类", "精灵", "精灵(Lef)", "高等精灵" }, SelectedIndex = EarIndex(_paperdollCurrent.Ear) };
         _earCombo.SelectionChanged += (_, _) => { try { var i = _earCombo?.SelectedIndex ?? 0; _paperdollCurrent.Ear = EarTypeAt(i); UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Ear: {ex.Message}"); } };
         earRow.Children.Add(_earCombo);
