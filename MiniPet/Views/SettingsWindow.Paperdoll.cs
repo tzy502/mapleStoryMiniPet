@@ -179,7 +179,9 @@ public partial class SettingsWindow
     {
         try
         {
-            var browser = new MaterialBrowserWindow(_wzService, _config, _paperdollSvc);
+            // 草稿初始化传当前编辑外观（2026-08-16：原素材库读主窗口 CurrentPaperdoll，
+            // 设置窗口已选内容会被旧外观覆盖——用户反馈「默认内容不停覆盖前面已选内容」）
+            var browser = new MaterialBrowserWindow(_wzService, _config, _paperdollSvc, null, CloneAppearance(_paperdollCurrent));
             browser.OnPaperdollDraftApplied += appearance =>
             {
                 Dispatcher.UIThread.Post(() =>
@@ -404,7 +406,8 @@ public partial class SettingsWindow
     /// 原按打开时分类取单部位（ApplyDraftPartToCurrent(category,…)）会丢失跨分类选择（用户反馈：应用不生效）。</summary>
     private void OpenEquipPicker(string category, Button btn)
     {
-        var browser = new MaterialBrowserWindow(_wzService, _config, _paperdollSvc, category);
+        // 草稿初始化传当前编辑外观（2026-08-16：防止素材库旧外观草稿覆盖设置窗口已选内容）
+        var browser = new MaterialBrowserWindow(_wzService, _config, _paperdollSvc, category, CloneAppearance(_paperdollCurrent));
         browser.OnPaperdollDraftApplied += appearance =>
         {
             Dispatcher.UIThread.Post(() =>
@@ -589,12 +592,40 @@ public partial class SettingsWindow
         try
         {
             SyncPaperdollFromInputs();
-            // 2026-08-16：保存也弹名字输入框（与「新建」一致；原自动命名「预设 N」用户反馈没有设置名字的地方）
+            var clone = CloneAppearance(_paperdollCurrent);
+            // 2026-08-16 用户要求「保存覆盖预设用下拉框预设」：预设列表有选中项 → 直接覆盖该预设；
+            // 无选中项 → 弹输入框新建（默认「预设 N」）。
+            if (_presetListBox?.SelectedItem is ValueTuple<string, CharacterAppearance> selected)
+            {
+                var name = selected.Item1;
+                _paperdollPresets.RemoveAll(p => p.Name == name);
+                _paperdollPresets.Add((name, clone));
+                try
+                {
+                    var s = _config.LoadSettings();
+                    s.SavedPaperdolls[name] = clone;
+                    _config.SaveSettings(s);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePresetPersist: {ex.Message}"); }
+                RefreshPresetList();
+                foreach (var p in _paperdollPresets)
+                {
+                    if (p.Name == name)
+                    {
+                        _presetListBox.SelectedItem = p;
+                        break;
+                    }
+                }
+                if (_statusBarText != null)
+                {
+                    _statusBarText.Text = $"✅ 已覆盖预设「{name}」";
+                }
+                return;
+            }
+            // 无选中：弹输入框新建
             PromptPresetName("保存预设", NextPresetName(), name =>
             {
-                var clone = CloneAppearance(_paperdollCurrent);
                 _paperdollPresets.Add((name, clone));
-                // 磁盘持久化（重启保留）
                 try
                 {
                     var s = _config.LoadSettings();
@@ -638,8 +669,9 @@ public partial class SettingsWindow
         };
         stack.Children.Add(input);
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-        var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
-        var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+        // 2026-08-16：弹窗按钮对齐统一规范——确定 accent 蓝底白字、取消透明底+边框（同素材浏览器确认/取消）
+        var okBtn = new Button { Content = "确定", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(20, 6), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        var cancelBtn = new Button { Content = "取消", FontSize = 11, Padding = new Thickness(20, 6), Background = Brushes.Transparent, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
         UiStyle.ApplyHover(okBtn);
         UiStyle.ApplyHover(cancelBtn);
         okBtn.Click += (_, _) =>
@@ -1029,8 +1061,9 @@ public partial class SettingsWindow
             };
             stack.Children.Add(input);
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-            var okBtn = new Button { Content = "确定", Padding = new Thickness(20, 6) };
-            var cancelBtn = new Button { Content = "取消", Padding = new Thickness(20, 6) };
+            // 2026-08-16：弹窗按钮对齐统一规范（同 PromptPresetName）
+            var okBtn = new Button { Content = "确定", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(20, 6), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+            var cancelBtn = new Button { Content = "取消", FontSize = 11, Padding = new Thickness(20, 6), Background = Brushes.Transparent, Foreground = BrushTxtSecondary, BorderBrush = BrushBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
             UiStyle.ApplyHover(okBtn);
             UiStyle.ApplyHover(cancelBtn);
             okBtn.Click += (_, _) =>

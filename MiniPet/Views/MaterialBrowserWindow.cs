@@ -133,19 +133,22 @@ public partial class MaterialBrowserWindow : Window
         public string Display => $"{Emoji} {Name}  [{Id}]";
     }
 
-    public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null, PaperdollService? paperdoll = null, string? initialCategory = null)
+    public MaterialBrowserWindow(WzService? wzService = null, ConfigService? configService = null, PaperdollService? paperdoll = null, string? initialCategory = null, CharacterAppearance? initialAppearance = null)
     {
         _wzService = wzService;
         _configService = configService;
         _paperdoll = paperdoll;
         _initialCategory = initialCategory;
-        // 草稿初始化为当前主窗口搭配（如有），素材库选件延续当前外观
+        // 草稿初始化：优先传入的 initialAppearance（2026-08-16 设置窗口传当前编辑外观——
+        // 原固定读 CurrentPaperdoll（主窗口搭配），用户在设置窗口先选帽子再开素材库选上衣时
+        // 草稿被主窗口旧外观重置 → 覆盖已选内容（用户反馈「默认内容不停覆盖前面已选内容」））；
+        // 无传入则回退当前主窗口搭配。
         try
         {
-            var saved = configService?.LoadSettings().CurrentPaperdoll;
-            if (saved != null)
+            var draft = initialAppearance ?? configService?.LoadSettings().CurrentPaperdoll;
+            if (draft != null)
             {
-                _draftAppearance = CloneDraft(saved);
+                _draftAppearance = CloneDraft(draft);
             }
         }
         catch { }
