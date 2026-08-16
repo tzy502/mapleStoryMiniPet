@@ -52,6 +52,8 @@ public partial class SettingsWindow
     {
         public int Id;
         public string Label = "";
+        // 下拉显示名字（ComboBox 无 ItemTemplate 时按 ToString 显示；缺覆盖会显示类型全名——皮肤名看不到的根因）
+        public override string ToString() => Label;
     }
 
     private static int EarIndex(string ear)
