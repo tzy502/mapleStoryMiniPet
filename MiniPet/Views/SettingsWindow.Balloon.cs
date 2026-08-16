@@ -321,9 +321,44 @@ public partial class SettingsWindow
     // ═══════════════════════════════════════════
     // 辅助方法
     // ═══════════════════════════════════════════
+    // 按钮样式统一规则（2026-08-16，对齐素材浏览器「确认/取消」）：
+    // 主操作（新建/保存/应用）→ MakePrimaryBtn：accent 蓝底白字（同素材选择器「✅ 选择」）；
+    // 次级操作（加载/打开素材库等）→ MakeSmallBtn：透明底 + 边框 + 次级亮字（同素材选择器「取消」）。
+    private static Button MakePrimaryBtn(string text, Action onClick)
+    {
+        var btn = new Button
+        {
+            Content = text,
+            FontSize = 11,
+            FontWeight = FontWeight.Medium,
+            Padding = new Thickness(16, 6),
+            Background = BrushAccent,
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        UiStyle.ApplyHover(btn);
+        btn.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Btn {text}: {ex.Message}"); } };
+        return btn;
+    }
+
     private static Button MakeSmallBtn(string text, Action onClick)
     {
-        var btn = new Button { Content = text, FontSize = 10, Padding = new Thickness(10, 4), Background = new SolidColorBrush(Color.FromArgb(128, 60, 60, 70)), Foreground = BrushTxtSecondary, BorderBrush = new SolidColorBrush(InputBorder), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        var btn = new Button
+        {
+            Content = text,
+            FontSize = 11,
+            Padding = new Thickness(16, 6),
+            Background = Brushes.Transparent,
+            Foreground = BrushTxtSecondary,
+            BorderBrush = BrushBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
         UiStyle.ApplyHover(btn);
         btn.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Btn {text}: {ex.Message}"); } };
         return btn;

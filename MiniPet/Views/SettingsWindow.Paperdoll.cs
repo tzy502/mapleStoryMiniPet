@@ -230,8 +230,8 @@ public partial class SettingsWindow
 
         content.Children.Add(new TextBlock { Text = "📋 预设管理", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 0, 0, 0) });
         var presetBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        presetBtnRow.Children.Add(MakeSmallBtn("新建", () => NewPaperdollPreset()));
-        presetBtnRow.Children.Add(MakeSmallBtn("保存", () => SavePaperdollPreset()));
+        presetBtnRow.Children.Add(MakePrimaryBtn("新建", () => NewPaperdollPreset()));
+        presetBtnRow.Children.Add(MakePrimaryBtn("保存", () => SavePaperdollPreset()));
         presetBtnRow.Children.Add(MakeSmallBtn("加载", () => LoadPaperdollPreset()));
         content.Children.Add(presetBtnRow);
 
@@ -344,7 +344,7 @@ public partial class SettingsWindow
         content.Children.Add(BuildDyeSlider("色相", 0, 360, _paperdollCurrent.Hair.Hue, v => { _paperdollCurrent.Hair.Hue = v; UpdatePaperdollPreview(); }));
         content.Children.Add(BuildDyeSlider("饱和度", 0, 100, _paperdollCurrent.Hair.Saturation, v => { _paperdollCurrent.Hair.Saturation = v; UpdatePaperdollPreview(); }));
         content.Children.Add(BuildDyeSlider("亮度", 0, 100, _paperdollCurrent.Hair.Brightness, v => { _paperdollCurrent.Hair.Brightness = v; UpdatePaperdollPreview(); }));
-        var dyeBtn = MakeSmallBtn("✅ 应用染发", () => { try { _paperdollCurrent.Hair.Dye = 1; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Dye: {ex.Message}"); } });
+        var dyeBtn = MakePrimaryBtn("✅ 应用染发", () => { try { _paperdollCurrent.Hair.Dye = 1; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Dye: {ex.Message}"); } });
         content.Children.Add(dyeBtn);
 
         content.Children.Add(MakeSmallBtn("🧩 打开素材库", OpenPaperdollMaterialBrowser));
@@ -732,7 +732,9 @@ public partial class SettingsWindow
                 var row = new Grid();
                 row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
                 row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(22)));
-                var tb = new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, Padding = new Thickness(4, 3), VerticalAlignment = VerticalAlignment.Center };
+                // 名称文字直接赋值（2026-08-16：原 Binding("Name") 绑 ValueTuple 公共字段（非属性）
+                // 绑定失败 → 新建输入的名字在列表不显示；FuncDataTemplate 的 item 参数可直接取 Name）
+                var tb = new TextBlock { Text = item.Name, FontSize = 11, Padding = new Thickness(4, 3), VerticalAlignment = VerticalAlignment.Center };
                 tb.Classes.Add("preset-name");
                 // 行内删除按钮：透明底 + 次级亮色字形（可见但不喧宾夺主），hover 亮化（accent 微亮底 + 白字）
                 var delBtn = new Button { Content = "🗑️", FontSize = 10, Width = 22, Height = 20, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = BrushTxtSecondary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Focusable = false };
