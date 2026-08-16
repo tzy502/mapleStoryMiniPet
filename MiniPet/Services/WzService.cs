@@ -355,6 +355,28 @@ namespace MiniPet.Services
         }
 
         /// <summary>
+        /// 轻量尺寸查询（2026-08-16 冰凌披风特效卡顿优化）：只读 Wz_Png 的 Width/Height，
+        /// 不执行 DecodePixels/Encode（ExtractPng 全量编码 + SKBitmap.Decode 是特效 155x140 大图
+        /// 首次加载卡顿的根因——GetBounds 只需要尺寸却走了全量解码）。解析失败返回 null。
+        /// </summary>
+        public (int W, int H)? GetPngSize(string wzPath)
+        {
+            try
+            {
+                var node = ResolveToCanvas(wzPath);
+                if (node == null) return null;
+                var png = node.GetValue<Wz_Png>();
+                if (png == null) return null;
+                return (png.Width, png.Height);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WzService] GetPngSize({wzPath}): {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// 提取装备/部件图标 PNG（素材浏览器 icon 预览用）：优先 {root}/icon，回退 {root}/iconRaw。
         /// 节点为 Wz_Png 或经 UOL/_outlink 链接（解析链与 ExtractTilePng 一致）；锁语义同其他提取方法（_wzLock 内串行化）。
         /// 返回 PNG 编码字节；无图标/解析失败返回 null。

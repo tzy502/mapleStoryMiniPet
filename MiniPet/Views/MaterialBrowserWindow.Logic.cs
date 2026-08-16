@@ -676,36 +676,78 @@ public partial class MaterialBrowserWindow
         _searchClearBtn.IsVisible = !string.IsNullOrEmpty(_searchInput?.Text);
     }
 
-    /// <summary>纸娃娃部件预览：把选中部件写入草稿外观，穿在身上合成 stand1 首帧。</summary>
+    /// <summary>纸娃娃部件预览：把选中部件写入草稿外观，穿在身上合成 stand1 首帧。
+    /// 2026-08-16：合成移后台 Task（冰凌披风特效首次合成 4.6s——WZ 惰性加载 + 大特效位图——
+    /// 原 UI 线程同步 CompositeFrame 卡死界面；_previewRenderSeq 防旧任务串台）。</summary>
     private void LoadPaperdollPreview(MaterialEntry entry)
     {
         try
         {
             ApplyDraftPart(entry.Category, entry.Id);
-            var png = _paperdoll!.CompositeFrame(_draftAppearance, "stand1", 0);
-            if (png == null || png.Length == 0)
+            int seq = ++_previewRenderSeq;
+            var snapshot = CloneDraft(_draftAppearance);
+            var paperdoll = _paperdoll;
+            System.Threading.Tasks.Task.Run(() =>
             {
-                SetPreviewChild(new TextBlock
+                try
                 {
-                    Text = "🎨\n无预览",
-                    FontSize = 13,
-                    Foreground = BrushTxtDim,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextAlignment = TextAlignment.Center,
-                    LineHeight = 1.5
-                });
-                return;
-            }
-            using var ms = new MemoryStream(png);
-            var bmp = new Bitmap(ms);
-            // 自适应：去掉 MaxWidth=220/MaxHeight=260 约束，随预览框填满并等比缩放
-            SetPreviewChild(new Image
-            {
-                Source = bmp,
-                Stretch = Stretch.Uniform,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
+                    if (paperdoll == null) { return; }
+                    var png = paperdoll.CompositeFrame(snapshot, "stand1", 0);
+                    if (png == null || png.Length == 0)
+                    {
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            if (seq != _previewRenderSeq) { return; }
+                            SetPreviewChild(new TextBlock
+                            {
+                                Text = "🎨\n无预览",
+                                FontSize = 13,
+                                Foreground = BrushTxtDim,
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                VerticalAlignment = VerticalAlignment.Center,
+                                TextAlignment = TextAlignment.Center,
+                                LineHeight = 1.5
+                            });
+                        });
+                        return;
+                    }
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            if (seq != _previewRenderSeq) { return; }
+                            using var ms = new MemoryStream(png);
+                            var bmp = new Bitmap(ms);
+                            // 自适应：去掉 MaxWidth=220/MaxHeight=260 约束，随预览框填满并等比缩放
+                            SetPreviewChild(new Image
+                            {
+                                Source = bmp,
+                                Stretch = Stretch.Uniform,
+                                HorizontalAlignment = HorizontalAlignment.Stretch,
+                                VerticalAlignment = VerticalAlignment.Stretch
+                            });
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] PreviewImg: {ex.Message}"); }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[MaterialBrowser] LoadPaperdollPreview({entry.Id}): {ex.Message}");
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (seq != _previewRenderSeq) { return; }
+                        SetPreviewChild(new TextBlock
+                        {
+                            Text = "🎨\n预览失败",
+                            FontSize = 13,
+                            Foreground = BrushTxtDim,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            TextAlignment = TextAlignment.Center,
+                            LineHeight = 1.5
+                        });
+                    });
+                }
             });
         }
         catch (Exception ex)
@@ -875,13 +917,32 @@ public partial class MaterialBrowserWindow
         {
             return;
         }
-        var png = _paperdoll.CompositeFrame(_draftAppearance, "stand1", 0);
-        if (png is { Length: > 0 })
+        // 2026-08-16：后台合成（冰凌披风特效首帧 4.6s 不能卡 UI 线程）
+        int seq = ++_previewRenderSeq;
+        var snapshot = CloneDraft(_draftAppearance);
+        var paperdoll = _paperdoll;
+        System.Threading.Tasks.Task.Run(() =>
         {
-            using var ms = new MemoryStream(png);
-            var bmp = new Bitmap(ms);
-            SetPreviewChild(new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch });
-        }
+            try
+            {
+                var png = paperdoll.CompositeFrame(snapshot, "stand1", 0);
+                if (png is { Length: > 0 })
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        try
+                        {
+                            if (seq != _previewRenderSeq) { return; }
+                            using var ms = new MemoryStream(png);
+                            var bmp = new Bitmap(ms);
+                            SetPreviewChild(new Image { Source = bmp, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch });
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] OutfitPreviewImg: {ex.Message}"); }
+                    });
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[MaterialBrowser] LoadDraftOutfit: {ex.Message}"); }
+        });
     }
 
     private void RefreshOutfitList()

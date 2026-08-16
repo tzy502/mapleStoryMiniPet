@@ -57,6 +57,9 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, List<PieceSource>> _frameSourcesCache = new();
     private readonly ConcurrentDictionary<string, PieceMeta> _metaCache = new();
     private readonly ConcurrentDictionary<string, SKBitmap> _bmpCache = new();
+    // 2026-08-16 轻量尺寸缓存（冰凌披风特效卡顿优化）：GetBounds 只需要宽高，走 GetPngSize
+    // （不编码不解码），避免特效 155x140 大图在动作边界计算时全量 ExtractPng + SKBitmap.Decode
+    private readonly ConcurrentDictionary<string, (int W, int H)> _sizeCache = new();
     private readonly ConcurrentDictionary<string, SKBitmap> _dyeBmpCache = new();
     private readonly ConcurrentDictionary<string, int> _delayCache = new();
     // 坐骑/椅子动作帧数缓存（R1：CollectPiecesForFrame 每帧查一次，避免重复 WZ 遍历）
@@ -1330,8 +1333,7 @@ public class PaperdollService : IEntityFrameProvider
                 catch { }
                 foreach (var p in pieces.Where(x => x.Locked))
                 {
-                    var w = GetBmp(p.PiecePath)?.Width ?? 0;
-                    var h = GetBmp(p.PiecePath)?.Height ?? 0;
+                    var (w, h) = GetPieceSize(p.PiecePath);
                     minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
                     maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
                 }
@@ -1368,6 +1370,23 @@ public class PaperdollService : IEntityFrameProvider
         _bmpCache[piecePath] = bmp;
         EnforceBmpCap(_bmpCache);
         return bmp;
+    }
+
+    /// <summary>
+    /// 轻量尺寸（2026-08-16 冰凌披风特效卡顿优化）：优先 _sizeCache；未命中走 GetPngSize
+    /// （只读 Wz_Png 头，不编码不解码）；GetPngSize 失败回退 GetBmp（兜底）。GetBounds 全量使用。
+    /// </summary>
+    private (int W, int H) GetPieceSize(string piecePath)
+    {
+        if (_sizeCache.TryGetValue(piecePath, out var s)) return s;
+        var sz = _wz.WithWzLock(() => _wz.GetPngSize(piecePath));
+        if (sz == null)
+        {
+            var bmp = GetBmp(piecePath);
+            return bmp != null ? (bmp.Width, bmp.Height) : (0, 0);
+        }
+        _sizeCache[piecePath] = sz.Value;
+        return sz.Value;
     }
 
     /// <summary>
