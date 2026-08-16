@@ -80,6 +80,12 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, int> _chairEffectPosCache = new();
     private readonly ConcurrentDictionary<string, int> _chairEffectZCache = new();
     private readonly ConcurrentDictionary<string, bool> _chairTamingMobCache = new();
+    // 装备真实 vslot/islot 读取缓存（itemId → 槽串；null=WZ 无数据，回退硬编码默认）。
+    // 2026-08-17 修复：遮挡锁原用硬编码 vslot（帽 CpH1H5 等），cap 1003953 真实 vslot=CpH5
+    // （只占 Cp+H5，不锁前发 H1）却被硬编码锁 H1 → 前发 hairOverHead 被错误隐藏（用户反馈
+    // 「查看现在用的搭配发型展示有问题」）。SetAppearance 清空（WZ 重载后经 SetAppearance 重建）。
+    private readonly ConcurrentDictionary<string, string?> _vslotCache = new();
+    private readonly ConcurrentDictionary<string, string?> _islotCache = new();
 
     /// <summary>位图缓存容量上限（R11）：超过即释放并清一半，防无界常驻（简化 LRU，无访问序维护）。</summary>
     /// <summary>位图缓存容量上限（2026-08-16 512→2048：WarmupFor 换装预热预解码新外观全部位图
@@ -135,6 +141,8 @@ public class PaperdollService : IEntityFrameProvider
         _chairEffectPosCache.Clear();
         _chairEffectZCache.Clear();
         _chairTamingMobCache.Clear();
+        _vslotCache.Clear();
+        _islotCache.Clear();
         _loggedFrameFailures.Clear();
         _validActionsCache = null;
         _actionValidCache.Clear();
@@ -1236,18 +1244,20 @@ public class PaperdollService : IEntityFrameProvider
                 // （H1H2H3H4H5H6HfHsHb），帽子 vslot（CpH1H5）锁 H1/H5 → 整层头发被隐藏
                 // （probe 实证：cap=1000000/1002149 时 hair 件 0 可见）。smap 单码（H2 等）
                 // 不被帽子锁定 → 后发保持可见，仅前发（H1）被帽子遮挡，对齐 MapleSalon2 smap 语义。
+                // 2026-08-17 修复：smap **无该层条目**时 layerOk 恒真——对齐 MapleSalon2 refreshLock
+                // （requireLocks = smap[name] ?? []，空 requireLocks 的 hasAllLocks 恒 true → 部件可见）。
+                // 原回退「本层穿戴部件 vslot 并集 / 自身 vslot」会被帽子锁定的槽误伤：hairBelowHead
+                // 部件（zmap 有 hairBelowHead 层，但 smap 无该层——smap 只有 backHairBelowHead=Hf）
+                // 在 cap=1003953（vslot CpH5 锁 H5）下 selfOk 失败且回退 vslot 也被锁 → 整部件被
+                // 错误隐藏（probe 实测 8 个发型受影响，用户反馈「发型部分内容被错误隐藏」）。
                 var smapCodes = GetSmapLayerCodes(p.ResolvedLayer);
                 if (smapCodes.Count > 0)
                 {
                     layerOk = SlotsOk(locks, p.ItemId, smapCodes);
                 }
-                else if (layerSlots.TryGetValue(p.ResolvedLayer, out var hs))
-                {
-                    layerOk = SlotsOk(locks, p.ItemId, hs);
-                }
                 else
                 {
-                    layerOk = SlotsOk(locks, p.ItemId, slots);
+                    layerOk = true;
                 }
             }
             else if (layerSlots.TryGetValue(p.ResolvedLayer, out var ls))
@@ -1372,35 +1382,75 @@ public class PaperdollService : IEntityFrameProvider
     }
 
     /// <summary>
-    /// 类别 → islot 槽位层码（本 WZ 实际数据校准：cap→Cp、hair→Hr、cape→Sr、上衣→Ma、套服→MaPn、
-    /// 盾→Si、耳环→Ae；饰品三分类按 id 前缀动态取——R8：101 面饰→Af、102 眼饰→Ay、103 耳环→Ae）。
+    /// 类别 → islot 槽位层码（优先 WZ 真实数据 {img}/info/islot——MapleSalon2 用 item.islot；
+    /// 本 WZ probe 实证：cap 1003953 islot=Cp、weapon 1572011 islot=WpSi、hair islot=Hr、acc 101/102/103
+    /// islot=Af/Ay/Ae，硬编码默认值只作 WZ 缺失时的回退）。body/head/坐骑/椅子无装备槽数据，返回 ""。
     /// </summary>
-    private static string GetIslotForCategory(string cat, string itemId = "") => cat switch
+    private string GetIslotForCategory(string cat, string itemId = "")
     {
-        "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc",
-        "earring" => EarringSlots(itemId),
-        "faceaccessory" => EarringSlots(itemId),
-        "eyeaccessory" => EarringSlots(itemId),
-        "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
-        "glove" => "Gv", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
-        "body" => "Bd", _ => ""
-    };
+        if (cat is "hair" or "face" or "cap" or "cape" or "coat" or "overall"
+            or "pants" or "shoe" or "glove" or "shield" or "weapon"
+            or "earring" or "faceaccessory" or "eyeaccessory")
+        {
+            var fromWz = GetSlotFromWz(itemId, vslot: false);
+            if (fromWz != null) { return fromWz; }
+        }
+        return cat switch
+        {
+            "cap" => "Cp", "hair" => "Hr", "head" => "Hd", "face" => "Fc",
+            "earring" => EarringSlots(itemId),
+            "faceaccessory" => EarringSlots(itemId),
+            "eyeaccessory" => EarringSlots(itemId),
+            "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
+            "glove" => "Gv", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
+            "body" => "Bd", _ => ""
+        };
+    }
 
     /// <summary>
-    /// 类别 → vslot 槽串（按本 WZ 实际数据校准：帽 CpH1H5、披风 Sr、上衣 Ma、套服 MaPn、
-    /// 发型 H1H2H3H4H5H6HfHsHb、盾 Si、手套 GlGw、耳环 Ae；2 字符成对切块）。
-    /// 坐骑/椅子（Tm/无）不参与遮挡锁，返回 "" 即跳过。
+    /// 类别 → vslot 槽串（优先 WZ 真实数据 {img}/info/vslot——MapleSalon2 用 item.vslot；
+    /// 硬编码默认值在个别装备上错误：实证 cap 1003953 真实 vslot=CpH5（只占 Cp+H5，不锁前发 H1），
+    /// 硬编码 CpH1H5 锁 H1 → 前发 hairOverHead 被错误隐藏（用户反馈「查看现在用的搭配发型展示有问题」；
+    /// MapleSalon2 refreshLock 为 hasSelfLock||hasLayerLock，hairOverHead 层 smap=H1，帽子不占 H1 时
+    /// 前发应保持可见）。WZ 无数据回退硬编码；坐骑/椅子（Tm/无）不参与遮挡锁，返回 ""。
     /// </summary>
-    private static string GetVslotForCategory(string cat, string itemId = "") => cat switch
+    private string GetVslotForCategory(string cat, string itemId = "")
     {
-        "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc",
-        "earring" => EarringSlots(itemId),
-        "faceaccessory" => EarringSlots(itemId),
-        "eyeaccessory" => EarringSlots(itemId),
-        "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
-        "glove" => "GlGw", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
-        "body" => "Bd", _ => ""
-    };
+        if (cat is "hair" or "face" or "cap" or "cape" or "coat" or "overall"
+            or "pants" or "shoe" or "glove" or "shield" or "weapon"
+            or "earring" or "faceaccessory" or "eyeaccessory")
+        {
+            var fromWz = GetSlotFromWz(itemId, vslot: true);
+            if (fromWz != null) { return fromWz; }
+        }
+        return cat switch
+        {
+            "cap" => "CpH1H5", "hair" => "H1H2H3H4H5H6HfHsHb", "head" => "Hd", "face" => "Fc",
+            "earring" => EarringSlots(itemId),
+            "faceaccessory" => EarringSlots(itemId),
+            "eyeaccessory" => EarringSlots(itemId),
+            "coat" => "Ma", "overall" => "MaPn", "pants" => "Pn", "shoe" => "So",
+            "glove" => "GlGw", "shield" => "Si", "weapon" => "Wp", "cape" => "Sr",
+            "body" => "Bd", _ => ""
+        };
+    }
+
+    /// <summary>从 WZ 读取装备真实 vslot/islot（{img}/info/vslot|islot，缓存 per itemId；无数据返回 null 走硬编码回退）。</summary>
+    private string? GetSlotFromWz(string itemId, bool vslot)
+    {
+        if (string.IsNullOrEmpty(itemId) || !int.TryParse(itemId, out _)) { return null; }
+        var cache = vslot ? _vslotCache : _islotCache;
+        if (cache.TryGetValue(itemId, out var cached)) { return cached; }
+        var root = ItemRoot(itemId);
+        string? val = null;
+        if (root.Length > 0)
+        {
+            val = _wz.WithWzLock(() => _wz.GetStringProperty($"{root}/info/{(vslot ? "vslot" : "islot")}"));
+        }
+        if (string.IsNullOrEmpty(val)) { val = null; }
+        cache[itemId] = val;
+        return val;
+    }
 
     /// <summary>饰品槽位按 id 前缀（R8 校准真实 WZ：101→Af 面饰、102→Ay 眼饰、103→Ae 耳环；其余回退 Ae）。</summary>
     private static string EarringSlots(string? itemId)
