@@ -234,8 +234,21 @@ namespace MiniPet.Services
             }
             else if (OperatingSystem.IsWindows())
             {
-                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                return Path.Combine(appData, "MiniPet");
+                // 2026-08-17 用户要求「和 exe 同目录」：Windows 绿色便携版——settings.json 跟随 exe
+                // （拷走整个文件夹即带走配置）；exe 目录不可写（如 Program Files）时回退 %APPDATA%\MiniPet。
+                try
+                {
+                    var exeDir = AppContext.BaseDirectory;
+                    var probe = Path.Combine(exeDir, ".minipet-write-test");
+                    File.WriteAllText(probe, "ok");
+                    File.Delete(probe);
+                    return exeDir;
+                }
+                catch
+                {
+                    var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                    return Path.Combine(appData, "MiniPet");
+                }
             }
             else
             {
