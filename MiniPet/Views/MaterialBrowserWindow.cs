@@ -78,11 +78,15 @@ public partial class MaterialBrowserWindow : Window
 
     // ── 搜索防抖（300ms）+ 清除按钮 ──
     private readonly DispatcherTimer _searchDebounceTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    // 选择按钮「✅ 已应用」短暂提示后恢复（一次性 1.2s）
+    private readonly DispatcherTimer _selectFeedbackTimer = new() { Interval = TimeSpan.FromMilliseconds(1200) };
     private Button? _searchClearBtn;
     private TextBlock? _countLabel;
 
     // ── UI 引用 ──
-    private TextBox? _pageLabel;
+    // 分页：页码输入框（只显示数字）+ 总页数纯文本（如 "/ 5"），◀ [输入] / 总页数 ▶
+    private TextBox? _pageInput;
+    private TextBlock? _pageTotalLabel;
     private Button? _prevBtn;
     private Button? _nextBtn;
     private TextBox? _searchInput;
@@ -199,7 +203,11 @@ public partial class MaterialBrowserWindow : Window
         Content = root;
 
         // 防抖定时器随窗口关闭停止（防 DispatcherTimer 残留）
-        Closed += (_, _) => _searchDebounceTimer.Stop();
+        Closed += (_, _) =>
+        {
+            _searchDebounceTimer.Stop();
+            _selectFeedbackTimer.Stop();
+        };
 
         // 初始加载（有预选分类则选该分类）
         SelectCategory(_initialCategory ?? "全部");
@@ -413,17 +421,36 @@ public partial class MaterialBrowserWindow : Window
         UiStyle.ApplyHover(_selectBtn);
         _selectBtn.Click += (_, _) =>
         {
-            // 未选中条目：忽略点击（保持原行为，不关闭）
+            // 未选中条目：忽略点击（保持原行为，不关闭）；搜索刷新/组头点击会清空选中，恢复按钮文案防误导
             if (_itemList?.SelectedItem is not MaterialEntry entry)
             {
+                UpdateSelectButtonText(null);
                 return;
             }
+            // 纸娃娃部件应用后保持窗口打开（可继续选件）；怪物/NPC 选择后关闭
+            bool isPaperdoll = IsPaperdollCategory(entry.Category);
+            bool closeAfterApply = !isPaperdoll;
             try
             {
-                if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
+                if (isPaperdoll)
                 {
-                    // 纸娃娃部件：草稿已由 LoadPaperdollPreview（ApplyDraftPart）写入选中部件，点按钮应用草稿到主窗口
-                    OnPaperdollDraftApplied?.Invoke(_draftAppearance);
+                    // 纸娃娃部件：确保草稿写入选中部件（预览链路异常时兜底），再应用草稿到主窗口
+                    ApplyDraftPart(entry.Category, entry.Id);
+                    if (_paperdoll != null)
+                    {
+                        OnPaperdollDraftApplied?.Invoke(_draftAppearance);
+                        // 应用后保持窗口打开可继续选件，按钮短暂提示「已应用」
+                        if (_selectBtn != null)
+                        {
+                            _selectBtn.Content = "✅ 已应用";
+                        }
+                        ScheduleSelectButtonRestore();
+                    }
+                    else
+                    {
+                        // _paperdoll 为 null（非纸娃娃入口）：无应用通道，不按怪物/NPC 处理，保持窗口打开
+                        Console.Error.WriteLine($"[MaterialBrowser] 纸娃娃部件 {entry.Id} 无应用通道（_paperdoll 为 null），忽略");
+                    }
                     return;
                 }
                 // 怪物/NPC：OnMaterialSelected 并关闭
@@ -431,13 +458,15 @@ public partial class MaterialBrowserWindow : Window
             }
             catch (Exception ex)
             {
-                // Invoke 订阅方异常不吞：记录日志，finally 仍保证窗口关闭
+                // Invoke 订阅方异常不吞：记录日志，finally 仍保证非纸娃娃路径关闭窗口
                 Console.Error.WriteLine($"[MaterialBrowser] Select({entry.Id}): {ex.Message}");
             }
             finally
             {
-                // 选择后素材库窗口必须关闭（即使订阅方抛异常）
-                Close();
+                if (closeAfterApply)
+                {
+                    Close();
+                }
             }
         };
         btnRow.Children.Add(_selectBtn);
@@ -679,11 +708,11 @@ public partial class MaterialBrowserWindow : Window
         _prevBtn.Click += (_, _) => GoPage(-1);
         pager.Children.Add(_prevBtn);
 
-        // 分页可输入：输入页码 Enter 跳转（胶水需求 2026-08-09）
-        // 样式与全项目 input 统一（白底黑字圆角 6，胶水 2026-08-15）
-        _pageLabel = new TextBox
+        // 分页可输入：页码输入框只显示数字，Enter 跳转（clamp 1.._totalPages）；失焦无效恢复当前页
+        // 总页数改为右侧纯文本（如 "/ 5"），不再混入输入框（胶水需求 2026-08-15）
+        _pageInput = new TextBox
         {
-            Text = "1/1",
+            Text = "1",
             FontSize = 12,
             Foreground = Brushes.Black,
             VerticalAlignment = VerticalAlignment.Center,
@@ -692,36 +721,46 @@ public partial class MaterialBrowserWindow : Window
             BorderBrush = InputBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(10, 6)
+            Padding = new Thickness(6, 6),
+            // 固定宽度：容纳 3-4 位页码（总页数几百页内足够）
+            Width = 56
         };
-        _pageLabel.KeyDown += (_, e) =>
+        _pageInput.KeyDown += (_, e) =>
         {
             if (e.Key != Key.Enter)
             {
                 return;
             }
-            var t = _pageLabel.Text ?? "";
-            var num = t.Split('/')[0].Trim();
-            // 绝对跳页：越界由 GoToPage clamp，成功后 UpdatePager 统一恢复 "当前页/总页数" 显示
-            if (int.TryParse(num, out var p))
+            var t = _pageInput.Text ?? "";
+            // 绝对跳页：越界由 GoToPage clamp，成功后 UpdatePager 统一恢复当前页显示
+            if (int.TryParse(t, out var p))
             {
                 GoToPage(p);
                 return;
             }
             // 解析失败：恢复当前页显示，防误导
-            _pageLabel.Text = $"{_currentPage}/{_totalPages}";
+            _pageInput.Text = _currentPage.ToString();
         };
         // 失焦：解析失败或越界时把文本恢复为当前页显示（未按 Enter 的无效输入不留存）
-        _pageLabel.LostFocus += (_, _) =>
+        _pageInput.LostFocus += (_, _) =>
         {
-            var t = _pageLabel.Text ?? "";
-            var num = t.Split('/')[0].Trim();
-            if (!int.TryParse(num, out var p) || p < 1 || p > _totalPages)
+            var t = _pageInput.Text ?? "";
+            if (!int.TryParse(t, out var p) || p < 1 || p > _totalPages)
             {
-                _pageLabel.Text = $"{_currentPage}/{_totalPages}";
+                _pageInput.Text = _currentPage.ToString();
             }
         };
-        pager.Children.Add(_pageLabel);
+        pager.Children.Add(_pageInput);
+
+        // 总页数纯文本（只读，如 "/ 5"）
+        _pageTotalLabel = new TextBlock
+        {
+            Text = "/ 1",
+            FontSize = 12,
+            Foreground = BrushTxtSecondary,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        pager.Children.Add(_pageTotalLabel);
 
         _nextBtn = new Button
         {
@@ -754,6 +793,36 @@ public partial class MaterialBrowserWindow : Window
             Background = BrushBorder,
             HorizontalAlignment = HorizontalAlignment.Left
         };
+    }
+
+    // ═══════════════════════════════════════════
+    // 选择按钮文案（纸娃娃部件：应用到主窗口；其余：选择）
+    // ═══════════════════════════════════════════
+
+    /// <summary>按当前选中条目更新选择按钮文案（纸娃娃部件且 _paperdoll 可用：应用到主窗口；其余：选择）。</summary>
+    private void UpdateSelectButtonText(MaterialEntry? entry)
+    {
+        if (_selectBtn == null)
+        {
+            return;
+        }
+        _selectBtn.Content = entry != null && IsPaperdollCategory(entry.Category) && _paperdoll != null ? "✅ 应用到主窗口" : "✅ 选择";
+    }
+
+    /// <summary>「✅ 已应用」短暂提示后恢复按钮文案（一次性 1.2s；窗口关闭时定时器已停止）。</summary>
+    private void ScheduleSelectButtonRestore()
+    {
+        _selectFeedbackTimer.Stop();
+        _selectFeedbackTimer.Tick -= RestoreSelectButtonText;
+        _selectFeedbackTimer.Tick += RestoreSelectButtonText;
+        _selectFeedbackTimer.Start();
+    }
+
+    private void RestoreSelectButtonText(object? sender, EventArgs e)
+    {
+        _selectFeedbackTimer.Stop();
+        _selectFeedbackTimer.Tick -= RestoreSelectButtonText;
+        UpdateSelectButtonText(_itemList?.SelectedItem as MaterialEntry);
     }
 
     // ═══════════════════════════════════════════
