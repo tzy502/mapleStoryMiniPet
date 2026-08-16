@@ -83,7 +83,7 @@ dotnet run --project MiniPet/MiniPet.csproj
 | 项目 | 用途 | 地址 |
 |---|---|---|
 | **MapleSalon2** | 纸娃娃渲染参考 | https://github.com/spd789562/MapleSalon2 |
-| **WzComparerR2** | WZ 解析库与地图渲染参考 | https://github.com/MapleStoryMaple/WzComparerR2 |
+| **WzComparerR2** | WZ 解析库与地图渲染参考 | https://github.com/Kagamia/WzComparerR2 |
 
 ## ⚠️ 版权声明
 
