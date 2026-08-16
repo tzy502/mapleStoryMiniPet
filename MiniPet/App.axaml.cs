@@ -176,6 +176,9 @@ public partial class App : Application
                     else
                     {
                         Console.Error.WriteLine($"[App] WZ 自动加载失败: {err}");
+                        // 2026-08-17：加载失败默认打开设置页（用户要求「没配置 WZ 默认打开设置」；
+                        // Windows 纯净版无控制台日志时也能引导配置）
+                        petWindow?.OpenSettingsForWzConfig();
                         // 弹窗提示（一次启动只弹一次）
                         try
                         {
@@ -210,7 +213,8 @@ public partial class App : Application
             }
             else
             {
-                // WZ 路径未配置，直接从缓存加载默认宠物
+                // WZ 路径未配置：默认打开设置页引导配置（2026-08-17 用户要求），并从缓存加载默认宠物
+                petWindow?.OpenSettingsForWzConfig();
                 if (petWindow != null) petWindow.LoadDefaultPet(null);
             }
 

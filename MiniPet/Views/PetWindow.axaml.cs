@@ -1154,13 +1154,26 @@ public partial class PetWindow : Window
     /// 横向居中于背景窗口，纵向让精灵图底部落在地面线上（foothold 缺失时落在背景窗口底部）。
     /// </summary>
     /// <summary>#6：渲染（裁紧透明 padding）完成回调——EffectiveCrop* 此刻才就绪，此刻落地才精准。</summary>
+    /// <summary>公开入口：WZ 未配置/加载失败时 App 启动后自动打开设置页（2026-08-17 用户要求「没配置 WZ 默认打开设置」）。</summary>
+    public void OpenSettingsForWzConfig()
+    {
+        try
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { ShowSettingsWindow(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OpenSettingsForWzConfig: {ex.Message}"); }
+            });
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OpenSettingsForWzConfig: {ex.Message}"); }
+    }
+
     private void ShowSettingsWindow()
     {
         try
         {
             // 复用单例：SettingsWindow.OnClosing 把关闭改成 Hide()，所以 IsVisible=false 时是"隐藏未销毁"。
-            // 此前每次重开都 new 一个新实例 → 旧窗口泄露（_config.OnSettingsChanged 订阅/事件处理器不释放，逐次堆积）。
-            // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
+            // 此前每次重开都 new 一个新实例 → 旧窗口泄露（_config.OnSettingsChanged 订阅/事件处理器不释放，逐次堆积）。            // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
             if (_settingsWindow == null)
             {
                 _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService, _balloonService);
