@@ -515,7 +515,8 @@ public class AnimServiceTests
             a => a != "swingO2");
 
         Assert.Contains("stand1", loop);
-        Assert.Contains("walk1", loop);
+        Assert.DoesNotContain("walk1", loop);   // 2026-08-17：空闲随机不用 walk/fly
+        Assert.Contains("jump", loop);          // jump 保留为循环微动效
         Assert.Contains("swingO1", preferred);
         Assert.Contains("swingO3", preferred);
         Assert.Contains("swingOF", preferred);
@@ -644,16 +645,15 @@ public class AnimServiceTests
     /// <summary>与 AnimService.IsLoopAction 一致：_animDefs 显式 Loop 或 stand*/walk*/fly*/jump* 前缀。</summary>
     private static bool IsLoopAction(string action)
     {
+        // 2026-08-17 同步 AnimService：空闲随机不用 walk/fly/move（更多攻击动作）
         if (AnimDefs.TryGetValue(action, out var def) && def.IsLoop)
         {
-            return true;
-        }
-        if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-        if (action.StartsWith("fly", StringComparison.OrdinalIgnoreCase))
-        {
+            if (action.StartsWith("walk", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("fly", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("move", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
             return true;
         }
         if (action.StartsWith("jump", StringComparison.OrdinalIgnoreCase))
