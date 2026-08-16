@@ -93,7 +93,10 @@ public partial class SettingsWindow
         return list;
     }
 
-    /// <summary>皮肤中文名探测：先 Character/Body.img/{id}/info/name（真实皮肤名位置；Body.img 为 Wz_Image 则 TryExtract 后读，与 GetItemName 的 Eqp.img 同模式），再回退 GetItemName（String.wz），最后 null（调用方回退"皮肤 {id}"）。</summary>
+    /// <summary>皮肤中文名探测：一级 Character/Body.img/{id}/info/name；二级 String/Eqp.img/Eqp/Skin/{bodyId+10000}/name
+    /// （MapleSalon2 规则实测：String Skin 分类是 12000 系列——12000=奶油皮肤 ↔ Body 2000；12001 ↔ 2001…
+    /// 即 Skin 字符串 id = Body id + 10000。原实现直接查 {bodyId} 与补零 8 位全部落空 → 皮肤下拉只见「皮肤 N」）；
+    /// 三级回退 GetItemName。均未命中返回 null（调用方回退「皮肤 {id}」）。</summary>
     private string? TryGetSkinName(int bodyId)
     {
         try
@@ -114,15 +117,14 @@ public partial class SettingsWindow
                     if (!string.IsNullOrEmpty(n)) { return n; }
                 }
             }
-            // 二级：String/Eqp.img/Eqp/Skin/{key}/name（启动日志实证 String.wz 有数据且 Eqp 子节点含
-            // Skin 分类；原 GetItemName 的 9 条路径不含 Skin 分类，皮肤名需专用路径；Wz_Image 需 TryExtract）
+            // 二级：String/Eqp.img/Eqp/Skin/{bodyId+10000}/name（Skin 字符串 id 是 12000 系列，见上注释）
             var skinImg = _wzService.FindNodeByPath("String/Eqp.img");
             if (skinImg != null)
             {
                 var sRoot = skinImg;
                 var sImg = skinImg.GetValue<Wz_Image>();
                 if (sImg != null && sImg.TryExtract()) { sRoot = sImg.Node; }
-                foreach (var key in new[] { idStr, pad })
+                foreach (var key in new[] { (bodyId + 10000).ToString(), idStr, pad })
                 {
                     var n = sRoot.FindNodeByPath($"Eqp/Skin/{key}/name")?.GetValueEx<string>(null);
                     if (!string.IsNullOrEmpty(n)) { return n; }
