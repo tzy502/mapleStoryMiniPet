@@ -279,6 +279,8 @@ namespace MiniPet.Services
                     var node = _wzs.WzNode.FindNodeByPath(true, wzPath.Replace('/', '\\').Split('\\'));
                     if (node == null) return null;
                     node = node.ResolveUol() ?? node;
+                    // R14：UOL 指向帧目录而非 canvas 时，按源 piece 名下钻（如 1103058 heal/0/cape → ../../alert/1 → alert/1/cape）
+                    node = DescendToPieceNode(node, wzPath);
                     return GetLinkedSourceNode(node) ?? node;
                 }
                 catch (Exception ex)
@@ -301,7 +303,9 @@ namespace MiniPet.Services
                 try
                 {
                     var node = _wzs.WzNode.FindNodeByPath(true, wzPath.Replace('/', '\\').Split('\\'));
-                    return node?.ResolveUol() ?? node;
+                    var resolved = node?.ResolveUol() ?? node;
+                    // R14：同上——UOL 目标为帧目录时按 piece 名下钻取真实 canvas（origin/map/z 在 canvas 上）
+                    return DescendToPieceNode(resolved, wzPath);
                 }
                 catch (Exception ex)
                 {
@@ -309,6 +313,25 @@ namespace MiniPet.Services
                     return null;
                 }
             }
+        }
+
+        /// <summary>
+        /// R14：UOL 解析结果若为目录（帧节点，无 Wz_Png）且源 piece 名是其子节点，则下钻到该子节点。
+        /// 部分披风帧的 UOL 指向帧节点而非 canvas（1103058 heal/0/cape → ../../alert/1，canvas 为 alert/1/cape），
+        /// 不下钻则 origin/map/z/PNG 全缺失 → 该帧披风不渲染。仅目录目标触发，canvas 目标原样返回，无回归风险。
+        /// </summary>
+        private static Wz_Node? DescendToPieceNode(Wz_Node? node, string wzPath)
+        {
+            if (node == null) return null;
+            if (node.GetValue<Wz_Png>() != null) return node;
+            string pieceName = wzPath.Replace('/', '\\').Split('\\').LastOrDefault() ?? "";
+            if (string.IsNullOrEmpty(pieceName)) return node;
+            var child = node.FindNodeByPath(pieceName);
+            if (child != null && (child.GetValue<Wz_Png>() != null || child.Value is Wz_Uol))
+            {
+                return child;
+            }
+            return node;
         }
 
         /// <summary>
