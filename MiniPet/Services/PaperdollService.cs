@@ -62,13 +62,19 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, (int W, int H)> _sizeCache = new();
     private readonly ConcurrentDictionary<string, SKBitmap> _dyeBmpCache = new();
     private readonly ConcurrentDictionary<string, int> _delayCache = new();
+    // 2026-08-16 帧位移 move 缓存（神之子头冠卡顿修复）：动画帧 RenderFrame 原每帧 FindNodeByPath 抢锁，
+    // 后台预热特效帧首次解码（4.2s 持锁）时动画被阻塞 → move 查询结果缓存，动画热帧零锁
+    private readonly ConcurrentDictionary<string, Wz_Vector?> _moveCache = new();
     // 坐骑/椅子动作帧数缓存（R1：CollectPiecesForFrame 每帧查一次，避免重复 WZ 遍历）
     private readonly ConcurrentDictionary<string, int> _rideFrameCountCache = new();
     // 诊断去重（R5/R6：body 未锁定 / locked.Count==0 只打一次，防 30fps 刷屏）
     private readonly ConcurrentDictionary<string, byte> _loggedFrameFailures = new();
 
     /// <summary>位图缓存容量上限（R11）：超过即释放并清一半，防无界常驻（简化 LRU，无访问序维护）。</summary>
-    private const int MaxBmpCache = 512;
+    /// <summary>位图缓存容量上限（2026-08-16 512→2048：WarmupFor 换装预热预解码新外观全部位图
+    /// （含特效 18 帧大图）时，512 上限触发无序遍历逐出一半——旧外观动画位图被逐出 → 动画每帧
+    /// 重新 ExtractPng 撞预热锁卡数秒；2048 容纳两套外观 + 特效余量，实测特效帧 87KB×18 ≈ 1.5MB）。</summary>
+    private const int MaxBmpCache = 2048;
 
     // zmap 不可用时回退（顶→底）
     // R13：按本 WZ 真实 zmap（183 层）修正披风相关层——身前披风层（capeOverHead/capeOverArm/capeOverFace/cape）
@@ -301,13 +307,11 @@ public class PaperdollService : IEntityFrameProvider
 
             // 帧位移 move（对齐 MapleSalon2 instruction.move）：WZ 每帧有 move 位移数据，
             // 角色位置由 move 决定（平滑）；忽略它则位置纯靠锚点（body 每帧 navel 变 → 呼吸整体摆 → 抖动）
+            // 2026-08-16：move 查询走缓存（神之子头冠卡顿修复）——动画帧 RenderFrame 原每帧
+            // FindNodeByPath 抢 _wzLock，后台预热特效帧（首次 ExtractPng 4.2s 持锁）时动画被阻塞。
             int mvX = 0, mvY = 0;
-            try
-            {
-                var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{frame}/move")?.GetValueEx<Wz_Vector>(null);
-                if (mv != null) { mvX = mv.X; mvY = mv.Y; }
-            }
-            catch { }
+            var mv = GetFrameMove(hash, a, action, frame);
+            if (mv != null) { mvX = mv.X; mvY = mv.Y; }
 
             // 画布原点 = body 锚点（照抄 MapleSalon2 updateCharacterPivotByBodyPiece：bodyFrame.pivot = bodyFrame.ancher）
             var bodyP = locked.FirstOrDefault(p => p.Category == "body");
@@ -737,6 +741,24 @@ public class PaperdollService : IEntityFrameProvider
             if (chosen == null) { return piecePath; }
             return $"{resolved.FullPathToFile.Replace('\\', '/')}/{chosen}";
         });
+    }
+
+    /// <summary>
+    /// 帧位移 move 读取（带缓存）：key = hash|action|frame。首次查 WZ（锁内），之后命中缓存零锁——
+    /// 保证动画帧 RenderFrame 热帧不抢 _wzLock（后台预热持锁期间动画不阻塞）。
+    /// </summary>
+    private Wz_Vector? GetFrameMove(string hash, CharacterAppearance a, string action, int frame)
+    {
+        string key = $"{hash}|{action}|{frame}";
+        if (_moveCache.TryGetValue(key, out var cached)) return cached;
+        Wz_Vector? mv = null;
+        try
+        {
+            mv = _wz.WithWzLock(() => _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{frame}/move")?.GetValueEx<Wz_Vector>(null));
+        }
+        catch { }
+        _moveCache[key] = mv;
+        return mv;
     }
 
     private List<Piece> MaterializePieces(List<PieceSource> sources)
@@ -1306,42 +1328,38 @@ public class PaperdollService : IEntityFrameProvider
     /// <summary>该 action 全部帧的联合包围盒（union bounds，缓存）。</summary>
     private Bounds GetBounds(string hash, CharacterAppearance a, string action)
     {
-        // 整个方法体包进 WithWzLock：内部 GetActionFrameCount/CollectPiecesForFrame/GetMeta/GetBmp
-        // 的 WZ 遍历与读取与后台预热串行化（Monitor 同线程可重入，嵌套锁安全）
-        return _wz.WithWzLock(() =>
-        {
-            string key = $"{hash}|{action}";
-            if (_boundsCache.TryGetValue(key, out var cached)) return cached;
+        // 2026-08-16：去掉整体外层 WithWzLock——原整体持锁会让后台 Warmup（穿戴新外观首次
+        // 冷加载 4.5s）垄断锁，UI 线程主窗口动画（DispatcherTimer 33ms）每帧 RenderFrame 抢锁
+        // 被阻塞 → 穿戴「神之子头冠」等带特效装备时动画卡死数秒（用户反馈卡顿）。
+        // 内部每步（CollectPiecesForFrame/GetMeta/GetBmp/GetPieceSize/GetActionFrameCount）已各自
+        // WithWzLock 细粒度串行化 WZ 读取（Monitor 可重入），缓存全部 ConcurrentDictionary 线程安全。
+        string key = $"{hash}|{action}";
+        if (_boundsCache.TryGetValue(key, out var cached)) return cached;
 
-            int frameCount = GetActionFrameCount(BodyRoot(a), action);
-            int minX = 0, minY = 0, maxX = 0, maxY = 0;
-            for (int f = 0; f < frameCount; f++)
+        int frameCount = GetActionFrameCount(BodyRoot(a), action);
+        int minX = 0, minY = 0, maxX = 0, maxY = 0;
+        for (int f = 0; f < frameCount; f++)
+        {
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+            ResolveAnchors(pieces);
+            // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
+            var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
+            int bx = bodyP?.AnchorX ?? 0;
+            int by = bodyP?.AnchorY ?? 0;
+            // 该帧 move（bounds 需容纳位移）
+            int fmvX = 0, fmvY = 0;
+            var fmv = GetFrameMove(hash, a, action, f);
+            if (fmv != null) { fmvX = fmv.X; fmvY = fmv.Y; }
+            foreach (var p in pieces.Where(x => x.Locked))
             {
-                var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
-                ResolveAnchors(pieces);
-                // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
-                var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
-                int bx = bodyP?.AnchorX ?? 0;
-                int by = bodyP?.AnchorY ?? 0;
-                // 该帧 move（bounds 需容纳位移）
-                int fmvX = 0, fmvY = 0;
-                try
-                {
-                    var mv = _wz.FindNodeByPath($"{BodyRoot(a)}/{action}/{f}/move")?.GetValueEx<Wz_Vector>(null);
-                    if (mv != null) { fmvX = mv.X; fmvY = mv.Y; }
-                }
-                catch { }
-                foreach (var p in pieces.Where(x => x.Locked))
-                {
-                    var (w, h) = GetPieceSize(p.PiecePath);
-                    minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
-                    maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
-                }
+                var (w, h) = GetPieceSize(p.PiecePath);
+                minX = Math.Min(minX, p.FinalX - bx + fmvX); minY = Math.Min(minY, p.FinalY - by + fmvY);
+                maxX = Math.Max(maxX, p.FinalX - bx + fmvX + w); maxY = Math.Max(maxY, p.FinalY - by + fmvY + h);
             }
-            var bounds = new Bounds(minX, minY, maxX - minX, maxY - minY);
-            _boundsCache[key] = bounds;
-            return bounds;
-        });
+        }
+        var bounds = new Bounds(minX, minY, maxX - minX, maxY - minY);
+        _boundsCache[key] = bounds;
+        return bounds;
     }
 
     private PieceMeta? GetMeta(string piecePath)
@@ -1614,20 +1632,53 @@ public class PaperdollService : IEntityFrameProvider
     private static readonly string[] OfflineActions = { "stand1", "stand2", "walk1", "walk2", "jump" };
 
     // 拖拽/常用动作预热（减少运行时首次合成卡顿抖动）
-    private static readonly string[] WarmupActions = { "swingO3", "swingOF", "stabOF", "fly", "walk1", "walk2", "jump", "alert" };
+    private static readonly string[] WarmupActions = { "stand1", "stand2", "swingO3", "swingOF", "stabOF", "fly", "walk1", "walk2", "jump", "alert" };
 
-    /// <summary>预热拖拽/常用动作的 union bounds 与部件位图缓存。在后台调用（ApplyPaperdoll 的后台 Task，与主窗口合成线程错开）。</summary>
+    /// <summary>预热拖拽/常用动作的 union bounds、move 与部件位图缓存。在后台调用（启动/换装后台 Task，
+    /// 与主窗口合成线程错开）。2026-08-16：增加 move + 位图预解码——动画帧 RenderFrame 热帧零锁零解码
+    /// （穿戴新外观时后台预热特效帧首次解码 4.2s 持锁，动画不被阻塞；否则动画每帧首次访问新帧位图
+    /// ExtractPng 撞锁卡数秒）。</summary>
     public void Warmup()
     {
         if (_current == null || !_wz.IsLoaded) return;
-        var a = _current;
-        var hash = _currentHash;
+        WarmupFor(_current);
+    }
+
+    /// <summary>
+    /// 预热指定外观（2026-08-16 神之子头冠卡顿修复）：与 Warmup 不同——**不切换 _current、不清缓存**。
+    /// 原 ApplyPaperdoll 流程：后台 SetAppearance(新外观) 清空全部缓存 → 预热持锁期间主窗口旧动画
+    /// （UI 线程 DispatcherTimer）每帧 RenderFrame 缓存失效重新读 WZ 抢锁 → 动画卡死 4.5s（首次冷加载）。
+    /// WarmupFor 只按传入外观的 hash 算 bounds/部件缓存（key 含新外观 hash，不污染旧外观缓存），
+    /// 并预解码部件位图 + 缓存 move——预热完成后调用方再 SetAppearance 切换，切换即热（动画零锁零解码）。
+    /// </summary>
+    public void WarmupFor(CharacterAppearance a)
+    {
+        if (a == null || !_wz.IsLoaded) return;
+        var hash = HashAppearance(a);
         foreach (var action in WarmupActions)
         {
             try
             {
                 if (GetActionFrameCount(BodyRoot(a), action) <= 0) continue;
                 GetBounds(hash, a, action);
+                // 预解码该动作各帧部件位图 + move（特效帧首次 ExtractPng 4.2s 在后台完成，
+                // 切换后动画首帧不再触发冷解码持锁）
+                int fc = GetActionFrameCount(BodyRoot(a), action);
+                for (int f = 0; f < fc; f++)
+                {
+                    GetFrameMove(hash, a, action, f);
+                    var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+                    foreach (var p in pieces)
+                    {
+                        if (p.Category == "body" || p.Category == "head" || p.Category == "hair" || p.Category == "face"
+                            || p.Category == "cap" || p.Category == "cape" || p.Category == "coat" || p.Category == "pants"
+                            || p.Category == "shoe" || p.Category == "glove" || p.Category == "weapon" || p.Category == "shield"
+                            || p.Category == "earring" || p.Category == "effect")
+                        {
+                            GetBmp(p.PiecePath);
+                        }
+                    }
+                }
             }
             catch { }
         }

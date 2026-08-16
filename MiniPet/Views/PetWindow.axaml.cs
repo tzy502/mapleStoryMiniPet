@@ -1029,6 +1029,10 @@ public partial class PetWindow : Window
             {
                 try
                 {
+                    // 2026-08-16 神之子头冠卡顿修复：先 WarmupFor 预热新外观（不切换、不清缓存，
+                    // 旧动画在预热期间照常播放），全部就绪后再 SetAppearance 切换——切换即热，无锁竞争卡顿。
+                    try { _paperdoll.WarmupFor(appearance); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollWarmup: {ex.Message}"); }
                     _paperdoll.SetAppearance(appearance); // 切换外观清依赖外观缓存；引用赋值原子，帧循环安全
                     // 持久化当前搭配（启动恢复）+ 构建离线精灵图条（WZ 断线兜底）
                     try
@@ -1043,9 +1047,6 @@ public partial class PetWindow : Window
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollSave 失败: {ex}"); }
                     try { _paperdoll.BuildOfflineStrips(); }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OfflineStrips: {ex.Message}"); }
-                    // 预热拖拽/常用动作缓存（避免运行时首次合成卡顿抖动）
-                    try { _paperdoll.Warmup(); }
-                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollWarmup: {ex.Message}"); }
                     Dispatcher.UIThread.Post(() =>
                     {
                         try
