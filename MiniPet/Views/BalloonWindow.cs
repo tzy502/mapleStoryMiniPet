@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using MiniPet.Utils;
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views
@@ -50,7 +51,7 @@ namespace MiniPet.Views
             Hide();
         }
 
-        /// <summary>确保点击穿透（原生 NSWindow.ignoresMouseEvents）。</summary>
+        /// <summary>确保点击穿透（macOS 原生 NSWindow.ignoresMouseEvents / Windows WS_EX_TRANSPARENT）。</summary>
         private void ApplyPassthrough()
         {
             if (_passthroughApplied) return;
@@ -59,6 +60,13 @@ namespace MiniPet.Views
                 var handle = TryGetPlatformHandle()?.Handle;
                 if (handle is nint h && h != 0)
                 {
+                    if (OperatingSystem.IsWindows())
+                    {
+                        // Windows：WS_EX_TRANSPARENT 点击穿透（失败最坏 = 气泡拦截点击，不抛）
+                        WindowsNative.SetClickThrough(h, true);
+                        _passthroughApplied = true;
+                        return;
+                    }
                     objc_msgSend(h, sel_registerName("setIgnoresMouseEvents:"), true);
                     _passthroughApplied = true;
                 }
