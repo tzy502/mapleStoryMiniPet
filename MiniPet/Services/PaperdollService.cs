@@ -68,11 +68,16 @@ public class PaperdollService : IEntityFrameProvider
     private const int MaxBmpCache = 512;
 
     // zmap 不可用时回退（顶→底）
+    // R13：按本 WZ 真实 zmap（183 层）修正披风相关层——身前披风层（capeOverHead/capeOverArm/capeOverFace/cape）
+    // 在中上部、身后披风层（capeBelowWeapon/capeBelowBody/backHairOverCape/backCape）在 body 之下；
+    // 原 fallback 用 "capeBack"（真实层名是 backCape）且 "effect" 在最后=最底（MapleSalon2 是置顶）→ 已修正。
     private static readonly string[] FallbackZmapTopToBottom =
     {
+        "effect", "mobEquipFront", "capeOverHead", "capeOverArm", "capeOverFace",
         "cap", "hairOverHead", "weaponOverHair", "cape", "shield", "weapon", "gloveOver", "glove",
-        "coat", "pants", "shoe", "hand", "arm", "capeBack", "tail", "face", "ear",
-        "head", "body", "hairBelowHead", "back", "effect"
+        "coat", "pants", "shoe", "hand", "arm", "capeBelowWeapon", "capeBelowBody",
+        "backHairOverCape", "backCape", "tail", "face", "ear",
+        "head", "body", "hairBelowHead", "back"
     };
 
     public PaperdollService(WzService wz, CacheManager cache, SpriteService sprite)
@@ -113,6 +118,40 @@ public class PaperdollService : IEntityFrameProvider
         foreach (var b in _bmpCache.Values) b.Dispose();
         _bmpCache.Clear();
         _metaCache.Clear();
+    }
+
+    /// <summary>
+    /// 层解析诊断（CapeProbe 用）：跑完整 CollectPieces→ResolveAnchors→AssignLayers→ApplyLocks 管线，
+    /// 返回每部件落层结果（真实代码路径，与渲染一致；不合成位图）。修复前后对照由同一方法给出。
+    /// </summary>
+    public List<LayerProbeItem> ProbeLayerResolution(CharacterAppearance a, string action, int frame)
+    {
+        var result = new List<LayerProbeItem>();
+        if (a == null) return result;
+        try
+        {
+            var hash = HashAppearance(a);
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault));
+            ResolveAnchors(pieces);
+            AssignLayers(pieces);
+            ApplyLocks(hash, a, pieces);
+            foreach (var p in pieces)
+            {
+                result.Add(new LayerProbeItem
+                {
+                    Category = p.Category,
+                    PieceName = p.PieceName,
+                    ZField = p.ZField,
+                    ResolvedLayer = p.ResolvedLayer,
+                    ZIndex = p.ZIndex,
+                    Locked = p.Locked,
+                    Hidden = p.Hidden,
+                    HasMap = p.Map.Count > 0
+                });
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PaperdollService] ProbeLayerResolution: {ex.Message}"); }
+        return result;
     }
 
     // ═══════════════════════════════════════════
@@ -368,12 +407,81 @@ public class PaperdollService : IEntityFrameProvider
             {
                 // 耳朵互斥：head 中 key 以 "ear" 结尾的 canvas 按 earType 取组（对齐 MapleSalon2 EarReg /ear$/i）
                 if (category == "head" && IsEarPiece(pieceName) && pieceName != (a.Ear ?? EarHuman)) continue;
+                // R13 装备特效开关：帧级 "effect"/"effectN" 部件视为特效帧（对齐 MapleSalon2 isKindOfEffect），关闭时跳过
+                if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
                 sources.Add(new PieceSource(category, pieceName, $"{framePath}/{pieceName}", itemId));
+            }
+        }
+
+        // R13 节点级装备特效：{root}/effect（真实客户端披风/武器特效结构，如 110249；本 WZ 披风仅帧级 effect）。
+        // 按 EnableEffect 开关收集，effect 帧 clamp 到特效自身帧数（最小可用联动，同椅子 effect 的处理）。
+        if (a.EnableEffect)
+        {
+            foreach (var (category, root) in GetRoots(hash, a))
+            {
+                if (category is "body" or "head" or "hair" or "face" or "mount" or "chair") continue;
+                AddEquipEffectPieces(sources, a, category, root, action, frame);
             }
         }
 
         _frameSourcesCache[key] = sources;
         return sources;
+    }
+
+    /// <summary>部件名是否为特效帧：effect / effect1 / effect2 …（对齐 MapleSalon2 chair effectReg /effect[0-9]?/）。</summary>
+    private static bool IsEffectPieceName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        if (name.Equals("effect", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Length > 6 && name.StartsWith("effect", StringComparison.OrdinalIgnoreCase))
+        {
+            return int.TryParse(name.Substring(6), out _);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// R13 节点级装备特效部件收集：{root}/effect。
+    /// 结构 ①（MapleSalon2 loadEffect）：{root}/effect/{action}/{frame} —— action 键动画，帧号 clamp 到特效帧数；
+    /// 结构 ②（椅子同构）：{root}/effect/{frame} —— 数字帧，帧号 clamp。
+    /// 部件以 category="effect" 进管线：无 map 锚点时兜底锚到身体 navel（ResolveAnchors），层恒为 effect（顶层）。
+    /// </summary>
+    private void AddEquipEffectPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, int frame)
+    {
+        string effectRoot = $"{root}/effect";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(effectRoot) != null)) return;
+        string itemId = GetCategoryItemId(a, category);
+
+        // ① action 键结构：{root}/effect/{action}/{frame}
+        if (_wz.WithWzLock(() => _wz.FindNodeByPath($"{effectRoot}/{action}") != null))
+        {
+            int effFrames = GetActionFrameCount(effectRoot, action);
+            if (effFrames > 0)
+            {
+                int effFrame = Math.Min(frame, effFrames - 1);
+                string framePath = $"{effectRoot}/{action}/{effFrame}";
+                if (_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null))
+                {
+                    foreach (var pieceName in _wz.GetFramePieceNames(framePath))
+                    {
+                        if (pieceName == "delay" || pieceName == "move") continue;
+                        sources.Add(new PieceSource("effect", pieceName, $"{framePath}/{pieceName}", itemId));
+                    }
+                }
+                return;
+            }
+        }
+        // ② 数字帧结构：{root}/effect/{frame}
+        int frames = CountNumericChildren(effectRoot);
+        if (frames > 0)
+        {
+            int effFrame = Math.Min(frame, frames - 1);
+            string piecePath = $"{effectRoot}/{effFrame}";
+            if (_wz.WithWzLock(() => _wz.FindNodeByPath(piecePath) != null))
+            {
+                sources.Add(new PieceSource("effect", effFrame.ToString(), piecePath, itemId));
+            }
+        }
     }
 
     /// <summary>
@@ -395,6 +503,8 @@ public class PaperdollService : IEntityFrameProvider
         {
             // 只收 canvas 件（"delay" 等标量节点无 map → 不会锁定/绘制，但仍过滤掉避免白占 meta 缓存）
             if (pieceName == "delay" || pieceName == "move" || pieceName == "a0" || pieceName == "a1") continue;
+            // R13 装备特效开关：坐骑帧内 "effect" 部件（坐骑光环等）同样受开关控制
+            if (IsEffectPieceName(pieceName) && !a.EnableEffect) continue;
             sources.Add(new PieceSource("mount", pieceName, $"{framePath}/{pieceName}", itemId));
         }
     }
@@ -533,9 +643,10 @@ public class PaperdollService : IEntityFrameProvider
 
         // R1 椅子部件无 map 锚点（WZ 只有 origin）：兜底锚到 navel 根（身体髋部）。
         // 最小可用版：不读 info/bodyRelMove（本 WZ 无坐椅数据可校准），原点对齐身体 navel。
+        // R13 节点级特效部件同样可能无 map（独立 effect 帧）：同椅子兜底锚到 navel。
         foreach (var p in pieces)
         {
-            if (p.Locked || p.Category != "chair") continue;
+            if (p.Locked || (p.Category != "chair" && p.Category != "effect")) continue;
             p.AnchorX = 0;
             p.AnchorY = 0;
             p.BaseAnchor = "navel";
@@ -728,6 +839,35 @@ public class PaperdollService : IEntityFrameProvider
     // 层名解析
     // ═══════════════════════════════════════════
 
+    /// <summary>
+    /// 披风特殊层别名（R13，对照 MapleSalon2 zmapIndex.fixLayers，落到本 WZ zmap 实际存在的层）。
+    /// 不同披风 ZField 各异（cape/capeArm/capeBelowHair/capeOverHead/backCape…），本 WZ zmap 无对应层时
+    /// 按此表归位：身前部件（capeArm→cape、capeOverHead 等）在身前层，身后部件（capeBack/capeBelowHair→backCape/hairBelowBody）
+    /// 在身后层。修复前 capeBelowHair 被 ResolvePrepLayer 误解析到 zmap 顶层（idx 0）→ 披风盖住身体正面。
+    /// 注：capeOverArm 本 WZ zmap 已有（idx 29），表内兜底仍指向 gloveWrist（MapleSalon2 1102335），仅在不命中时生效。
+    /// </summary>
+    private static readonly Dictionary<string, string> CapeLayerAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["capeArm"] = "cape",
+        ["capeBack"] = "backCape",
+        ["backCapeBelowHead"] = "backMailChestOverPants",
+        ["capeBelowHair"] = "hairBelowBody",
+        ["capeBelowChest"] = "mailChest",
+        ["capeBelowBodyOverPants"] = "pants",
+        ["capeOverHeadOverCap"] = "capAccessory",
+        ["capeUnderBody"] = "capeBelowBody",
+        ["capeWeapon"] = "capeOverHead",
+        ["capeOverBody"] = "weaponOverBody",
+        ["capeBelowHead"] = "armBelowHead",
+        ["capeOverArm"] = "gloveWrist",
+    };
+
+    private static string? ResolveCapeLayerAlias(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        return CapeLayerAliases.TryGetValue(name, out var target) ? target : null;
+    }
+
     private string ResolveLayer(Piece p)
     {
         var zmap = GetZmapTopToBottom();
@@ -735,6 +875,9 @@ public class PaperdollService : IEntityFrameProvider
         {
             if (_zmapIndex.ContainsKey(p.ZField)) return p.ZField;
             if (_zmapIndex.ContainsKey(p.ZField.ToLowerInvariant())) return p.ZField.ToLowerInvariant();
+            // 披风特殊层别名（如 capeBelowHair→hairBelowBody）：必须在 prep 解析前，避免 Below 误解析到顶层
+            var zAlias = ResolveCapeLayerAlias(p.ZField);
+            if (zAlias != null) return zAlias;
             // 数值 z：zmap[count - 10 - z]（对齐 MapleSalon2 resolveUseablePieceName）
             if (int.TryParse(p.ZField, out var zn))
             {
@@ -747,6 +890,8 @@ public class PaperdollService : IEntityFrameProvider
         }
         if (_zmapIndex.ContainsKey(p.PieceName)) return p.PieceName;
         if (_zmapIndex.ContainsKey(p.PieceName.ToLowerInvariant())) return p.PieceName.ToLowerInvariant();
+        var nameAlias = ResolveCapeLayerAlias(p.PieceName);
+        if (nameAlias != null) return nameAlias;
         var prep2 = ResolvePrepLayer(p.PieceName);
         if (prep2 != null) return prep2;
         return p.Category switch
@@ -760,6 +905,8 @@ public class PaperdollService : IEntityFrameProvider
             "cap" => "cap", "coat" => "coat", "overall" => "coat",
             "pants" => "pants", "shoe" => "shoe", "glove" => "glove",
             "weapon" => "weapon", "shield" => "shield", "cape" => "cape", "earring" => "accessory",
+            // R13 节点级装备特效：恒落 effect 层（zmap 顶部注册，见 GetZmapTopToBottom）
+            "effect" => "effect",
             // R1 坐骑/椅子：z 字段缺失时回退层——坐骑 tamingMobMid（角色身下）、椅子 tamingMobRear（角色身后）
             "mount" => "tamingMobMid", "chair" => "tamingMobRear",
             _ => p.PieceName
@@ -1111,6 +1258,12 @@ public class PaperdollService : IEntityFrameProvider
             _zmapIndex[zmap[i]] = i;
             if (zmap[i].Length > 2) _zmapIndex[zmap[i].ToLowerInvariant()] = i;
         }
+        // R13 特效层：真实 zmap（183 层）无 "effect" 层；MapleSalon2 zmapIndex 末尾 push('effect') 置顶
+        // （Pixi 容器 zIndex 大=后画=顶层；本服务 zmap 顶→底 idx 0=顶层）→ 注册为最顶层，节点级特效落此层。
+        if (!_zmapIndex.ContainsKey("effect"))
+        {
+            _zmapIndex["effect"] = 0;
+        }
         _zmapCache = zmap;
         return zmap;
     }
@@ -1183,6 +1336,8 @@ public class PaperdollService : IEntityFrameProvider
         AppendId(sb, a.Glove); AppendId(sb, a.Shield); AppendId(sb, a.Weapon); AppendId(sb, a.Earring);
         // R1：坐骑/椅子 id 进指纹（换坐骑/椅子自动失效相关缓存 + 离线条缓存键）
         sb.Append(a.Mount?.Id ?? "").Append('|').Append(a.Chair?.Id ?? "").Append('|');
+        // R13：装备特效开关进指纹（切换开关自动失效特效相关缓存 + 离线条缓存键）
+        sb.Append(a.EnableEffect ? "1" : "0").Append('|');
         return sb.ToString();
     }
 
@@ -1410,6 +1565,19 @@ public class PaperdollService : IEntityFrameProvider
         public bool Locked;
         public bool Hidden;
         public int FinalX, FinalY;
+    }
+
+    /// <summary>层解析诊断条目（CapeProbe 消费）：部件落层 + 遮挡结果快照。</summary>
+    public sealed class LayerProbeItem
+    {
+        public string Category = "";
+        public string PieceName = "";
+        public string ZField = "";
+        public string ResolvedLayer = "";
+        public int ZIndex;
+        public bool Locked;
+        public bool Hidden;
+        public bool HasMap;
     }
 }
 

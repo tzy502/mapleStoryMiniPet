@@ -30,6 +30,11 @@ namespace MiniPet.Models
         public ChairInfo? Chair { get; set; }
         public int DyeHue { get; set; }
         public bool DyeEnabled { get; set; }
+        /// <summary>
+        /// 装备特效总开关（默认开）：false 时跳过所有装备特效帧（节点级 {root}/effect 与帧级 "effect" 部件，
+        /// 含披风/武器/坐骑帧内特效）。纸娃娃设置页「装备特效」开关写这里；参与外观 hash（切换即失效相关缓存）。
+        /// </summary>
+        public bool EnableEffect { get; set; } = true;
     }
 
     /// <summary>

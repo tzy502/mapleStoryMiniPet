@@ -305,6 +305,14 @@ public partial class SettingsWindow
         content.Children.Add(BuildEquipSelectRow("手 套", "手套", out _gloveIdInput));
         content.Children.Add(BuildEquipSelectRow("饰 品", "饰品", out _earringIdInput));
 
+        // R13 装备特效开关（默认开）：写 _paperdollCurrent.EnableEffect（全局开关，参与外观 hash）。
+        // 关闭后跳过节点级 {root}/effect 与帧级 "effect" 部件（披风/武器/坐骑帧内特效）。
+        var effectRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 2, 4, 0) };
+        var effectCb = new CheckBox { Content = "装备特效", FontSize = 10, Foreground = BrushTxtSecondary, IsChecked = _paperdollCurrent.EnableEffect };
+        effectCb.IsCheckedChanged += (_, _) => { try { _paperdollCurrent.EnableEffect = effectCb.IsChecked ?? true; UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] EffectToggle: {ex.Message}"); } };
+        effectRow.Children.Add(effectCb);
+        content.Children.Add(effectRow);
+
         content.Children.Add(new TextBlock { Text = "🐴 坐骑 / 椅子", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 6, 0, 0) });
         content.Children.Add(BuildEquipSelectRow("坐 骑", "坐骑", out _mountIdInput));
         content.Children.Add(BuildEquipSelectRow("椅 子", "椅子", out _chairIdInput));
@@ -1001,6 +1009,8 @@ public partial class SettingsWindow
             Earring = src.Earring != null ? CloneItemFull(src.Earring) : null,
             Mount = src.Mount != null ? new MountInfo { Id = src.Mount.Id } : null,
             Chair = src.Chair != null ? new ChairInfo { Id = src.Chair.Id } : null,
+            // R13 装备特效开关随外观克隆（否则预览/应用/预设往返丢开关状态）
+            EnableEffect = src.EnableEffect,
         };
     }
 

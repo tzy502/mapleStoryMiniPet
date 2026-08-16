@@ -1,0 +1,412 @@
+WZ 路径: /tmp/minipet-wz-probe
+[WzService] 加载 WZ 目录: /tmp/minipet-wz-probe/Base
+[WzService] Base 加载成功, imgs: 0
+[WzService] 加载完成, imgs: 0
+[WzService] 顶层节点(24): Character, Effect, Etc, Item, Map, Mob, Morph, Npc, Quest, Reactor, Skill, Sound, String, TamingMob, UI, Consume_KR.img, Eqp_KR.img, Etc_KR.img, Ins_KR.img, Mob_KR.img, smap.img, StandardPDD.img, zmap.img, zmap_cn.img
+[WzService] Character 子节点(125): Accessory, Afterimage, Android, ArcaneForce, AuthenticForce, Bits, Cap, Cape, Coat, Dragon, Face, Familiar, Glove, Hair, Jewel, Longcoat, Mechanic, Pants, PetEquip, Ring, Shield, Shoes, SkillSkin, TamingMob, Totem, Weapon, _Canvas, 00002000.img, 00002001.img, 00002002.img, 00002003.img, 00002004.img, 00002006.img, 00002007.img, 00002008.img, 00002009.img, 00002010.img, 00002011.img, 00002012.img, 00002013.img
+[WzService] 诊断 存在[Character/Hair]: True
+[WzService] 诊断 存在[Character/Face]: True
+[WzService] 诊断 存在[Character/Hair/00030000.img]: False
+[WzService] 诊断 存在[Character/Face/00020000.img]: False
+[WzService] 诊断 存在[Character/00002000.img]: True
+[WzService] 诊断 存在[Character/00012000.img]: True
+WZ 加载: True
+[MapCatalogService] 地图目录构建完成: 0 个
+[WzService] GetZmapOrder: top=Base/zmap.img node=NULL
+[WzService] GetZmapOrder: top=zmap.img node=zmap.img
+[WzService] GetZmapOrder: zmap.img 顶层子节点前30=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle,tamingMobMid,characterStart,emotionOverBody,weaponWristOverGloveEffectOver,weaponWristOverGlove,weaponWristOverGloveEffectUnder,capeOverHead,weaponOverGloveEffectOver,weaponOverGlove,weaponOverGloveEffectUnder,gloveWristOverHair,gloveOverHair,handOverHair,weaponOverHandEffectOver,weaponOverHand,weaponOverHandEffectUnder,shieldOverHair,gloveWristBelowWeapon,gloveBelowWeapon,handBelowWeapon,weaponOverArmEffectOver,weaponOverArm,weaponOverArmEffectUnder,gloveWristBelowMailArm,capeOverArm]
+[WzService] GetZmapOrder: 从 zmap.img 读到 183 层, 前5=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle] 后5=[At,Fc,Hr,Hd,Bd]
+
+========== zmap 层序 (183 层) ==========
+   0: mobEquipFront
+   1: tamingMobFront
+   2: mobEquipMid
+   3: saddleFront
+   4: mobEquipUnderSaddle
+   5: tamingMobMid
+   6: characterStart
+   7: emotionOverBody
+   8: weaponWristOverGloveEffectOver
+   9: weaponWristOverGlove
+  10: weaponWristOverGloveEffectUnder
+  11: capeOverHead
+  12: weaponOverGloveEffectOver
+  13: weaponOverGlove
+  14: weaponOverGloveEffectUnder
+  15: gloveWristOverHair
+  16: gloveOverHair
+  17: handOverHair
+  18: weaponOverHandEffectOver
+  19: weaponOverHand
+  20: weaponOverHandEffectUnder
+  21: shieldOverHair
+  22: gloveWristBelowWeapon
+  23: gloveBelowWeapon
+  24: handBelowWeapon
+  25: weaponOverArmEffectOver
+  26: weaponOverArm
+  27: weaponOverArmEffectUnder
+  28: gloveWristBelowMailArm
+  29: capeOverArm
+  30: mailArmOverHair
+  31: gloveBelowMailArm
+  32: armOverHair
+  33: mailArmOverHairBelowWeapon
+  34: armOverHairBelowWeapon
+  35: weaponBelowArmEffectOver
+  36: weaponBelowArm
+  37: weaponBelowArmEffectUnder
+  38: accessoryEyeOverCapOverHair
+  39: capOverHair
+  40: accessoryEarOverHair
+  41: accessoryOverHair
+  42: hairOverHead
+  43: accessoryEyeOverCap
+  44: capAccessory
+  45: cap
+  46: hair
+  47: capeOverFace
+  48: accessoryEye
+  49: accessoryEyeShadow
+  50: accessoryFace
+  51: capAccessoryBelowAccFace
+  52: accessoryEar
+  53: capBelowAccessory
+  54: accessoryFaceOverFaceBelowCap
+  55: face
+  56: accessoryEyeBelowFace
+  57: accessoryFaceBelowFace
+  58: hairShade
+  59: head
+  60: cape
+  61: gloveWrist
+  62: mailArm
+  63: glove
+  64: hand
+  65: arm
+  66: weaponEffectOver
+  67: weapon
+  68: weaponEffectUnder
+  69: shield
+  70: weaponOverArmBelowHeadEffectOver
+  71: weaponOverArmBelowHead
+  72: weaponOverArmBelowHeadEffectUnder
+  73: gloveWristBelowHead
+  74: mailArmBelowHeadOverMailChest
+  75: gloveBelowHead
+  76: armBelowHeadOverMailChest
+  77: mailArmBelowHead
+  78: armBelowHead
+  79: weaponOverBodyEffectOver
+  80: weaponOverBody
+  81: weaponOverBodyEffectUnder
+  82: capeBelowWeapon
+  83: mailChestTop
+  84: gloveWristOverBody
+  85: mailChestOverHighest
+  86: pantsOverMailChest
+  87: mailChest
+  88: shoesTop
+  89: pantsOverShoesBelowMailChest
+  90: shoesOverPants
+  91: mailChestOverPants
+  92: pants
+  93: shoes
+  94: pantsBelowShoes
+  95: mailChestBelowPants
+  96: gloveOverBody
+  97: body
+  98: gloveWristBelowBody
+  99: gloveBelowBody
+ 100: capAccessoryBelowBody
+ 101: shieldBelowBody
+ 102: capeBelowBody
+ 103: hairBelowBody
+ 104: weaponBelowBodyEffectOver
+ 105: weaponBelowBody
+ 106: weaponBelowBodyEffectUnder
+ 107: backHairOverCape
+ 108: backWing
+ 109: backWeaponOverShieldEffectOver
+ 110: backWeaponOverShield
+ 111: backWeaponOverShieldEffectUnder
+ 112: backShield
+ 113: backCapOverHair
+ 114: backHair
+ 115: backCap
+ 116: backWeaponOverHeadEffectOver
+ 117: backWeaponOverHead
+ 118: backWeaponOverHeadEffectUnder
+ 119: backHairBelowCapWide
+ 120: backHairBelowCapNarrow
+ 121: backHairBelowCap
+ 122: backCape
+ 123: backAccessoryOverHead
+ 124: backAccessoryFaceOverHead
+ 125: backHead
+ 126: backMailChestOverPants
+ 127: backPantsOverMailChest
+ 128: backMailChest
+ 129: backPantsOverShoesBelowMailChest
+ 130: backShoes
+ 131: backPants
+ 132: backShoesBelowPants
+ 133: backPantsBelowShoes
+ 134: backMailChestBelowPants
+ 135: backWeaponOverGloveEffectOver
+ 136: backWeaponOverGlove
+ 137: backWeaponOverGloveEffectUnder
+ 138: backGloveWrist
+ 139: backGlove
+ 140: backBody
+ 141: backAccessoryEar
+ 142: backAccessoryFace
+ 143: backCapAccessory
+ 144: backMailChestAccessory
+ 145: backShieldBelowBody
+ 146: backHairBelowHead
+ 147: backWeaponEffectOver
+ 148: backWeapon
+ 149: backWeaponEffectUnder
+ 150: characterEnd
+ 151: saddleRear
+ 152: tamingMobRear
+ 153: mobEquipRear
+ 154: backMobEquipFront
+ 155: backTamingMobFront
+ 156: backMobEquipMid
+ 157: backSaddle
+ 158: backMobEquipUnderSaddle
+ 159: backTamingMobMid
+ 160: Sd
+ 161: Tm
+ 162: Sr
+ 163: Wg
+ 164: Ma
+ 165: Ws
+ 166: Pn
+ 167: So
+ 168: Si
+ 169: Wp
+ 170: Gv
+ 171: Ri
+ 172: Cp
+ 173: Ay
+ 174: As
+ 175: Ae
+ 176: Am
+ 177: Af
+ 178: At
+ 179: Fc
+ 180: Hr
+ 181: Hd
+ 182: Bd
+
+== cape/effect 相关层 ==
+   8: weaponWristOverGloveEffectOver
+   9: weaponWristOverGlove
+  10: weaponWristOverGloveEffectUnder
+  11: capeOverHead
+  12: weaponOverGloveEffectOver
+  13: weaponOverGlove
+  14: weaponOverGloveEffectUnder
+  15: gloveWristOverHair
+  16: gloveOverHair
+  18: weaponOverHandEffectOver
+  19: weaponOverHand
+  20: weaponOverHandEffectUnder
+  22: gloveWristBelowWeapon
+  23: gloveBelowWeapon
+  24: handBelowWeapon
+  25: weaponOverArmEffectOver
+  26: weaponOverArm
+  27: weaponOverArmEffectUnder
+  28: gloveWristBelowMailArm
+  29: capeOverArm
+  30: mailArmOverHair
+  31: gloveBelowMailArm
+  32: armOverHair
+  33: mailArmOverHairBelowWeapon
+  34: armOverHairBelowWeapon
+  35: weaponBelowArmEffectOver
+  36: weaponBelowArm
+  37: weaponBelowArmEffectUnder
+  47: capeOverFace
+  60: cape
+  61: gloveWrist
+  62: mailArm
+  63: glove
+  65: arm
+  66: weaponEffectOver
+  67: weapon
+  68: weaponEffectUnder
+  70: weaponOverArmBelowHeadEffectOver
+  71: weaponOverArmBelowHead
+  72: weaponOverArmBelowHeadEffectUnder
+  73: gloveWristBelowHead
+  74: mailArmBelowHeadOverMailChest
+  75: gloveBelowHead
+  76: armBelowHeadOverMailChest
+  77: mailArmBelowHead
+  78: armBelowHead
+  79: weaponOverBodyEffectOver
+  80: weaponOverBody
+  81: weaponOverBodyEffectUnder
+  82: capeBelowWeapon
+  83: mailChestTop
+  84: gloveWristOverBody
+  85: mailChestOverHighest
+  86: pantsOverMailChest
+  87: mailChest
+  89: pantsOverShoesBelowMailChest
+  91: mailChestOverPants
+  95: mailChestBelowPants
+  96: gloveOverBody
+  98: gloveWristBelowBody
+  99: gloveBelowBody
+ 102: capeBelowBody
+ 104: weaponBelowBodyEffectOver
+ 105: weaponBelowBody
+ 106: weaponBelowBodyEffectUnder
+ 107: backHairOverCape
+ 109: backWeaponOverShieldEffectOver
+ 110: backWeaponOverShield
+ 111: backWeaponOverShieldEffectUnder
+ 116: backWeaponOverHeadEffectOver
+ 117: backWeaponOverHead
+ 118: backWeaponOverHeadEffectUnder
+ 122: backCape
+ 126: backMailChestOverPants
+ 127: backPantsOverMailChest
+ 128: backMailChest
+ 129: backPantsOverShoesBelowMailChest
+ 134: backMailChestBelowPants
+ 135: backWeaponOverGloveEffectOver
+ 136: backWeaponOverGlove
+ 137: backWeaponOverGloveEffectUnder
+ 138: backGloveWrist
+ 139: backGlove
+ 144: backMailChestAccessory
+ 147: backWeaponEffectOver
+ 148: backWeapon
+ 149: backWeaponEffectUnder
+
+== [110249] Character/Cape/00110249.img 不存在 ==
+[WzService] GetZmapOrder: top=Base/zmap.img node=NULL
+[WzService] GetZmapOrder: top=zmap.img node=zmap.img
+[WzService] GetZmapOrder: zmap.img 顶层子节点前30=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle,tamingMobMid,characterStart,emotionOverBody,weaponWristOverGloveEffectOver,weaponWristOverGlove,weaponWristOverGloveEffectUnder,capeOverHead,weaponOverGloveEffectOver,weaponOverGlove,weaponOverGloveEffectUnder,gloveWristOverHair,gloveOverHair,handOverHair,weaponOverHandEffectOver,weaponOverHand,weaponOverHandEffectUnder,shieldOverHair,gloveWristBelowWeapon,gloveBelowWeapon,handBelowWeapon,weaponOverArmEffectOver,weaponOverArm,weaponOverArmEffectUnder,gloveWristBelowMailArm,capeOverArm]
+[WzService] GetZmapOrder: 从 zmap.img 读到 183 层, 前5=[mobEquipFront,tamingMobFront,mobEquipMid,saddleFront,mobEquipUnderSaddle] 后5=[At,Fc,Hr,Hd,Bd]
+
+== [1102000] Character/Cape/01102000.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+== [1102081] Character/Cape/01102081.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+== [1102270] Character/Cape/01102270.img 动作 stand1/0 部件落层（共 8 件，披风 2 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+▶ [cape   ] piece=capeArm            z=cape               → 层=cape                 idx=  60 map= True locked= True hidden=False
+
+== [1102613] Character/Cape/01102613.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+== [1102657] Character/Cape/01102657.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=backWing           → 层=backWing             idx= 108 map= True locked= True hidden=False
+
+== [1102665] Character/Cape/01102665.img 动作 stand1/0 部件落层（共 8 件，披风 2 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=capeArm            z=capAccessory       → 层=capAccessory         idx=  44 map= True locked= True hidden=False
+▶ [cape   ] piece=backcape           z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+== [1102682] Character/Cape/01102682.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowHair      → 层=capeBelowHair        idx=   0 map= True locked= True hidden=False
+
+== [1103058] Character/Cape/01103058.img 动作 stand1/0 部件落层（共 8 件，披风 2 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+▶ [cape   ] piece=capeOverHead       z=capeOverHead       → 层=capeOverHead         idx=  11 map= True locked= True hidden=False
+
+== [1103098] Character/Cape/01103098.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=cape               z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+== [1103741] Character/Cape/01103741.img 动作 stand1/0 部件落层（共 7 件，披风 1 件）==
+  [body   ] piece=body               z=body               → 层=body                 idx=  97 map= True locked= True hidden=False
+  [body   ] piece=arm                z=arm                → 层=arm                  idx=  65 map= True locked= True hidden=False
+  [body   ] piece=face               z=                   → 层=face                 idx=  55 map=False locked=False hidden=False
+  [body   ] piece=delay              z=                   → 层=body                 idx=  97 map=False locked=False hidden=False
+  [head   ] piece=head               z=head               → 层=head                 idx=  59 map= True locked= True hidden=False
+  [head   ] piece=humanEar           z=hairShade          → 层=hairShade            idx=  58 map= True locked= True hidden=False
+▶ [cape   ] piece=capeBelowBody      z=capeBelowBody      → 层=capeBelowBody        idx= 102 map= True locked= True hidden=False
+
+========== [110249] effect 节点结构 ==========
+Character/Cape/00110249.img/effect → 不存在
+
+========== [1102000] effect 节点结构 ==========
+Character/Cape/01102000.img/effect → 不存在
+[1102000] stand1/0/effect → 无
+[1102000] walk1/0/effect → 无
+
+========== [1102081] effect 节点结构 ==========
+Character/Cape/01102081.img/effect → 不存在
+[1102081] stand1/0/effect → 无
+[1102081] walk1/0/effect → 无
+
+========== [1102270] effect 节点结构 ==========
+Character/Cape/01102270.img/effect → 不存在
+[1102270] stand1/0/effect → 无
+[1102270] walk1/0/effect → 无
+
+========== [110249] info 节点 ==========
+Character/Cape/00110249.img/info → 不存在
