@@ -201,10 +201,10 @@ public partial class SettingsWindow
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            // ── DSH 连接（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权） ──
-            root.Children.Add(BuildAgentSectionHeader("DSH 连接（DeepSeek Harness）"));
+            // ── DSH 接入（DeepSeek Harness，本机 Web GUI 后端，loopback 免鉴权） ──
+            root.Children.Add(BuildAgentSectionHeader("DSH 接入（DeepSeek Harness，本机 127.0.0.1:3080）"));
             var dshPanel = new StackPanel { Spacing = 10 };
-            _agentDshCheck = MakeAgentToggle("启用 DSH 状态观察（默认关；仅本机 127.0.0.1）", ai.DshEnabled);
+            _agentDshCheck = MakeAgentToggle("启用 DSH 状态观察（默认关；仅本机 loopback；DSH 未运行时不打扰，桌宠保持静默）", ai.DshEnabled);
             dshPanel.Children.Add(_agentDshCheck);
             var dshHostRow = new Grid { ColumnSpacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
             dshHostRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));   // Host 输入（占满剩余宽度）
@@ -223,7 +223,7 @@ public partial class SettingsWindow
             };
             _agentDshStatusText = new TextBlock
             {
-                Text = "⚪ 未同步",
+                Text = "⚪ 未同步（未开启或 DSH 未运行）",
                 FontSize = 11,
                 Foreground = BrushTxtDim,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -254,7 +254,7 @@ public partial class SettingsWindow
             root.Children.Add(dshPanel);
             root.Children.Add(new TextBlock
             {
-                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。",
+                Text = "观察链路：WS events.mux 订阅（session/event 驱动 7 态），隐私只消费事件视图，绝不拉取 content/密钥。\n保存后重启生效（与 Hermes 一致）；「🤖 DSH 对话」无需开启观察即可用——点击时自动装配，仅当 DSH 未运行时窗口显示未连接。",
                 FontSize = 10,
                 Foreground = BrushTxtDim,
                 TextWrapping = TextWrapping.Wrap,

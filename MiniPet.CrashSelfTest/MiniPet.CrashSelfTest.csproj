@@ -4,9 +4,14 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 多入口点（Program / IconProbe / SettingsPreviewSelfTest / DshProbe）：
+         默认入口 Program，命令行 -p:StartupObject=MiniPet.CrashSelfTest.DshProbe 等可覆盖。 -->
+    <StartupObject>MiniPet.CrashSelfTest.Program</StartupObject>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../MiniPet/MiniPet.csproj" />
+    <!-- StartupObject 是命令行全局属性，会穿透到 MiniPet.csproj（其程序集没有该入口类 → CS1555）。
+         在此从 ProjectReference 上移除，避免 launch-settings.sh / DshProbe 等 StartupObject 模式构建失败。 -->
+    <ProjectReference Include="../MiniPet/MiniPet.csproj" GlobalPropertiesToRemove="StartupObject" />
     <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
   </ItemGroup>
   <ItemGroup>

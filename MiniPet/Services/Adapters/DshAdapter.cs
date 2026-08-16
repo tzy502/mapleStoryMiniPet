@@ -105,6 +105,13 @@ namespace MiniPet.Services.Adapters
         /// <summary>当前活跃实例（App 生命周期内单例；Start 设 / Stop 清）。</summary>
         public static DshAdapter? Current { get; private set; }
 
+        /// <summary>
+        /// 收到 mux 帧时触发（参数 = 帧类型，如 session/subscribed / session/event / session/projection）。
+        /// 仅帧类型字符串，绝不携带帧内容（隐私红线：不落 content/reasoning/key）。
+        /// 供 DshProbe 验证 / 未来可观测性使用；回调在 WS 读取线程触发。
+        /// </summary>
+        public event Action<string>? MuxFrameReceived;
+
         /// <summary>按 AgentIntegrationConfig 构造（DshHost/DshPort/DshWorkspace 生效）。</summary>
         public DshAdapter(EventBus eventBus, AgentIntegrationConfig ai)
         {
@@ -269,6 +276,11 @@ namespace MiniPet.Services.Adapters
                 // 信封 payload 槽 = mux 帧（type 判别）。
                 if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object) {
                     return;
+                }
+                // 帧类型外发（可观测性：DshProbe 验证收帧；只发类型不发内容）。
+                var frameType = GetString(payload, "type");
+                if (!string.IsNullOrEmpty(frameType)) {
+                    MuxFrameReceived?.Invoke(frameType);
                 }
                 HandleMuxPayload(payload);
             }

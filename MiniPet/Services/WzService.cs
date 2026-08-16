@@ -79,35 +79,9 @@ namespace MiniPet.Services
                     _balloonListCache = null;
                 }
 
-                // wzlib 路径校验（仅校验与提示，运行时仍用编译期内置 DLL）
-                try
-                {
-                    if (string.IsNullOrEmpty(wzLibPath))
-                    {
-                        LastWzLibWarning = null;
-                    }
-                    else if (File.Exists(wzLibPath))
-                    {
-                        LastWzLibWarning = null;
-                    }
-                    else if (Directory.Exists(wzLibPath))
-                    {
-                        if (File.Exists(Path.Combine(wzLibPath, "Lib", "WzComparerR2.WzLib.dll"))
-                            || File.Exists(Path.Combine(wzLibPath, "WzComparerR2.WzLib.dll")))
-                        {
-                            LastWzLibWarning = null;
-                        }
-                        else
-                        {
-                            LastWzLibWarning = "用户配置的 wzlib 无效，已回退默认";
-                        }
-                    }
-                    else
-                    {
-                        LastWzLibWarning = "用户配置的 wzlib 无效，已回退默认";
-                    }
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"[WzService] wzlib 校验: {ex.Message}"); LastWzLibWarning = null; }
+                // wzlib 运行时状态：WzLibRuntimeLoader 已在启动早期按用户配置加载用户 DLL（无效/不兼容自动回退内置），
+                // 此处仅同步提示状态到 UI（LoadWz 的 wzLibPath 参数不再影响 DLL 选择，加载发生在进程启动时）
+                LastWzLibWarning = WzLibRuntimeLoader.LastWarning;
 
             if (string.IsNullOrEmpty(baseWzPath) || !Directory.Exists(baseWzPath))
             {

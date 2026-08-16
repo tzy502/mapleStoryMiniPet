@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
+using MiniPet.Services.Adapters;
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views;
@@ -24,6 +25,7 @@ public partial class PetWindow
     private MenuItem? _bgMenu;
     private MenuItem? _modeStaticItem;
     private MenuItem? _modeCameraItem;
+    private MenuItem? _paperdollItem;
 
     private ContextMenu BuildContextMenu()
     {
@@ -32,6 +34,16 @@ public partial class PetWindow
         {
             // ── 切换人物 ──
             var charItem = new MenuItem { Header = "切换人物" };
+
+            // 纸娃娃入口（独立分组置顶）：恢复当前预设搭配；已处于纸娃娃模式时由 RefreshPaperdollMenuItem 改为「✓ 纸娃娃（当前）」并禁用
+            _paperdollItem = new MenuItem { Header = "🧍 纸娃娃（当前预设）" };
+            _paperdollItem.Click += (_, _) =>
+            {
+                try { SwitchToPaperdoll(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollMenuSelect: {ex.Message}"); }
+            };
+            charItem.Items.Add(_paperdollItem);
+            charItem.Items.Add(new Separator());
 
             // 最近使用（最多5个）
             var settings = _configService.LoadSettings();
@@ -174,11 +186,18 @@ public partial class PetWindow
             };
             cm.Items.Add(chatItem);
 
-            // ── DSH 对话（DeepSeek Harness 桥接，feat/dsh-bridge；单例，已开则 Activate/聚焦） ──
+            // ── DSH 对话（DeepSeek Harness 桥接，feat/dsh-bridge；单例，已开则 Activate/聚焦）──
+            // 对话链路独立于「观察开关」：未装配（DshEnabled 关）时点击自动装配 DshAdapter
+            // （连 ws://127.0.0.1:3080/api/events.mux 收帧，session.create 固定 minipet_dsh 复用），
+            // 无需先去设置开启观察即可对话；DSH 未运行则窗口状态行显示 🔴 未连接。
             var dshChatItem = new MenuItem { Header = "🤖 DSH 对话" };
             dshChatItem.Click += (_, _) =>
             {
-                try { DshChatWindow.OpenOrActivate(); }
+                try
+                {
+                    EnsureDshAdapterForChat();
+                    DshChatWindow.OpenOrActivate();
+                }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshChat: {ex.Message}"); }
             };
             cm.Items.Add(dshChatItem);
@@ -261,6 +280,64 @@ public partial class PetWindow
     }
 
     /// <summary>
+    /// 刷新「切换人物」纸娃娃菜单项状态（ContextMenu.Opening 时调用）：
+    /// 已处于纸娃娃模式 → 显示「✓ 纸娃娃（当前）」并禁用；未保存预设 → 显示「无预设」并禁用。
+    /// </summary>
+    private void RefreshPaperdollMenuItem()
+    {
+        if (_paperdollItem == null) { return; }
+        try
+        {
+            var settings = _configService.LoadSettings();
+            var hasPreset = settings.CurrentPaperdoll != null;
+            if (IsSentinelActive())
+            {
+                _paperdollItem.Header = "✓ 纸娃娃（当前）";
+                _paperdollItem.IsEnabled = false;
+            }
+            else
+            {
+                _paperdollItem.Header = hasPreset ? "🧍 纸娃娃（当前预设）" : "🧍 纸娃娃（无预设）";
+                _paperdollItem.IsEnabled = hasPreset;
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshPaperdollMenuItem: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 切换到纸娃娃模式：恢复当前预设搭配（复用 LoadDefaultPet 启动恢复路径的 SetAppearance + 哨兵 mobId），
+    /// 持久化哨兵以便重启恢复，循环播放 stand1（同 ApplyPaperdoll 完成路径），后台预热常用动作。
+    /// </summary>
+    private void SwitchToPaperdoll()
+    {
+        try
+        {
+            var settings = _configService.LoadSettings();
+            var pa = settings.CurrentPaperdoll;
+            if (pa == null)
+            {
+                ShowInfoPopup("切换人物", "未保存纸娃娃预设。\n请先在设置中心 > 玩家 (PLAYER) > 纸娃娃编辑器 保存搭配。");
+                return;
+            }
+            if (IsSentinelActive()) { return; } // 已在纸娃娃模式（菜单项已禁用，双保险）
+            _currentEntityType = "player";
+            _paperdoll.SetAppearance(pa); // 同启动恢复：切换外观清依赖外观缓存；引用赋值原子，帧循环安全
+            // 持久化哨兵（启动恢复依赖 CurrentMobId == SentinelMobId）
+            settings.CurrentMobId = PaperdollService.SentinelMobId;
+            settings.CurrentEntityType = "player";
+            _configService.SaveSettings(settings);
+            _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
+            _animService.Play("stand1", PlayMode.Loop);
+            _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，同 SwitchToPet）
+            _lastFrameW = 0; _lastFrameH = 0;
+            _trayService.SetTooltip("MiniPet - 纸娃娃");
+            // 后台预热常用动作缓存（避免恢复后首帧合成卡顿抖动，同 LoadDefaultPet）
+            System.Threading.Tasks.Task.Run(() => { try { _paperdoll.Warmup(); } catch { } });
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPaperdoll: {ex.Message}"); }
+    }
+
+    /// <summary>
     /// 快速唤起 hermes CLI（UseShellExecute=true，让系统按 PATH 解析并独立窗口运行）。
     /// 失败（未安装/不在 PATH）→ 提示用户。
     /// </summary>
@@ -307,6 +384,31 @@ public partial class PetWindow
             "  反映态   : Idle（待 Aggregator 接线）",
         };
         ShowInfoPopup("Agent 状态", string.Join("\n", lines));
+    }
+
+    /// <summary>
+    /// 保证 DSH 对话可用：DshAdapter 未装配（设置页 DshEnabled 关）时自动装配一个实例并 Start。
+    /// 对话链路独立于观察开关——点击「🤖 DSH 对话」无需先去设置开启观察；
+    /// 自动装配的实例同样走 EventBus 发布状态（桌宠反映 DSH 干活过程，Aggregator 未装配时无害）。
+    /// 幂等：DshAdapter.Current 已存在（App 启动装配或本方法已装配）则直接返回。
+    /// </summary>
+    private void EnsureDshAdapterForChat()
+    {
+        if (DshAdapter.Current != null) { return; }
+        try
+        {
+            var ai = _configService.LoadSettings().AgentIntegration ?? new AgentIntegrationConfig();
+            var dsh = new DshAdapter(_eventBus, ai);
+            dsh.Start();
+            var host = string.IsNullOrWhiteSpace(ai.DshHost) ? "127.0.0.1" : ai.DshHost.Trim();
+            var port = ai.DshPort == 0 ? 3080 : ai.DshPort;
+            Console.WriteLine($"[PetWindow] DSH 对话自动装配: ws://{host}:{port}/api/events.mux");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PetWindow] DSH 对话自动装配失败: {ex.Message}");
+            ShowInfoPopup("DSH 对话", "DSH 接入初始化失败。\n请确认本机 DSH（DeepSeek Harness）已运行（127.0.0.1:3080），\n或在 设置中心 → Agent 接入 → DSH 连接 检查配置后重试。");
+        }
     }
 
     /// <summary>简单的信息弹窗（自包含，无第三方依赖）：标题 + 多行文本 + 关闭按钮。</summary>

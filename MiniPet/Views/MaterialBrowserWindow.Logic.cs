@@ -417,26 +417,11 @@ public partial class MaterialBrowserWindow
 
         try
         {
-            // 纸娃娃部件分类：优先 icon（WZ 装备节点自带 icon/iconRaw，比全身合成/精灵图条快得多）；
-            // 无 icon 再回退穿身上合成预览（草稿外观 + 该部件，stand1 首帧）
+            // 纸娃娃部件分类：详情预览 = 穿身上合成（草稿外观 + 该部件，stand1 首帧），
+            // 预览即"穿在身上看到效果"；icon 只用于列表缩略图（LoadThumbAsync 已用 TryExtractIcon），
+            // 详情预览不再单独显示装备 icon
             if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
             {
-                var iconPng = TryExtractIcon(_wzService, entry.Category, entry.Id);
-                if (iconPng != null)
-                {
-                    var iconBmp = DecodePngBytes(iconPng);
-                    if (iconBmp != null)
-                    {
-                        SetPreviewChild(new Image
-                        {
-                            Source = iconBmp,
-                            Stretch = Stretch.Uniform,
-                            HorizontalAlignment = HorizontalAlignment.Stretch,
-                            VerticalAlignment = VerticalAlignment.Stretch
-                        });
-                        return;
-                    }
-                }
                 LoadPaperdollPreview(entry);
                 return;
             }
@@ -755,14 +740,16 @@ public partial class MaterialBrowserWindow
                 }
                 return;
             case "发型":
-                // 保留现有染发参数：组内换变体时 HSV 延续（染发调色入口联动草稿 Hair）
+                // 保留现有染发参数：组内换变体时 HSV 延续（染发调色入口联动草稿 Hair）；
+                // 草稿 Hair 可能为 null（当前外观未设发型），空值按默认参数处理，防 NRE 吞草稿更新
+                var prevHair = _draftAppearance.Hair;
                 _draftAppearance.Hair = new ItemInfo
                 {
                     Id = id,
-                    Dye = _draftAppearance.Hair.Dye,
-                    Hue = _draftAppearance.Hair.Hue,
-                    Saturation = _draftAppearance.Hair.Saturation,
-                    Brightness = _draftAppearance.Hair.Brightness
+                    Dye = prevHair?.Dye ?? 0,
+                    Hue = prevHair?.Hue ?? 0,
+                    Saturation = prevHair?.Saturation ?? 0,
+                    Brightness = prevHair?.Brightness ?? 0
                 };
                 return;
             case "脸型": _draftAppearance.Face = it; return;

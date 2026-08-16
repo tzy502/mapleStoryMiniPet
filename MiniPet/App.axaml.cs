@@ -136,9 +136,14 @@ public partial class App : Application
                     {
                         // DSH（DeepSeek Harness，本机 3080）：WS events.mux 纯观察 + 对话 RPC。
                         // 传 ai（DshHost/DshPort/DshWorkspace 生效；loopback 免鉴权）。
+                        // Start() 内部全 catch + 指数退避重连不抛异常；连接成败经 ConnStatusCallback
+                        // 回显到设置页 DSH 区状态（这里只留装配日志，避免启动期反复重连日志噪音）。
                         var dsh = new DshAdapter(eventBus, ai);
                         _agentAdapters.Add(dsh);
                         dsh.Start();
+                        var dshHost = string.IsNullOrWhiteSpace(ai.DshHost) ? "127.0.0.1" : ai.DshHost.Trim();
+                        var dshPort = ai.DshPort == 0 ? 3080 : ai.DshPort;
+                        Console.WriteLine($"[App] DSH 接入已装配（观察模式）: ws://{dshHost}:{dshPort}/api/events.mux");
                     }
                 }
             }

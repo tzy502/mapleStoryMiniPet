@@ -867,8 +867,22 @@ public partial class SettingsWindow : Window
         {
             _wzConfig.WzLibPath = _wzLibInput!.Text ?? string.Empty;
             _wzConfig.BaseWzPath = _baseWzInput!.Text ?? string.Empty;
+            // wzlib 路径在进程启动早期由 WzLibRuntimeLoader 加载，保存后需重启才生效；无效路径直接提示
+            var configuredDll = WzLibRuntimeLoader.ResolveDllPath(_wzConfig.WzLibPath);
+            bool invalidWzLibPath = !string.IsNullOrWhiteSpace(_wzConfig.WzLibPath) && configuredDll == null;
+            bool wzLibNeedsRestart = configuredDll != null
+                && !string.Equals(configuredDll, WzLibRuntimeLoader.LoadedPath, StringComparison.OrdinalIgnoreCase);
             _config.SaveWzConfig(_wzConfig);
             HideWzOverlay();
+
+            if (invalidWzLibPath)
+            {
+                ShowWzOverlayToast("wzlib 路径无效（找不到 WzComparerR2.WzLib.dll），已保存但不会生效");
+            }
+            else if (wzLibNeedsRestart)
+            {
+                ShowWzOverlayToast("wzlib 路径已保存，重启后生效");
+            }
 
             if (!string.IsNullOrEmpty(_wzConfig.BaseWzPath))
             {

@@ -177,3 +177,51 @@ _参考文档：CODE_QUALITY.md / PERFORMANCE.md / ARCHITECTURE.md（注意：AR
 2. 组内提供**颜色调整入口**：复用现有染发（HSV 滑块 + Dye），选中变体后可在组内直接调色，联动 `_paperdollCurrent.Hair` 的 Hue/Saturation/Brightness。
 3. 数据侧：发型条目需先读 `info/name`（String.wz 或 Character/Hair/{id}.img/info/name）归类——若名字缺失回退 id 不折叠。
 4. 组折叠 UI：参考 MapleSalon2 的折叠/分组交互（列表分组头 + 展开态），与现有分页/搜索兼容（搜索时展开匹配组）。
+
+## 十、DSH 连接使用说明（DeepSeek Harness × 桌宠，2026-08-16 完善验证）
+
+> 目的：让「桌宠 ↔ DSH（本机 3080）」连接真正可用、可见、可验证。链路见 `RESEARCH-dsh-http-bridge.md`。
+
+### 1. 开关位置（设置中心 → Agent 接入）
+
+- **「DSH 接入（DeepSeek Harness，本机 127.0.0.1:3080）」区**：
+  - **启用 DSH 状态观察**（默认关）——开启后桌宠 7 态反映 DSH 干活过程（Run/Review/Waiting/Failed/Jump）。
+  - Host（默认 127.0.0.1，锁 loopback）/ 端口（默认 3080，`dsh --profile web`）/ 会话工作区 cwd（可选）。
+  - 状态回显：`🟢 DSH ✓ HH:mm:ss` = 已连接；`🔴 DSH ✗` = 未连接（DSH 未运行）；`⚪ 未同步` = 未开启。
+  - **保存后重启生效**（与 Hermes 一致）。
+
+### 2. 菜单入口（右键桌宠 → 🤖 DSH 对话）
+
+- **无需先开启观察**：对话链路独立于观察开关，点击时自动装配 DshAdapter（连 events.mux + session.create 固定 `minipet_dsh` 复用）。
+- DSH 未运行时窗口状态行显示「🔴 DSH 未连接」，发送时提示错误原因。
+- 开启观察后，对话发起的回合同样驱动桌宠状态反映（同一 adapter 实例）。
+
+### 3. 验证方法（本机 DSH 需在 3080 运行）
+
+```bash
+# DshProbe：DshAdapter 连 ws://127.0.0.1:3080/api/events.mux 收 4 秒帧 + session.list + session.create（独立 selftest 会话）
+NUGET_PACKAGES=/Users/a502/IdeaProjects/mapleStoryMiniPet/.nuget-packages \
+  "/Volumes/SSD/C#/dotnet" run --project MiniPet.CrashSelfTest/MiniPet.CrashSelfTest.csproj \
+  -c Debug -p:UsedAvaloniaProducts= -p:StartupObject=MiniPet.CrashSelfTest.DshProbe
+
+# 加 --prompt 验证对话 RPC（session.prompt 发无害 "ping" 到 minipet_dsh_selftest，不碰用户会话）
+# … 同上命令末尾追加 -- --prompt
+```
+
+退出码 0 = 全部通过（连接成功 + 收到帧 + list/create 成功）。实测输出示例：
+`ConnStatus: 🟢 DSH ✓` / `✓ 收到 mux 帧（4 秒统计）：session/subscribed、session/event、session/projection…` / `✓ session.create 成功：会话 id = minipet_dsh_selftest`。
+
+### 4. 关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `MiniPet/Services/Adapters/DshAdapter.cs` | WS events.mux 观察 + RPC 对话（`MuxFrameReceived` 帧类型事件供可观测性） |
+| `MiniPet/Views/DshChatWindow.cs` | DSH 迷你对话窗口（单例 OpenOrActivate） |
+| `MiniPet/Views/PetWindow.Menu.cs` | 「🤖 DSH 对话」菜单 + `EnsureDshAdapterForChat` 自动装配 |
+| `MiniPet/Views/SettingsWindow.Agent.cs` | DSH 配置区（开关/地址/端口/工作区/状态回显） |
+| `MiniPet.CrashSelfTest/DshProbe.cs` | 连接验证探针（StartupObject 模式） |
+| `MiniPet/Models/AppConfig.cs` | `AgentIntegration.DshEnabled/DshHost/DshPort/DshWorkspace` |
+
+### 5. 隐私红线（沿用 RESEARCH §4.6）
+
+只消费 mux 事件视图与非内容 Detail，绝不拉取 `session.history` 全文 / content / reasoning / 密钥；对话增量文本仅经 `DeltaReceived` 交 UI，绝不落盘/log。

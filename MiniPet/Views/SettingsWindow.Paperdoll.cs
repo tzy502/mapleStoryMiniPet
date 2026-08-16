@@ -233,7 +233,10 @@ public partial class SettingsWindow
 
         // 自适应：预设列表改随内容 Auto + MaxHeight 上限 200（原固定 Height=100 不随预设数伸缩；超限内部滚动）
         _presetListBox = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), MaxHeight = 200, Margin = new Thickness(-10, 0, -10, 0) };
-        // 选中态强化（暗色主题默认选中高亮不明显）：选中项文字 accent + 背景微亮（体验 A-3）
+        // 选中态强化（暗色主题默认选中高亮不明显）：选中项背景 accent 微亮（体验 A-3）
+        // 文字对比度修正（用户反馈：accent 蓝字与 accent 蓝底同色系糊掉/未选中无显式前景色看不清）：
+        // 未选中 → 清晰亮色 BrushTxtPrimary(240,240,244)；选中 → 高对比白字 Brushes.White。
+        // 文字颜色按样式类 preset-name 只作用在名称文字上，不误伤行内 🗑️ 删除按钮的字形。
         _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
         {
             Setters = { new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent) }
@@ -242,9 +245,15 @@ public partial class SettingsWindow
         {
             Setters = { new Setter(ListBoxItem.BackgroundProperty, new SolidColorBrush(Color.FromArgb(64, 94, 156, 255))) }
         });
-        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Class(":selected").Descendant().OfType<TextBlock>())
+        // 未选中：清晰亮色（BrushTxtPrimary，深底高对比，条目一眼可读）
+        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Descendant().OfType<TextBlock>().Class("preset-name"))
         {
-            Setters = { new Setter(TextBlock.ForegroundProperty, BrushAccent) }
+            Setters = { new Setter(TextBlock.ForegroundProperty, BrushTxtPrimary) }
+        });
+        // 选中：高对比白字（:selected 选择器特异性高于未选中规则，选中时覆写为白字）
+        _presetListBox.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Class(":selected").Descendant().OfType<TextBlock>().Class("preset-name"))
+        {
+            Setters = { new Setter(TextBlock.ForegroundProperty, Brushes.White) }
         });
         RefreshPresetList();
         content.Children.Add(_presetListBox);
@@ -601,11 +610,23 @@ public partial class SettingsWindow
             var prevName = _presetListBox.SelectedItem is ValueTuple<string, CharacterAppearance> prevSelected ? prevSelected.Item1 : null;
             _presetListBox.ItemsSource = null;
             _presetListBox.ItemsSource = _paperdollPresets;
-            // 预设项：文字颜色交给样式（选中态 accent 由 :selected 样式覆写，见 BuildPaperdollSidebar）；
-            // 右键菜单：删除 / 重命名 / 复制（REVIEW-FINDINGS I1 缺失项）
+            // 预设项行：名称文字（左，样式类 preset-name，文字颜色交给 BuildPaperdollSidebar 样式：
+            // 未选中 BrushTxtPrimary 亮色 / 选中 :selected 白字） + 行内可见 🗑️ 删除按钮（右，透明底 hover 亮化，
+            // 复用 DeletePaperdollPreset：列表移除 + SavedPaperdolls 移除 + 保存 + 刷新 + 状态栏提示）。
+            // 右键菜单（删除 / 重命名 / 复制，REVIEW-FINDINGS I1）保留不动，挂在整行上作补充入口。
             _presetListBox.ItemTemplate = new FuncDataTemplate<(string Name, CharacterAppearance Data)>((item, _) =>
             {
-                var tb = new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, Padding = new Thickness(4, 3) };
+                var row = new Grid();
+                row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(22)));
+                var tb = new TextBlock { [!TextBlock.TextProperty] = new Binding("Name"), FontSize = 11, Padding = new Thickness(4, 3), VerticalAlignment = VerticalAlignment.Center };
+                tb.Classes.Add("preset-name");
+                // 行内删除按钮：透明底 + 次级亮色字形（可见但不喧宾夺主），hover 亮化（accent 微亮底 + 白字）
+                var delBtn = new Button { Content = "🗑️", FontSize = 10, Width = 22, Height = 20, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = BrushTxtSecondary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Focusable = false };
+                delBtn.Click += (_, _) => { try { DeletePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetDelete: {ex.Message}"); } };
+                delBtn.PointerEntered += (_, _) => { delBtn.Background = new SolidColorBrush(Color.FromArgb(90, 94, 156, 255)); delBtn.Foreground = Brushes.White; };
+                delBtn.PointerExited += (_, _) => { delBtn.Background = Brushes.Transparent; delBtn.Foreground = BrushTxtSecondary; };
+                UiStyle.ApplyHover(delBtn);
                 var menu = new ContextMenu();
                 var del = new MenuItem { Header = "🗑️ 删除" };
                 del.Click += (_, _) => { try { DeletePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetDelete: {ex.Message}"); } };
@@ -616,8 +637,12 @@ public partial class SettingsWindow
                 var copy = new MenuItem { Header = "📋 复制" };
                 copy.Click += (_, _) => { try { DuplicatePaperdollPreset(item); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PresetCopy: {ex.Message}"); } };
                 menu.Items.Add(copy);
-                tb.ContextMenu = menu;
-                return tb;
+                row.ContextMenu = menu;
+                Grid.SetColumn(tb, 0);
+                Grid.SetColumn(delBtn, 1);
+                row.Children.Add(tb);
+                row.Children.Add(delBtn);
+                return row;
             });
             if (prevName != null)
             {

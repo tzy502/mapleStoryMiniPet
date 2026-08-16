@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using MiniPet.Services;
 
 namespace MiniPet;
 
@@ -14,6 +15,9 @@ class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // 最早时机加载用户配置的 wzlib（先于任何 WzComparerR2 类型解析；失败回退内置 DLL）
+        WzLibRuntimeLoader.TryLoadUserWzLib();
+
         int attempt = ParseAttempt(args);
 
         try

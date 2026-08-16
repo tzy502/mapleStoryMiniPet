@@ -417,19 +417,32 @@ public partial class MaterialBrowserWindow : Window
         UiStyle.ApplyHover(_selectBtn);
         _selectBtn.Click += (_, _) =>
         {
+            // 未选中条目：忽略点击（保持原行为，不关闭）
             if (_itemList?.SelectedItem is not MaterialEntry entry)
             {
                 return;
             }
-            if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
+            try
             {
-                // 纸娃娃部件：草稿已实时合成预览，点按钮应用草稿到主窗口
-                OnPaperdollDraftApplied?.Invoke(_draftAppearance);
-                Close();
-                return;
+                if (IsPaperdollCategory(entry.Category) && _paperdoll != null)
+                {
+                    // 纸娃娃部件：草稿已由 LoadPaperdollPreview（ApplyDraftPart）写入选中部件，点按钮应用草稿到主窗口
+                    OnPaperdollDraftApplied?.Invoke(_draftAppearance);
+                    return;
+                }
+                // 怪物/NPC：OnMaterialSelected 并关闭
+                OnMaterialSelected?.Invoke(entry.Id, entry.Name, entry.Category);
             }
-            OnMaterialSelected?.Invoke(entry.Id, entry.Name, entry.Category);
-            Close();
+            catch (Exception ex)
+            {
+                // Invoke 订阅方异常不吞：记录日志，finally 仍保证窗口关闭
+                Console.Error.WriteLine($"[MaterialBrowser] Select({entry.Id}): {ex.Message}");
+            }
+            finally
+            {
+                // 选择后素材库窗口必须关闭（即使订阅方抛异常）
+                Close();
+            }
         };
         btnRow.Children.Add(_selectBtn);
 

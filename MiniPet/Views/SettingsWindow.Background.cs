@@ -249,6 +249,9 @@ public partial class SettingsWindow
             bottom.Children.Add(nudgeRow);
 
             // ── point 2 分层显隐 toggle（背景/地面/物件/NPC/传送门/地面线）── flag 在 PetSettings + MapService（共享单例），toggle 即时影响预览与桌面
+            // 构建前先把保存的 flag 同步到 MapService（设置窗口为单例只构建一次；启动后 MapService 为类默认值全开，
+            // 不同步则预览/应用会渲染出用户已勾掉「不显示」的层——与 OpenBackgroundTab 的同步互为兜底）
+            BgSyncLayerFlagsFromSettings();
             var layerToggleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             layerToggleRow.Children.Add(new TextBlock { Text = "显示", FontSize = 9, Foreground = BrushTxtDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 3, 0) });
             var layerToggles = new (string Label, Action<bool> Set, Func<bool> Get)[]
@@ -307,8 +310,30 @@ public partial class SettingsWindow
     /// <summary>N3：切换到背景设置 sub-tab 并确保可见。PetWindow.OpenBackgroundTab 委托到此。</summary>
     public void OpenBackgroundTab()
     {
-        try { SwitchSubTab(2); if (IsVisible) Activate(); else Show(); }
+        try
+        {
+            // 分层 flag 以保存的 PetSettings 为准回填 MapService：层开关只在「变化」时写 MapService
+            // （BuildBackgroundTab 的 IsCheckedChanged），启动后 MapService 停留在类默认值（全开），
+            // 与用户保存的「不显示」flag 脱节 → 预览/桌面应用渲染出已勾掉的层。每次打开背景 tab 同步一次。
+            BgSyncLayerFlagsFromSettings();
+            SwitchSubTab(2); if (IsVisible) Activate(); else Show();
+        }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OpenBackgroundTab: {ex.Message}"); }
+    }
+
+    /// <summary>把保存的 PetSettings 分层显隐同步到 MapService（打开背景 tab / 构建层开关时调用）。</summary>
+    private void BgSyncLayerFlagsFromSettings()
+    {
+        try
+        {
+            _mapSvc.MapShowBack = _settings.MapShowBack;
+            _mapSvc.MapShowTile = _settings.MapShowTile;
+            _mapSvc.MapShowObj = _settings.MapShowObj;
+            _mapSvc.MapShowLife = _settings.MapShowLife;
+            _mapSvc.MapShowPortal = _settings.MapShowPortal;
+            _mapSvc.MapShowFoothold = _settings.MapShowFoothold;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgSyncLayerFlags: {ex.Message}"); }
     }
 
     private void BgLoadCatalog()
@@ -581,6 +606,10 @@ public partial class SettingsWindow
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] BgApplyHistoryEntry: {ex.Message}"); }
     }
 
+    /// <summary>
+    /// 区域树/搜索选中地图：**仅预览/记录待应用状态，绝不应用到桌面**（用户要求：点击只预览，点「✅ 应用到主窗口」才生效）。
+    /// 与 BgApplySelection（应用按钮）/BgApplyHistoryEntry（历史点击，明确应用操作）区分——本方法不调 OnBackgroundMapApplied。
+    /// </summary>
     private void BgSelectMap(string mapId, string name)
     {
         _selectedMapId = mapId;
@@ -588,6 +617,7 @@ public partial class SettingsWindow
         if (_bgCropRect != null) _bgCropRect.IsVisible = false;
         BgUpdateCropHandles();
         if (_mapNameLabel != null) _mapNameLabel.Text = $"{name}  [{mapId}]";
+        if (_statusBarText != null) _statusBarText.Text = $"已预览 {name} —— 点「✅ 应用到主窗口」才应用到桌面";
         BgRenderPreview(mapId, null);
     }
 

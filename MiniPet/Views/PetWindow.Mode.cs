@@ -262,6 +262,18 @@ public partial class PetWindow
             // 选图应用 = 静态背景模式：先停/关摄像机窗口，保证两种模式互斥（问题：双模式同载）
             _mapViewportWindow.Stop();
             _mapViewportWindow.Hide();
+            // 分层 flag 从保存的设置同步（与 ToggleBackground/SwitchToStaticMode/SwitchToCameraMode 一致）：
+            // 否则 MapService 停留在类默认值（全开），用户保存的「不显示」层在应用后被渲染出来——
+            // 跨会话复现：上一会话在设置里勾掉「背景」，本会话点最近使用/应用按钮 → 桌面静态图仍带出背景层。
+            // 同步后必须失效整图缓存（RenderMapFull 缓存键含 flag），强制按新 flag 重新渲染。
+            var sApply = _configService.LoadSettings();
+            _mapService.MapShowBack = sApply.MapShowBack;
+            _mapService.MapShowTile = sApply.MapShowTile;
+            _mapService.MapShowObj = sApply.MapShowObj;
+            _mapService.MapShowLife = sApply.MapShowLife;
+            _mapService.MapShowPortal = sApply.MapShowPortal;
+            _mapService.MapShowFoothold = sApply.MapShowFoothold;
+            _mapService.InvalidateFullRenderCache();
             _backgroundWindow.SetMap(map, _mapService, sel.CropX, sel.CropY, sel.CropW, sel.CropH);
             _backgroundWindow.Show();
             RaisePet();
