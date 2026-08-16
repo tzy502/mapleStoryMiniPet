@@ -283,6 +283,24 @@ public partial class SettingsWindow
         _skinCombo.SelectedIndex = SkinIndex(_paperdollCurrent.BodyId);
         _skinCombo.SelectionChanged += (_, _) => { try { if (_skinCombo.SelectedItem is SkinItem si) { _paperdollCurrent.BodyId = si.Id; UpdatePaperdollPreview(); } } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] Skin: {ex.Message}"); } };
         skinRow.Children.Add(_skinCombo);
+        // 皮肤素材选择（与其他部位一致的「选择…」按钮，打开素材浏览器皮肤分类；2026-08-16 补齐）
+        var skinSelectBtn = new Button
+        {
+            Content = "选择…",
+            Width = 140,
+            Height = 28,
+            FontSize = 12,
+            Foreground = Brushes.Black,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(InputBorder),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
+            HorizontalContentAlignment = HorizontalAlignment.Left
+        };
+        UiStyle.ApplyHover(skinSelectBtn);
+        skinSelectBtn.Click += (_, _) => { try { OpenEquipPicker("皮肤", skinSelectBtn); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] EquipPicker 皮肤: {ex.Message}"); } };
+        skinRow.Children.Add(skinSelectBtn);
         content.Children.Add(skinRow);
 
         var earRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 0, 4, 0) };
@@ -401,6 +419,14 @@ public partial class SettingsWindow
     {
         switch (category)
         {
+            case "皮肤":
+                _paperdollCurrent.BodyId = draft.BodyId;
+                // 皮肤下拉同步到新选中的 body id
+                if (_skinCombo != null)
+                {
+                    _skinCombo.SelectedIndex = SkinIndex(_paperdollCurrent.BodyId);
+                }
+                break;
             case "发型": _paperdollCurrent.Hair = draft.Hair; break;
             case "脸型": _paperdollCurrent.Face = draft.Face; break;
             case "帽子": _paperdollCurrent.Cap = draft.Cap; break;
