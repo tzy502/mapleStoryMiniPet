@@ -31,6 +31,12 @@ public partial class BalloonControl : UserControl
     }
 
     /// <summary>
+    /// 气泡完全隐藏后触发（autoHide 到期或手动 HideBalloon 淡出完成）——上层据此隐藏 BalloonWindow 窗口。
+    /// 胶水 2026-08-17：旧实现控件隐藏但外层窗口仍 Show，空壳窗口一直挂着。
+    /// </summary>
+    public event Action? BalloonHidden;
+
+    /// <summary>
     /// 显示气泡（常驻：淡入 0.2s 后保持显示，不自动隐藏；新气泡到来时替换内容）。
     /// autoHideAfter 非空 → 显示该时长后自动淡出隐藏（用于「做完了 撒花 🎉」等一次性状态气泡）。
     /// </summary>
@@ -124,6 +130,8 @@ public partial class BalloonControl : UserControl
                 _currentBitmap?.Dispose();
                 _currentBitmap = null;
                 BalloonText.Text = null;
+                // 胶水 2026-08-17：通知上层隐藏外层 BalloonWindow 窗口（旧实现空壳窗口常驻）
+                BalloonHidden?.Invoke();
             }
         }
         catch (Exception ex)

@@ -35,6 +35,7 @@ public partial class PetWindow : Window
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
     private readonly Random _rng = new();
+    private bool _balloonSilentRound;   // 随机气泡静默轮（胶水 2026-08-17：空窗期，本轮不弹）
     private AgentState _agentReflect = AgentState.Idle;   // 最近一次 Agent 反映态（PetReflectStateChanged 订阅，随机气泡仅在 Idle 触发）
     private int _paperdollGen;
     private int _petSwitchGen;
@@ -465,6 +466,16 @@ public partial class PetWindow : Window
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonShow: {ex.Message}"); }
                 });
             };
+
+            // 胶水 2026-08-17：气泡淡出完成后隐藏外层窗口（旧实现空壳窗口常驻，观感「气泡一直在」）
+            _balloonWindow.BalloonControl.BalloonHidden += () =>
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try { _balloonWindow.HideBalloonWindow(); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonHidden: {ex.Message}"); }
+                });
+            };
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] InitBalloonTimer: {ex.Message}"); }
     }
@@ -480,6 +491,13 @@ public partial class PetWindow : Window
                 return;
             }
 
+            // 静默轮（胶水 2026-08-17）：本轮不弹气泡，只留空窗——上一轮 Schedule 已掷骰
+            if (_balloonSilentRound)
+            {
+                Console.WriteLine("[PetWindow] RandomBalloon: 静默轮（空窗期，不弹）");
+                return;
+            }
+
             // 常驻模式：不限制动画动作，每次定时器触发都换气泡文本
             var balloonId = _configService.LoadSettings().BalloonId;
             if (string.IsNullOrEmpty(balloonId)) { balloonId = "560"; }
@@ -488,7 +506,9 @@ public partial class PetWindow : Window
             if (data == null) { return; } // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
             Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
-            await _balloonService.Show(line, data);
+            // 胶水 2026-08-17：随机气泡显示 6s 后自动隐藏（旧实现 autoHide=null 常驻不消失，
+            // 下一条气泡到来前一直挂着 →「气泡一直出现没有隐藏」）
+            await _balloonService.Show(line, data, durationMs: 6000);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
         finally
@@ -501,12 +521,14 @@ public partial class PetWindow : Window
         }
     }
 
-    /// <summary>调度下一次随机气泡：随机 3~8 秒后触发（Agent 空闲时）。</summary>
+    /// <summary>调度下一次随机气泡（胶水 2026-08-17：降密度 + 空窗期）。
+    /// 间隔 8~20s；每次 30% 概率进入静默轮（到点只重排不弹），平均约 12~30s 一条，有安静期。</summary>
     private void ScheduleRandomBalloon()
     {
         try
         {
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(3, 9));
+            _balloonSilentRound = _rng.Next(100) < 60; // 60% 静默轮（无气泡空窗为主）
+            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(8, 21));
             _balloonTimer.Stop();
             _balloonTimer.Start();
         }

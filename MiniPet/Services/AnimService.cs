@@ -220,8 +220,13 @@ namespace MiniPet.Services
                         Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
                         // A10：随机空闲只选 Loop 类动作 → 直接 Loop 播放，不预置 pending
                         // （Loop 无 OneShot 完成回调，原预置 "stand" 会悬挂：下次 OneShot 完成时误回 stand）
+                        // 胶水 2026-08-17：mob 池现含 say/regen/attack1 等 OneShot 展示动作——
+                        // 这类必须按 OneShot 播（播完自动回 stand），Loop 播会无限循环不回 stand
                         _pendingAction = string.Empty;
-                        Play(randomAction, PlayMode.Loop);
+                        var idleMode = randomAction.StartsWith("stand", StringComparison.OrdinalIgnoreCase)
+                            ? PlayMode.Loop
+                            : PlayMode.OneShot;
+                        Play(randomAction, idleMode);
                         return Tick(0);
                     }
                     // 没有可用动作，重置计时器
@@ -294,6 +299,16 @@ namespace MiniPet.Services
                 if (_currentMode == PlayMode.Loop && _idleAccumulated >= _currentIdleThreshold)
                 {
                     var (randomAction, randomMode) = GetRandomIdleAction();
+                    // 胶水 2026-08-17：选中与当前相同动作时重选一次（旧逻辑直接放弃 → 到点不切，观感「动画不切换」）
+                    if (randomAction == _currentAction)
+                    {
+                        var (retryAction, retryMode) = GetRandomIdleAction();
+                        if (retryAction != null && retryAction != _currentAction)
+                        {
+                            randomAction = retryAction;
+                            randomMode = retryMode;
+                        }
+                    }
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction} 模式={randomMode}");
@@ -665,6 +680,12 @@ namespace MiniPet.Services
                     {
                         continue;
                     }
+                    // mob 路径（胶水 2026-08-17）：say/regen/attack1 等展示动作也进空闲池（OneShot 播完自动回 stand）
+                    if (paperdoll == null && IsMobIdleShowAction(a) && !IsLoopAction(a))
+                    {
+                        loopPool.Add(a);
+                        continue;
+                    }
                     if (IsLoopAction(a))
                     {
                         loopPool.Add(a);
@@ -788,6 +809,27 @@ namespace MiniPet.Services
                 return true;
             }
             return action.StartsWith("stand", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>mob 空闲随机候选（胶水 2026-08-17 修复 mob 永不自动切换）：
+        /// mob 动作不在 _animDefs，IsLoopAction 对 regen/say/attack1 等全返回 false →
+        /// 旧 mob 空闲池 = {stand}，排除当前动作后池空 → GetRandomAction 恒 null → 永不切换。
+        /// mob 特化：stand* 之外的「安全 OneShot 展示动作」（say/regen/attack/skill/lift 等）
+        /// 也进候选——播完由 Tick OneShot 完成回调自动回 stand，不会卡死。
+        /// 排除 die*/hit*/jump*/fly*/move*/walk*（死亡/受击/位移类不进空闲随机）。</summary>
+        private bool IsMobIdleShowAction(string action)
+        {
+            if (action.StartsWith("die", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("hit", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("jump", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("fly", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("move", StringComparison.OrdinalIgnoreCase)
+                || action.StartsWith("walk", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            // stand* 是 Loop 回环主体；其余（say/regen/attack1/skill1/lift…）按 OneShot 展示
+            return true;
         }
 
         /// <summary>
