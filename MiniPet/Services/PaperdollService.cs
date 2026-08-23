@@ -49,7 +49,10 @@ public class PaperdollService : IEntityFrameProvider
 
     // zmap
     private List<string>? _zmapCache;
-    private readonly Dictionary<string, int> _zmapIndex = new();
+    // 胶水 2026-08-17 修复「猩红利刃等武器渲染失败」：_zmapIndex 原为普通 Dictionary，
+    // ResolvePrepLayer 在渲染线程动态写新层（L1618）与后台预热/离线构建线程的 GetZmapTopToBottom
+    // 重建索引（L1935）并发 → 字典状态损坏 → RenderFrame 抛「non-concurrent collections」→ 部件渲染中断。
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _zmapIndex = new();
 
     // 缓存（ConcurrentDictionary：后台预热/离线构建与 UI 帧合成并发安全，防抖动/竞态）
     private readonly ConcurrentDictionary<string, List<(string Category, string Root)>> _rootCache = new();
@@ -271,6 +274,25 @@ public class PaperdollService : IEntityFrameProvider
         return requested;
     }
 
+    /// <summary>逻辑动作名 → 实际动作（按传入外观 a 的武器单/双手选 stand1/2、walk1/2；不依赖 _current，
+    /// 预览草稿外观与主窗口当前外观解耦）。胶水 2026-08-18：预览姿势默认 stand 自动解析。</summary>
+    private string ResolveLogicalAction(CharacterAppearance a, string requested)
+    {
+        if (string.IsNullOrEmpty(requested)) { return requested; }
+        string bodyRoot = BodyRoot(a);
+        bool Has(string act) => GetActionFrameCount(bodyRoot, act) > 0;
+        if (Has(requested)) { return requested; }
+        if (requested == "stand" || requested == "walk")
+        {
+            bool twoHand = IsTwoHandWeapon(a.Weapon?.Id);
+            string primary = (requested == "stand" ? "stand" : "walk") + (twoHand ? "2" : "1");
+            if (Has(primary)) { return primary; }
+            string alt = (requested == "stand" ? "stand" : "walk") + (twoHand ? "1" : "2");
+            if (Has(alt)) { return alt; }
+        }
+        return requested;
+    }
+
     /// <summary>双手武器（141-146 双手剑/斧/钝器、170 枪）→ 用 stand2/walk2 变体。</summary>
     private static bool IsTwoHandWeapon(string? weaponId)
     {
@@ -474,7 +496,25 @@ public class PaperdollService : IEntityFrameProvider
             }
 
             string framePath = $"{root}/{renderAction}/{renderFrame}";
-            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) continue;
+            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null))
+            {
+                // 胶水 2026-08-18 修复「摄魂之剑渲染失败」：多皮肤武器 img 顶层是编号目录（如 01703683.img
+                // 下挂 30/49 皮肤目录，动作在其中：30/stand1/0/weapon），直接查 {root}/{action} 落空 →
+                // 整个武器被跳过（不画）。下钻：img 下第一个含该动作的编号目录（30 优先 49，皮肤序）。
+                string? skinDir = null;
+                foreach (var sub in _wz.GetFramePieceNames(root))
+                {
+                    if (!int.TryParse(sub, out _)) { continue; }
+                    if (_wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/{sub}/{renderAction}") != null))
+                    {
+                        skinDir = sub;
+                        break;
+                    }
+                }
+                if (skinDir == null) { continue; }
+                framePath = $"{root}/{skinDir}/{renderAction}/{renderFrame}";
+                if (!_wz.WithWzLock(() => _wz.FindNodeByPath(framePath) != null)) { continue; }
+            }
 
             string itemId = GetCategoryItemId(a, category);
             foreach (var pieceName in _wz.GetFramePieceNames(framePath))
@@ -790,6 +830,10 @@ public class PaperdollService : IEntityFrameProvider
     /// </summary>
     private (string Action, int Frame) ResolveRenderAction(CharacterAppearance a, string action, int frame)
     {
+        // 胶水 2026-08-18：逻辑动作名解析（stand/walk → 单/双手 stand1/stand2/walk1/walk2）——
+        // 预览姿势默认传 stand（用户要求不硬编码 stand1），由武器类型自动选姿势。
+        // 注意用传入外观 a 的武器判定（_current 可能是另一外观，预览草稿 vs 主窗口当前）。
+        action = ResolveLogicalAction(a, action);
         var (rAct, rFrame) = ResolveChairRender(a, action, frame);
         string rideAct = ResolveRideAction(a, rAct);
         if (rideAct != rAct)
@@ -1745,7 +1789,10 @@ public class PaperdollService : IEntityFrameProvider
         string key = $"{hash}|{action}";
         if (_boundsCache.TryGetValue(key, out var cached)) return cached;
 
-        int frameCount = GetActionFrameCount(BodyRoot(a), action);
+        // 胶水 2026-08-18：逻辑动作名（stand/walk）先解析到实际动作（stand1/2）再查帧数——
+        // 原直接 GetActionFrameCount(body, "stand") = 0 → bounds 0x0 → 渲染 FAIL（bounds 不走 ResolveRenderAction）。
+        string actualAction = ResolveLogicalAction(a, action);
+        int frameCount = GetActionFrameCount(BodyRoot(a), actualAction);
         int minX = 0, minY = 0, maxX = 0, maxY = 0;
         for (int f = 0; f < frameCount; f++)
         {

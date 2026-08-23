@@ -34,12 +34,14 @@ public partial class SettingsWindow
     private int _previewSeq;
     /// <summary>「✅ 应用到主窗口」按钮（点击后禁用 + 合成中文案，PetWindow 后台构建完成回调恢复）。</summary>
     private Button? _applyMainBtn;
-    /// <summary>纸娃娃预览当前动作（动作切换按钮组点选后按该动作合成）。</summary>
-    private string _paperdollPreviewAction = "stand1";
-    /// <summary>纸娃娃预览固定动作集（显示名 → 动作名，对齐 REVIEW-FINDINGS 九-C）。</summary>
+    /// <summary>纸娃娃预览当前动作（动作切换按钮组点选后按该动作合成）。
+    /// 胶水 2026-08-18：默认 stand（逻辑名，CompositeFrame 内解析单/双手 stand1/stand2），不硬编码 stand1。</summary>
+    private string _paperdollPreviewAction = "stand";
+    /// <summary>纸娃娃预览固定动作集（显示名 → 动作名，对齐 REVIEW-FINDINGS 九-C）。
+    /// 胶水 2026-08-18：站立/行走用逻辑名 stand/walk（按武器单双手自动选 stand1/stand2）。</summary>
     private static readonly (string Label, string Action)[] PaperdollPreviewActions =
     {
-        ("站立", "stand1"), ("行走", "walk1"), ("跳跃", "jump"), ("攻击", "swingOF"), ("警戒", "alert"),
+        ("站立", "stand"), ("行走", "walk"), ("跳跃", "jump"), ("攻击", "swingOF"), ("警戒", "alert"),
     };
     /// <summary>装备按钮边框闪烁计时器（素材选件应用后的短暂高亮反馈，0.6s 还原）。</summary>
     private DispatcherTimer? _flashTimer;
@@ -230,6 +232,17 @@ public partial class SettingsWindow
     {
         var content = new StackPanel { Margin = new Thickness(10), Spacing = 8 };
 
+        // 胶水 2026-08-18：预览/应用到主窗口放在侧栏最顶部（「新建/保存」之上）
+        var applyBtn = new Button { Content = "预览", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 0, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(applyBtn);
+        applyBtn.Click += (_, _) => { try { SyncPaperdollFromInputs(); UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPaperdoll: {ex.Message}"); } };
+        content.Children.Add(applyBtn);
+
+        _applyMainBtn = new Button { Content = "✅ 应用到主窗口", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 4, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
+        UiStyle.ApplyHover(_applyMainBtn);
+        _applyMainBtn.Click += (_, _) => { try { ApplyPaperdoll(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyMain: {ex.Message}"); } };
+        content.Children.Add(_applyMainBtn);
+
         content.Children.Add(new TextBlock { Text = "📋 预设管理", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = BrushTxtDim, Margin = new Thickness(4, 0, 0, 0) });
         var presetBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         presetBtnRow.Children.Add(MakePrimaryBtn("新建", () => NewPaperdollPreset()));
@@ -353,16 +366,6 @@ public partial class SettingsWindow
         content.Children.Add(dyeBtn);
 
         content.Children.Add(MakeSmallBtn("🧩 打开素材库", OpenPaperdollMaterialBrowser));
-
-        var applyBtn = new Button { Content = "预览", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = new SolidColorBrush(InputBorder), Foreground = BrushTxtSecondary, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 6, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
-        UiStyle.ApplyHover(applyBtn);
-        applyBtn.Click += (_, _) => { try { SyncPaperdollFromInputs(); UpdatePaperdollPreview(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPaperdoll: {ex.Message}"); } };
-        content.Children.Add(applyBtn);
-
-        _applyMainBtn = new Button { Content = "✅ 应用到主窗口", FontSize = 11, FontWeight = FontWeight.Medium, Padding = new Thickness(0, 8), Background = BrushAccent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 4, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
-        UiStyle.ApplyHover(_applyMainBtn);
-        _applyMainBtn.Click += (_, _) => { try { ApplyPaperdoll(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyMain: {ex.Message}"); } };
-        content.Children.Add(_applyMainBtn);
 
         // 用默认外观填充输入框
         SyncInputsFromPaperdoll();
@@ -907,7 +910,7 @@ public partial class SettingsWindow
                 {
                     if (!_wzService.IsLoaded) { return; }
                     var png = _paperdollSvc.CompositeFrame(snapshot, previewAction, 0);
-                    if (png == null) { png = _paperdollSvc.CompositeFrame(snapshot, "stand1", 0); }
+                    if (png == null) { png = _paperdollSvc.CompositeFrame(snapshot, "stand", 0); }
                     if (png == null) { return; }
                     Dispatcher.UIThread.Post(() =>
                     {

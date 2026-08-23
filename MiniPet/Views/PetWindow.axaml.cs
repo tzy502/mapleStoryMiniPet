@@ -506,9 +506,8 @@ public partial class PetWindow : Window
             if (data == null) { return; } // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
             Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
-            // 胶水 2026-08-17：随机气泡显示 6s 后自动隐藏（旧实现 autoHide=null 常驻不消失，
-            // 下一条气泡到来前一直挂着 →「气泡一直出现没有隐藏」）
-            await _balloonService.Show(line, data, durationMs: 6000);
+            // 胶水 2026-08-19：随机气泡显示 15s 后自动隐藏（原 6s；调度期望 1min/条，显示期占 ~25%）
+            await _balloonService.Show(line, data, durationMs: 15000);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
         finally
@@ -527,8 +526,8 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonSilentRound = _rng.Next(100) < 60; // 60% 静默轮（无气泡空窗为主）
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(8, 21));
+            _balloonSilentRound = _rng.Next(100) < 40; // 40% 静默轮
+            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(30, 43)); // 30~42s（胶水 2026-08-19：期望约 1 分钟一条——均值 36s ÷ 60% 出泡率 = 60s）
             _balloonTimer.Stop();
             _balloonTimer.Start();
         }
