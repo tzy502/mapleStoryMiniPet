@@ -177,13 +177,16 @@ public partial class SettingsWindow : Window
     private Border? _balloonPreviewCanvas;
 
 
-    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc, BalloonService balloonSvc)
+    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc, BalloonService balloonSvc, MusicCatalogService musicCatalog, MusicPlayerService musicPlayer)
     {
         _config = config;
         _wzService = wzService;
         _paperdollSvc = paperdollSvc;
         _mapSvc = mapSvc;
         _balloonService = balloonSvc;
+        // 音乐模块服务（V0.2.0，A4 接线：PetWindow 从 App 容器获取后透传；末尾追加参数，现有调用方顺序不动）
+        _musicCatalog = musicCatalog;
+        _musicPlayer = musicPlayer;
         _settings = _config.LoadSettings();
         _wzConfig = _config.LoadWzConfig();
         _isDarkMode = _settings.Theme != "light";
@@ -262,6 +265,9 @@ public partial class SettingsWindow : Window
         {
             _statusBarText.Text = "⚠️ WZ 未配置或加载失败 — 请先点击 ⚙️ WZ 配置 设置路径并保存";
         }
+
+        // 音乐 tab：订阅播放服务事件（一律 Post 到 UI 线程）+ 初始控件同步（服务字段在构造函数开头已赋值）
+        InitMusic();
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)
@@ -273,9 +279,28 @@ public partial class SettingsWindow : Window
             _previewAnimTimer.Stop();
             _petSearchDebounce.Stop();
             _balloonSearchDebounce.Stop();
+            // 音乐 tab：隐藏即停表（进度条三条件之「窗口可见」丢失；IsVisible 变化事件亦会兜底停）
+            _musicSearchDebounce.Stop();
+            _musicProgressTimer.Stop();
             Hide();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OnClosing: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 打开设置中心并切到音乐 tab（PetWindow 右键菜单「🎵 音乐」入口，设计 §11.9；A4 接线调用）。
+    /// 已在音乐 tab 时 SwitchMainTab 早退，故再兜底调 OnMusicTabActivated 触发懒加载与进度条三条件重估。
+    /// </summary>
+    public void OpenMusicTab()
+    {
+        try
+        {
+            Show();
+            Activate();
+            SwitchMainTab(MusicTabIndex);
+            OnMusicTabActivated();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OpenMusicTab: {ex.Message}"); }
     }
 
     private Panel BuildTitleBar()
@@ -308,7 +333,7 @@ public partial class SettingsWindow : Window
     private Panel BuildMainTabBar()
     {
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 0, 14, 0) };
-        var tabs = new[] { "📦 桌宠设置", "🔗 AI 设置", "💬 对话记录" };
+        var tabs = new[] { "📦 桌宠设置", "🔗 AI 设置", "💬 对话记录", "🎵 音乐" };
         for (int i = 0; i < tabs.Length; i++)
         {
             var idx = i;
@@ -336,6 +361,11 @@ public partial class SettingsWindow : Window
         pane2.IsVisible = false;
         _mainPanes.Add(pane2);
         grid.Children.Add(pane2);
+        // 第 4 个顶层 tab：🎵 音乐（SettingsWindow.Music.cs partial 构建；懒加载在 OnMusicTabActivated 触发）
+        var pane3 = BuildMusicPane();
+        pane3.IsVisible = false;
+        _mainPanes.Add(pane3);
+        grid.Children.Add(pane3);
 
         // 底部状态栏
         var statusBar = new Border
@@ -946,6 +976,12 @@ public partial class SettingsWindow : Window
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] LoadPetListFromWz: {ex.Message}"); }
                 // 通知 PetWindow 重载当前宠物
                 OnWzRefreshed?.Invoke();
+                // 音乐 tab：WZ 状态变化后重估灰占位；正停在音乐 tab 且目录未建则触发懒加载
+                UpdateMusicWzState();
+                if (_activeMainTab == MusicTabIndex)
+                {
+                    OnMusicTabActivated();
+                }
             }
             else
             {
@@ -1000,7 +1036,7 @@ public partial class SettingsWindow : Window
 
     private void SwitchMainTab(int index)
     {
-        try { if (_activeMainTab == index) return; _activeMainTab = index; for (int i = 0; i < _mainTabHeaders.Count; i++) { _mainTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim; _mainPanes[i].IsVisible = i == index; } }
+        try { if (_activeMainTab == index) return; _activeMainTab = index; for (int i = 0; i < _mainTabHeaders.Count; i++) { _mainTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim; _mainPanes[i].IsVisible = i == index; } if (index == MusicTabIndex) { OnMusicTabActivated(); } else { UpdateMusicProgressTimer(); } }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SwitchMainTab: {ex.Message}"); }
     }
 

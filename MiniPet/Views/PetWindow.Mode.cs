@@ -208,8 +208,10 @@ public partial class PetWindow
                         _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                         _mapViewportWindow.Show();
                         RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
-                        s.MapMode = 2;
-                        _configService.SaveSettings(s);
+                        // PLAN 步骤 8：async gap 前捕获的旧 settings 快照（方法开头的 s）不再整对象回存——
+                        // 改为 Update 事务（锁内读最新配置只改 MapMode，不覆盖期间其他字段的并发修改，
+                        // 如音乐 PlayHistory 高频写入；改动语义与原 s.MapMode = 2 完全一致）
+                        _configService.Update(cfg => { cfg.MapMode = 2; });
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CameraMode Show: {ex.Message}"); }
                 });
@@ -286,6 +288,11 @@ public partial class PetWindow
             s.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = sel.Name, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
             if (s.MapHistory.Count > 10) s.MapHistory = s.MapHistory.Take(10).ToList();
             _configService.SaveSettings(s);
+            // 场景联动（F17，设计 §11.10）：地图切换成功后通知音乐服务（fire-and-forget 后台任务，
+            // 内部自判 SceneLinkEnabled 开关——联动关/无 BGM/同曲跨图 均 no-op 保持当前播放不断曲）。
+            // 挂载点在方法成功路径尾部：上方 LoadMap 失败早退（map == null return）与 try 内异常均不经过此处，
+            // 图没切成不换歌。
+            _ = _musicService.OnMapChanged(sel.Id);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyMapSelection: {ex.Message}"); }
     }

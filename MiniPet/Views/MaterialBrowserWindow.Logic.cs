@@ -946,8 +946,10 @@ public partial class MaterialBrowserWindow
                 }
                 // 2026-08-16：同名直接覆盖（用户要求「保存搭配是覆盖不是新增」）；
                 // 原逻辑 ContainsKey 时直接关闭不保存——同名存档无法更新
-                cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
-                _configService!.SaveSettings(cfg);
+                // V0.2.0：改走 ConfigService.Update 事务（锁内重读最新配置再改写）——
+                // 模态对话框期间提交的音乐等并发持久化不再被对话框前捕获的旧 cfg 整对象覆盖
+                var draft = CloneDraft(_draftAppearance);
+                _configService!.Update(s => { s.SavedPaperdolls[name] = draft; });
                 RefreshOutfitList();
                 win.Close();
             }

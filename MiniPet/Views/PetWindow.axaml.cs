@@ -31,6 +31,9 @@ public partial class PetWindow : Window
     private readonly PaperdollService _paperdoll;
     private readonly MapService _mapService;
     private readonly CacheManager _cacheManager;
+    // 音乐模块 V0.2.0（F15-F17）：目录服务（透传给 SettingsWindow 音乐 tab）+ 播放编排服务（气泡/菜单/场景联动挂钩）
+    private readonly MusicCatalogService _musicCatalog;
+    private readonly MusicPlayerService _musicService;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
@@ -89,8 +92,11 @@ public partial class PetWindow : Window
     private bool _balloonWasVisibleBeforeHide;  // 隐藏到托盘前气泡是否可见（恢复时跟随显示，Y7）
     // A15：已登记的 EventBus 订阅（窗口销毁时统一退订——匿名 lambda 无法单独退订）
     private readonly List<(EventType Type, Action<object?> Handler)> _eventSubscriptions = new();
+    // 音乐模块 V0.2.1：pet:moved 发布节流状态——上次已发布的窗口位置 + 上次发布时间戳（Environment.TickCount64，10Hz gate）
+    private PixelPoint? _petMovedLastSent;
+    private long _petMovedLastMs;
 
-    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager)
+    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager, MusicCatalogService musicCatalog, MusicPlayerService musicService)
     {
         _configService = configService;
         _wzService = wzService;
@@ -103,6 +109,8 @@ public partial class PetWindow : Window
         _animService.RegisterFrameProvider(paperdoll); // 纸娃娃实时合成（ADR-0005）；Mob/NPC 走图条
         _mapService = mapService;
         _cacheManager = cacheManager;
+        _musicCatalog = musicCatalog;
+        _musicService = musicService;
         _backgroundWindow = new BackgroundWindow();
         _backgroundWindow.RequestHide += () => Dispatcher.UIThread.Post(() => { _backgroundWindow.HideMap(); _backgroundWindow.Hide(); RaisePet(); });
         _backgroundWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
@@ -197,7 +205,7 @@ public partial class PetWindow : Window
         // 气泡窗口独立跟随固定锚点，动画切换位置不动）
         _balloonWindow = new BalloonWindow();
         ContextMenu = BuildContextMenu();
-        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); };
+        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMusicMenuItem(); RefreshMiniBarMenuItem(); };
         SetupDragEvents();
 
         // 帧循环：30fps 轮询（预裁剪帧缓存 + 追帧，多帧动画顺滑）
@@ -214,9 +222,10 @@ public partial class PetWindow : Window
 
         // 动画启动由 LoadDefaultPet 控制（WZ 加载后或缓存命中后）
 
-        // 托盘集成
+        // 托盘集成（音乐模块 V0.2.1：先注入音乐服务再建托盘，托盘菜单首建即带音乐快捷分组）
         try
         {
+            _trayService.SetMusicService(_musicService);
             _trayService.SetMainWindow(this);
             _trayService.ShowTrayIcon();
         }
@@ -330,6 +339,22 @@ public partial class PetWindow : Window
         // 桌宠缩放：启动读 WindowScale，订阅配置变更实时跟随（设置中心拖动滑块即生效）
         try { var sc = _configService.LoadSettings().WindowScale; _scale = sc > 0 ? sc : 1.0; } catch { _scale = 1.0; }
         _configService.OnSettingsChanged += s => { try { _scale = s.WindowScale > 0 ? s.WindowScale : 1.0; } catch { } };
+
+        // 音乐模块 V0.2.0（设计 §11.8）：换曲气泡——CurrentChanged 即换曲事件（用户点播/自动续播/场景联动），
+        // 可能从后台线程触发，经 Dispatcher.UIThread.Post 切回 UI 线程后走现有气泡链路（ShowBalloonNow）弹
+        // 「🎵 曲名」；track==null 忽略；启动恢复是静默预选不发 CurrentChanged（不出启动气泡，PLAN 步骤 7）。
+        _musicService.CurrentChanged += track =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    if (track == null) { return; }
+                    _ = ShowBalloonNow($"🎵 {track.Track}");
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MusicBalloon: {ex.Message}"); }
+            });
+        };
     }
 
     /// <summary>EventBus 订阅登记（A15：窗口销毁时统一退订；匿名 lambda 无法单独退订）。</summary>
@@ -932,8 +957,39 @@ public partial class PetWindow : Window
             }
             // 状态文字只显示动作名（去掉原调试用 tick 计数）
             _infoText.Text = _animService.GetCurrentAction();
+
+            // 音乐模块 V0.2.1：宠物位置哨兵（pet:moved）——帧尾统一比对发布，
+            // 拖拽 / 释放绝对定位 / 动画 origin 补偿与落地 / 重置桌面中央（含托盘菜单路径）/
+            // 摄像机模式落地（PetWindow.Mode.cs）等一切改 Position 的路径都在此被捕获
+            PublishPetMovedThrottled();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 发布宠物桌面位置变化 pet:moved（V0.2.1 迷你控制条跟随契约）：EventBus 通道 MiniPetEvents.PetMoved，
+    /// payload = (double X, double Y) 窗口左上角桌面像素坐标。OnTimerTick 每帧尾部调用做位置哨兵——
+    /// 与上次已发布坐标一致零开销跳过；有变化时限速 10Hz（100ms gate），gate 窗口内的变更不丢弃
+    /// （每帧复查坐标差，停稳后的最终位置必然在下帧补发）。try-catch 保护不影响主流程。
+    /// </summary>
+    private void PublishPetMovedThrottled()
+    {
+        try
+        {
+            var now = Environment.TickCount64;
+            if (_petMovedLastSent.HasValue && _petMovedLastSent.Value == Position)
+            {
+                return; // 无变化不发（30fps 轮询下的常态快路径）
+            }
+            if (now - _petMovedLastMs < 100)
+            {
+                return; // 10Hz 节流：窗口期暂缓（下帧仍不一致时补发）
+            }
+            _petMovedLastMs = now;
+            _petMovedLastSent = Position;
+            _eventBus.Publish(MiniPetEvents.PetMoved, (X: (double)Position.X, Y: (double)Position.Y));
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetMovedPublish: {ex.Message}"); }
     }
 
     /// <summary>
@@ -1061,14 +1117,18 @@ public partial class PetWindow : Window
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollWarmup: {ex.Message}"); }
                     _paperdoll.SetAppearance(appearance); // 切换外观清依赖外观缓存；引用赋值原子，帧循环安全
                     // 持久化当前搭配（启动恢复）+ 构建离线精灵图条（WZ 断线兜底）
+                    // PLAN 步骤 8：Task.Run 内「LoadSettings→改→SaveSettings」整对象读改写迁移到 Update 事务
+                    // （序列化锁内「读→改→写」+ 派发 UI 线程与设置窗口整对象回存同线程串行化，
+                    // 消除与音乐 PlayHistory 高频写入的「缓存读↔整存」碰撞窗口；字段改动语义不变）
                     try
                     {
-                        var s = _configService.LoadSettings();
-                        s.CurrentMobId = PaperdollService.SentinelMobId;
-                        s.CurrentEntityType = "player";
-                        s.CurrentPaperdoll = appearance;
-                        _configService.SaveSettings(s);
-                        Console.WriteLine($"[PetWindow] Paperdoll 持久化成功: CurrentMobId={s.CurrentMobId} CurrentPaperdoll={(s.CurrentPaperdoll != null ? $"有 {s.CurrentPaperdoll.Hair?.Id}" : "无")}");
+                        _configService.Update(s =>
+                        {
+                            s.CurrentMobId = PaperdollService.SentinelMobId;
+                            s.CurrentEntityType = "player";
+                            s.CurrentPaperdoll = appearance;
+                        });
+                        Console.WriteLine("[PetWindow] Paperdoll 持久化已提交(Update 事务)");
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollSave 失败: {ex}"); }
                     try { _paperdoll.BuildOfflineStrips(); }
@@ -1202,7 +1262,8 @@ public partial class PetWindow : Window
             // 此前每次重开都 new 一个新实例 → 旧窗口泄露（_config.OnSettingsChanged 订阅/事件处理器不释放，逐次堆积）。            // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
             if (_settingsWindow == null)
             {
-                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService, _balloonService);
+                // 音乐模块 V0.2.0：末尾透传音乐目录/播放服务（A5 契约：现有参数保持在前，追加两个音乐参数）
+                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService, _balloonService, _musicCatalog, _musicService);
                 _settingsWindow.OnPetApplied += (id, name, type) =>
                 {
                     try { SwitchToPet(id, name, type); }

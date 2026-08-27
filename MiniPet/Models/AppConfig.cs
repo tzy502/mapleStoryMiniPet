@@ -49,6 +49,8 @@ namespace MiniPet.Models
         public Dictionary<string, CharacterAppearance> SavedPaperdolls { get; set; } = new Dictionary<string, CharacterAppearance>();
         // Agent 接入（Hermes / Claude Code / Codex 状态订阅 + 通用特效层）
         public AgentIntegrationConfig AgentIntegration { get; set; } = new AgentIntegrationConfig();
+        /// 音乐模块设置（V0.2.0）：旧配置无 music 字段时反序列化安全落默认值 new MusicConfig()。
+        public MusicConfig Music { get; set; } = new();
     }
 
     /// <summary>

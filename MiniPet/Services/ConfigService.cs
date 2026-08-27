@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
+using Avalonia.Threading;
 using MiniPet.Models;
 
 namespace MiniPet.Services
@@ -142,6 +143,55 @@ namespace MiniPet.Services
                 catch (IOException)
                 {
                     // 忽略写入错误
+                }
+            }
+        }
+
+        /// <summary>
+        /// 原子更新设置（音乐模块 V0.2.0 高频持久化入口，如每次切曲写 LastTrackKey/PlayHistory）：
+        /// 「读取最新配置 → mutate 修改（含 Music 子对象）→ 整体回存」整个事务在现有 _lock 序列化锁内
+        /// 完成，消除读改写撕裂；且最终在 UI 线程（Avalonia Dispatcher.UIThread）上执行——与设置窗口
+        /// 「缓存 _settings 引用后整对象回存」的既有写入点同线程串行化，闭合「缓存读↔整存」区间内的插入提交。
+        /// 线程语义：已在 UI 线程则内联同步执行；否则派发到 UI 线程异步执行（尽力而为，不阻塞调用方）。
+        /// mutate 内异常或 IO 异常记 Console.Error 不上抛（尽力而为持久化，不影响调用方流程）。
+        /// </summary>
+        /// <param name="mutate">对最新 PetSettings 的修改委托（在 UI 线程 + _lock 锁内执行）。</param>
+        public void Update(Action<PetSettings> mutate)
+        {
+            // 事务体：锁内完成 读→改→写（Monitor 可重入，嵌套调用 LoadSettings/SaveSettings 无死锁）
+            void RunTransaction()
+            {
+                lock (_lock)
+                {
+                    try
+                    {
+                        var settings = LoadSettings();
+                        mutate(settings);
+                        SaveSettings(settings);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[ConfigService] Update: {ex.Message}");
+                    }
+                }
+            }
+
+            var ui = Dispatcher.UIThread;
+            if (ui.CheckAccess())
+            {
+                // 已在 UI 线程：内联同步执行
+                RunTransaction();
+            }
+            else
+            {
+                // 非 UI 线程：派发到 UI 线程（与设置窗口整对象回存写入点串行化）；派发失败（如关闭中）仅记录
+                try
+                {
+                    ui.InvokeAsync(RunTransaction);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ConfigService] Update 派发失败: {ex.Message}");
                 }
             }
         }

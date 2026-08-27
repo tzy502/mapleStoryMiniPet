@@ -68,6 +68,18 @@ public partial class App : Application
         // AnimService 用 Singleton：PetWindow 与 EffectLayerService 共享同一实例
         // （app 单 PetWindow，等价 Transient；改单例才能让 EffectLayer 的 IActionDriver 注入命中同一实例）
         services.AddSingleton<AnimService>();
+        // 音乐模块 V0.2.0（F15-F17）：BASS 播放器（长生命周期单例，Bass.Init 懒初始化在首次 Prepare）+
+        // 目录服务 + 播放编排服务。IMusicPlayer 与 BassMusicPlayer 指向同一实例（接口注册转发）；
+        // MusicCatalogService 依赖 WzService，MusicPlayerService 依赖 WzService + MusicCatalogService +
+        // IMusicPlayer + ConfigService，均可自动解析。释放：现有退出路径全部 Environment.Exit(0) 硬退
+        // （BASS 流随进程回收，PLAN 步骤 8 声明；与其他单例服务同样不走容器 dispose，保持现状一致）。
+        services.AddSingleton<BassMusicPlayer>();
+        services.AddSingleton<IMusicPlayer>(sp => sp.GetRequiredService<BassMusicPlayer>());
+        services.AddSingleton<MusicCatalogService>();
+        services.AddSingleton<MusicPlayerService>();
+        // 音乐迷你控制条（V0.2.1 增量②）：单例窗口，构造注入 MusicPlayerService/EventBus/ConfigService
+        // 自动解析；显隐自评驱动 Show/Hide，退出 Environment.Exit 硬退不走容器 dispose（与音乐服务同策略）
+        services.AddSingleton<MusicMiniBarWindow>();
         services.AddTransient<PetWindow>();
         _serviceProvider = services.BuildServiceProvider();
 
@@ -88,6 +100,14 @@ public partial class App : Application
             }
             catch (Exception ex) { Console.Error.WriteLine($"[App] 缓存注入: {ex.Message}"); }
             var petWindow = desktop.MainWindow as PetWindow;
+
+            // 音乐迷你控制条（V0.2.1 增量②）：注册即实例化挂订阅（单例解析一次，之后由显隐自评
+            // 决定 Show/Hide）；构造/订阅任何失败仅 stderr 不影响主流程（不崩溃不弹模态）
+            try
+            {
+                _ = _serviceProvider.GetRequiredService<MusicMiniBarWindow>();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[App] MiniBar init: {ex.Message}"); }
 
             // ===== Agent 接入链装配（PLAN-agent-integration.md §1/§3）=====
             // 数据流：adapter(Hermes/CC/Codex) → EventBus(AgentStateChanged) → Aggregator

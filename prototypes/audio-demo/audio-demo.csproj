@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BASS Darwin arm64 闸门 demo（PLAN Rev 6 步骤 5 集成闸门）：
+       验证 ManagedBass 3.1.1 + libbass.dylib 在 macOS arm64 的 Init/建流/播放/Seek/音量/END SYNC/换流/错误码。
+       同时链接编译正式模块 IMusicPlayer.cs / BassMusicPlayer.cs（语法与类型自洽的编译自检）。
+       ⚠️ 本工程只许原型验证用，产物不进 MiniPet 主工程（MiniPet.csproj 由集成者统一改）。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>AudioDemo</RootNamespace>
+    <AssemblyName>audio-demo</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ManagedBass" Version="3.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 链接编译正式模块（编译自检：demo 与主工程共用同一份源码） -->
+    <Compile Include="../../MiniPet/Services/IMusicPlayer.cs" Link="Linked/IMusicPlayer.cs" />
+    <Compile Include="../../MiniPet/Services/BassMusicPlayer.cs" Link="Linked/BassMusicPlayer.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WZ 提取验证（b 项）复用主工程自带 WzLib -->
+    <Reference Include="WzComparerR2.WzLib">
+      <HintPath>../../MiniPet/lib/WzComparerR2.WzLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 原生库按构建平台拷贝（$([MSBuild]::IsOSPlatform(...)) 条件，非 RID 条件——项目无 RuntimeIdentifier） -->
+    <None Include="../../MiniPet/lib/audio/libbass.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+      <Link>libbass.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="../../MiniPet/lib/audio/bass.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+      <Link>bass.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- 哈希校验 target 实测原型（集成到 MiniPet.csproj 时把 ../../MiniPet 改为项目根相对路径）：
+       对落盘二进制做 SHA-256 比对，不匹配即编译失败（闭源原生码防静默替换，PLAN 步骤 1）。
+       ⚠️ MSBuild 内置 Hash 任务哈希的是 item 字符串而非文件内容，必须用内联 C# task 读文件流。 -->
+  <UsingTask TaskName="BassFileHash" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <FilePath ParameterType="System.String" Required="true" />
+      <Hash ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+        using (var sha = SHA256.Create())
+        using (var fs = System.IO.File.OpenRead(FilePath))
+        {
+            Hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "").ToLowerInvariant();
+        }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="VerifyBassNativeBinaries" AfterTargets="Build">
+    <ItemGroup>
+      <BassNative Include="$(OutDir)libbass.dylib" Condition="Exists('$(OutDir)libbass.dylib')">
+        <Expected>e81fb7b4d0009ba6343fbfcd840620704dcb840686d405b9734cd37150d31974</Expected>
+      </BassNative>
+      <BassNative Include="$(OutDir)bass.dll" Condition="Exists('$(OutDir)bass.dll')">
+        <Expected>febb2cf1882d554c3a958280777da0b69f07de6e262df271de11c56e4a54afd4</Expected>
+      </BassNative>
+    </ItemGroup>
+    <Message Text="校验 BASS 原生库哈希: %(BassNative.Identity)" Importance="normal" />
+    <BassFileHash FilePath="%(BassNative.Identity)">
+      <Output TaskParameter="Hash" PropertyName="BassActualHash" />
+    </BassFileHash>
+    <Error Condition="'$(BassActualHash)' != '' and '$(BassActualHash)' != '%(BassNative.Expected)'"
+           Text="BASS 原生库哈希不匹配: %(BassNative.Identity) 期望 %(BassNative.Expected) 实际 $(BassActualHash) —— 疑似被替换，编译终止" />
+  </Target>
+
+</Project>
