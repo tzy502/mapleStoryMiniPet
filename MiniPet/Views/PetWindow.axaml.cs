@@ -205,7 +205,7 @@ public partial class PetWindow : Window
         // 气泡窗口独立跟随固定锚点，动画切换位置不动）
         _balloonWindow = new BalloonWindow();
         ContextMenu = BuildContextMenu();
-        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMusicMenuItem(); RefreshMiniBarMenuItem(); };
+        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMiniBarMenuItem(); };
         SetupDragEvents();
 
         // 帧循环：30fps 轮询（预裁剪帧缓存 + 追帧，多帧动画顺滑）
@@ -968,9 +968,10 @@ public partial class PetWindow : Window
 
     /// <summary>
     /// 发布宠物桌面位置变化 pet:moved（V0.2.1 迷你控制条跟随契约）：EventBus 通道 MiniPetEvents.PetMoved，
-    /// payload = (double X, double Y) 窗口左上角桌面像素坐标。OnTimerTick 每帧尾部调用做位置哨兵——
-    /// 与上次已发布坐标一致零开销跳过；有变化时限速 10Hz（100ms gate），gate 窗口内的变更不丢弃
-    /// （每帧复查坐标差，停稳后的最终位置必然在下帧补发）。try-catch 保护不影响主流程。
+    /// payload = (double X, double Y) **角色脚底中心**桌面像素坐标（2026-08-27 修订：原发窗口左上角
+    /// 导致控制条叠在角色头部——现纸娃娃取锚点帧底边水平居中，mob/npc 取脚底锚点）。OnTimerTick 每帧
+    /// 尾部调用做位置哨兵——与上次已发布坐标一致零开销跳过；有变化时限速 10Hz（100ms gate），gate
+    /// 窗口内的变更不丢弃（每帧复查坐标差，停稳后的最终位置必然在下帧补发）。try-catch 保护不影响主流程。
     /// </summary>
     private void PublishPetMovedThrottled()
     {
@@ -985,9 +986,23 @@ public partial class PetWindow : Window
             {
                 return; // 10Hz 节流：窗口期暂缓（下帧仍不一致时补发）
             }
+            // 脚底中心换算：与气球「气泡底=头顶」同一坐标系反推——头在窗口顶 → 脚 = Top + 锚点帧高×scale；
+            // 纸娃娃水平居中用锚点帧宽×scale 的一半；mob/npc 的 _balloonAnchorX/Y 本身即脚底中心。
+            double feetX;
+            double feetY;
+            if (IsSentinelActive())
+            {
+                feetX = Position.X + (_anchorFrameW > 0 ? _anchorFrameW * _scale / 2 : 40);
+                feetY = Position.Y + (_anchorFrameH > 0 ? _anchorFrameH * _scale : 80);
+            }
+            else
+            {
+                feetX = _balloonAnchorX;
+                feetY = _balloonAnchorY;
+            }
             _petMovedLastMs = now;
             _petMovedLastSent = Position;
-            _eventBus.Publish(MiniPetEvents.PetMoved, (X: (double)Position.X, Y: (double)Position.Y));
+            _eventBus.Publish(MiniPetEvents.PetMoved, (X: feetX, Y: feetY));
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetMovedPublish: {ex.Message}"); }
     }

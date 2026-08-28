@@ -24,6 +24,12 @@ public static class MiniPetEvents
 
     /// <summary>迷你控制条开关变化（payload = bool 开关最新值）。</summary>
     public const EventType MiniBarChanged = (EventType)101;
+
+    /// <summary>"pet:mouseenter"：鼠标进入桌宠窗口（V0.2.1 迷你控制条悬停显隐用，无 payload 语义）。</summary>
+    public const EventType PetMouseEnter = (EventType)102;
+
+    /// <summary>"pet:mouseleave"：鼠标离开桌宠窗口。</summary>
+    public const EventType PetMouseLeave = (EventType)103;
 }
 
 public class TrayService

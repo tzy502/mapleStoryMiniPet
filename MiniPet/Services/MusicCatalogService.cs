@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MiniPet.Models;
@@ -9,6 +10,11 @@ using WzComparerR2.WzLib;
 
 namespace MiniPet.Services
 {
+    /// <summary>每首曲目收录的有名字关联地图上限（用户口径：凑满 5 个有名字的就不再加，其余下略）。</summary>
+    internal static partial class MusicCatalogLimits
+    {
+        public const int MaxNamedEntriesPerTrack = 5;
+    }
     /// <summary>
     /// 音乐目录服务（设计 §11.2 + PLAN 步骤 4 并发纪律 + V0.2.1 本地源/曲目地图反向索引）：
     /// 纯数据服务，不含播放逻辑。
@@ -60,14 +66,16 @@ namespace MiniPet.Services
         // 当前生效的本地根目录（播放端提取分支读取）；扫描成功更新 / 清除或失败置 null
         private string? _localRoot;
 
-        // ====== 曲目↔地图反向索引（V0.2.1） ======
-        // 发布锁：保护 _reverseIndex/_reverseTask/_reverseGen 三字段
+        // ====== 曲目↔地图反向索引（V0.2.1，2026-08-27 重写：按节点懒查 + 逐图短锁 + 磁盘缓存） ======
+        // 发布锁：保护 _reverseStore/_reversePendingImgs/_reverseScanTask/_reverseGen 四字段
         private readonly object _reverseLock = new();
-        // 已发布的反向索引（trackKey → 引用该曲目的地图列表）；基于 WZ 树，重载时失效重建
-        private Dictionary<string, List<TrackMapRef>>? _reverseIndex;
-        // 单飞构建任务（口径同目录构建）
-        private Task<Dictionary<string, List<TrackMapRef>>>? _reverseTask;
-        // 构建代际：WZ 重载时自增，完成后比对不符不发布
+        // 反向索引存储（trackKey → ≤5 条有名字地图切片 + 其余计数）；WZ 数据基本不变，跨会话磁盘缓存
+        private Dictionary<string, TrackMapSlice> _reverseStore = new(StringComparer.Ordinal);
+        // 待扫描的 BgmXX.img 集合（用户点开分类时逐个入队；防重复排队）
+        private readonly HashSet<string> _reversePendingImgs = new(StringComparer.Ordinal);
+        // 全量增量扫描任务（单飞：首个待查节点触发，一次遍历顺带补齐所有节点）
+        private Task? _reverseScanTask;
+        // 扫描代际：WZ 重载时自增使在途扫描结果作废
         private int _reverseGen;
 
         public MusicCatalogService(WzService wz)
@@ -76,6 +84,9 @@ namespace MiniPet.Services
             // WZ 重载 → 失效缓存与在途任务（WzService 不能反向依赖目录服务避免 DI 成环，故由此订阅；
             // 参数 = 新 WZ 代际号，本服务用自己的 _catalogGen 记代际，事件仅作失效触发）
             _wz.WzReloaded += OnWzReloaded;
+            // 磁盘缓存随构造同步载入（几 MB 内小文件，毫秒级；WZ 数据基本不变故长期有效，
+            // 仅 WZ 重载/手动刷新目录时删除重算——见 ResetReverseIndex）
+            LoadReverseCacheFromDisk();
         }
 
         /// <summary>
@@ -309,58 +320,98 @@ namespace MiniPet.Services
             InvalidateCatalog();
         }
 
-        // ====== 曲目↔地图反向索引 API（V0.2.1） ======
+        // ====== 曲目↔地图反向索引 API（V0.2.1，2026-08-27 重写） ======
+        //
+        // 设计口径（用户 2026-08-27 拍板）：
+        //   ① 只按需查当前选中的 BgmXX 节点——打开音乐 tab 不触发任何扫描（修复全量预扫
+        //      独占 WZ 锁 ~30s 导致的明显卡死）；
+        //   ② 扫描逐图小段拿 _wz.WzLock（拿一张、放锁、再拿下一张），桌宠其它 WZ 操作随时插队；
+        //   ③ 结果磁盘缓存（WZ 数据基本不变），第二次起秒出；WZ 重载/手动刷新目录才删除重算；
+        //   ④ 每曲目最多收录 5 条**有名字**的关联地图（非隐藏优先：无名地图视为隐藏级，
+        //      永不占名额只累计数），超出部分以 moreCount 计，UI 用「下略」代替展示。
+
+        /// <summary>反向索引有增量发布后触发（构建线程任意线程触发，订阅方自行 Dispatcher.UIThread.Post）。</summary>
+        public event Action? ReverseIndexChanged;
 
         /// <summary>
-        /// 反向索引是否已就绪可直接取用（true 时 GetTrackMapsAsync 同步命中）；
-        /// WZ 重载失效期间为 false，直到重建完成。供 UI 决定立即读取还是挂 loading 态。
+        /// 按节点懒查询：确保指定 BgmXX.img（如 "Bgm00.img"）的关联地图数据可用——
+        /// 磁盘缓存/内存已命中则立即返回；否则入队并启动后台增量扫描（单飞，一次遍历顺带补齐所有节点）。
+        /// fire-and-forget 调用即可，进度经 ReverseIndexChanged 事件推送。
         /// </summary>
-        public bool IsReverseIndexReady
+        public void KickTrackMapsForImg(string? imgName)
         {
-            get { lock (_reverseLock) { return _reverseIndex != null; } }
+            if (string.IsNullOrEmpty(imgName) || !_wz.IsLoaded)
+            {
+                return;
+            }
+            lock (_reverseLock)
+            {
+                if (StoreHasImgLocked(imgName) || !_reversePendingImgs.Add(imgName))
+                {
+                    return;
+                }
+            }
+            EnsureScanTask();
         }
 
         /// <summary>
-        /// 曲目 ↔ 地图 反向索引懒加载（V0.2.1）：首次调用触发后台单飞构建并 await 其完成；
-        /// 已就绪同步返回拷贝；WZ 未加载/构建期间 WZ 重载 → InvalidOperationException（不返回脏数据）。
-        /// ⚠️ 首次构建耗时约 30 秒量级（见 BuildReverseIndexCore 注释），长耗时的 kick 应由 UI 以
-        /// fire-and-forget 发起、经 IsReverseIndexReady 轮询就绪后消费。
+        /// 同步读取某曲目的关联地图切片（内存直读不等待）：items ≤5 条有名字地图（城镇优先）；
+        /// moreCount = 未收录的其余地图张数。无任何记录时返回 false（UI 副行整行隐藏）。
         /// </summary>
-        public Task<Dictionary<string, List<TrackMapRef>>> GetTrackMapsAsync(CancellationToken ct = default)
+        public bool TryGetTrackMaps(string? trackKey, out IReadOnlyList<TrackMapRef> items, out int moreCount)
         {
+            if (!string.IsNullOrEmpty(trackKey))
+            {
+                lock (_reverseLock)
+                {
+                    if (_reverseStore.TryGetValue(trackKey, out var slice))
+                    {
+                        items = slice.Items;
+                        moreCount = slice.MoreCount;
+                        return true;
+                    }
+                }
+            }
+            items = Array.Empty<TrackMapRef>();
+            moreCount = 0;
+            return false;
+        }
+
+        /// <summary>存储里是否已有该 img（"BgmXX.img"）名下的任意记录（用于去重入队判断，调用方持 _reverseLock）。</summary>
+        private bool StoreHasImgLocked(string imgName)
+        {
+            string prefix = imgName + "/";
+            foreach (var key in _reverseStore.Keys)
+            {
+                if (key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>保证增量扫描任务在跑（单飞；已结束的任务不复用，重新起一轮覆盖新入队节点）。</summary>
+        private void EnsureScanTask()
+        {
+            Task? toAwait = null;
             lock (_reverseLock)
             {
-                if (_reverseIndex != null)
+                if (_reverseScanTask != null && !_reverseScanTask.IsCompleted)
                 {
-                    return Task.FromResult(CopyReverseIndex(_reverseIndex));
-                }
-                if (_reverseTask != null && !_reverseTask.IsCompleted)
-                {
-                    return _reverseTask;
+                    return;
                 }
                 _reverseGen++;
                 int gen = _reverseGen;
-                var build = BuildReverseIndexGuardedAsync(gen, ct);
-                _reverseTask = build;
-                return build;
+                var pending = new List<string>(_reversePendingImgs);
+                _reversePendingImgs.Clear();
+                _reverseScanTask = Task.Run(() => ScanReverseCore(gen, pending));
+                toAwait = _reverseScanTask;
             }
-        }
-
-        /// <summary>
-        /// 按 trackKey（"BgmXX.img/曲名"）单查该曲目的关联地图列表（V0.2.1 便捷重载）：
-        /// 索引未建时自动 kick 后台单飞构建并等待完成后查询；该曲目无关联地图
-        /// （key 不在索引中）→ 空列表。批量预取建议直接用字典版一次拿全。
-        /// </summary>
-        public async Task<IReadOnlyList<TrackMapRef>> GetTrackMapsAsync(
-            string trackKey, CancellationToken ct = default)
-        {
-            if (string.IsNullOrEmpty(trackKey))
-            {
-                return Array.Empty<TrackMapRef>();
-            }
-            Dictionary<string, List<TrackMapRef>> index =
-                await GetTrackMapsAsync(ct).ConfigureAwait(false);
-            return index.TryGetValue(trackKey, out var list) ? list : Array.Empty<TrackMapRef>();
+            // 异步观察故障防 UnobservedTaskException；实际结果经事件推送
+            toAwait?.ContinueWith(
+                t => Console.Error.WriteLine($"[MusicCatalog] 反向索引扫描收场: {t.Exception?.GetBaseException().Message ?? "完成"}"),
+                TaskScheduler.Default);
         }
 
         // ====== private ======
@@ -480,86 +531,63 @@ namespace MiniPet.Services
         }
 
         /// <summary>
-        /// 反向索引单飞任务体：Task.Run 内持 WZ 锁全量构建，完成后锁内比对启动代际——
-        /// 不符（WZ 已重载）不发布缓存并抛 InvalidOperationException 由 await 侧接收；
-        /// 发布后返回拷贝（调用方与内部状态隔离）。
+        /// 增量扫描核心（后台线程执行）：遍历 Map0..Map9 全部地图 img，**逐图小段拿 _wz.WzLock**
+        /// （拿一张读 info/bgm+town 就放锁，桌宠其它 WZ 操作随时插队——修复旧实现整段独占
+        /// ~30 秒导致的卡死）；聚合遵守 5 名封顶口径（见 AccumulateTrackMap），每个分组收尾
+        /// 增量发布 + 触发事件，整轮结束后落盘缓存。代际不符（WZ 已重载）静默废弃本轮。
         /// </summary>
-        private async Task<Dictionary<string, List<TrackMapRef>>> BuildReverseIndexGuardedAsync(
-            int gen, CancellationToken ct)
+        private void ScanReverseCore(int gen, List<string> pendingImgs)
         {
-            Dictionary<string, List<TrackMapRef>> built =
-                await Task.Run(() => BuildReverseIndexCore(ct), ct).ConfigureAwait(false);
-            lock (_reverseLock)
-            {
-                if (gen != _reverseGen)
-                {
-                    throw new InvalidOperationException("WZ 已重载，反向索引过期");
-                }
-                _reverseIndex = built;
-            }
-            return CopyReverseIndex(built);
-        }
-
-        /// <summary>反向索引深一层拷贝（外壳 + 每条 List 均拷贝；几百 key × 几项，开销可忽略）。</summary>
-        private static Dictionary<string, List<TrackMapRef>> CopyReverseIndex(
-            Dictionary<string, List<TrackMapRef>> source)
-        {
-            var copy = new Dictionary<string, List<TrackMapRef>>(source.Count, StringComparer.Ordinal);
-            foreach (var kv in source)
-            {
-                copy[kv.Key] = new List<TrackMapRef>(kv.Value);
-            }
-            return copy;
-        }
-
-        /// <summary>WZ 重载时清空反向索引 + 废弃在途构建（bump 代际使旧结果不可发布）。</summary>
-        private void ResetReverseIndex()
-        {
-            lock (_reverseLock)
-            {
-                _reverseGen++;
-                _reverseIndex = null;
-                _reverseTask = null;
-            }
-        }
-
-        /// <summary>
-        /// 反向索引构建核心（Task.Run 后台线程内执行；整体持 _wz.WzLock 长临界区约 30 秒量级，
-        /// 与 MapCatalogService.BuildMapNameCache 同模式——WzLib 遍历必须串行化）：
-        /// 显式遍历 Map0..Map9 组（跳过 AreaCode.img 等同层杂项节点）→ 每 img TryExtract 读
-        /// info/bgm 归一化聚合 + info/town 判村庄 → 地图名尽量取已有地图名缓存（miss 记 null）。
-        /// 单个 img 解析失败跳过不中断；OperationCanceledException 直接上抛。
-        /// </summary>
-        private Dictionary<string, List<TrackMapRef>> BuildReverseIndexCore(CancellationToken ct)
-        {
-            var result = new Dictionary<string, List<TrackMapRef>>(StringComparer.Ordinal);
             if (!_wz.IsLoaded || _wz.WzRoot == null)
             {
-                throw new InvalidOperationException("WZ 未加载，无法构建曲目地图索引");
+                return;
             }
-            lock (_wz.WzLock)
+            var working = new Dictionary<string, TrackMapSlice>(_reverseStore, StringComparer.Ordinal);
+            try
             {
-                try
+                // 短锁一：拿 Map/Map 根节点引用（WZ 重载会换根，之后每组循环前再校验代际兜底）
+                Wz_Node? mapMapNode;
+                lock (_wz.WzLock)
                 {
-                    var mapMapNode = _wz.WzRoot.FindNodeByPath(true, "Map", "Map");
-                    if (mapMapNode == null)
+                    mapMapNode = _wz.WzRoot.FindNodeByPath(true, "Map", "Map");
+                }
+                if (mapMapNode == null)
+                {
+                    return;
+                }
+                for (int g = 0; g <= 9; g++)
+                {
+                    lock (_reverseLock)
                     {
-                        return result;
+                        if (gen != _reverseGen)
+                        {
+                            return; // WZ 已重载：整轮作废（新扫描任务会由重载后的 kick 重新拉起）
+                        }
                     }
-                    for (int g = 0; g <= 9; g++)
+                    // 短锁二：快照该组的 img 节点引用列表（WzLib 遍历非线程安全，必须在锁内完成）
+                    List<Wz_Node> imgNodes = new();
+                    lock (_wz.WzLock)
                     {
                         var groupNode = mapMapNode.FindNodeByPath($"Map{g}");
-                        if (groupNode == null)
+                        if (groupNode != null)
                         {
-                            continue;
-                        }
-                        foreach (Wz_Node imgNode in groupNode.Nodes)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            if (!imgNode.Text.EndsWith(".img", StringComparison.Ordinal))
+                            foreach (Wz_Node n in groupNode.Nodes)
                             {
-                                continue;
+                                if (n.Text.EndsWith(".img", StringComparison.Ordinal))
+                                {
+                                    imgNodes.Add(n);
+                                }
                             }
+                        }
+                    }
+                    bool changed = false;
+                    foreach (var imgNode in imgNodes)
+                    {
+                        // 短锁三：单张 img 的提取与字段读取（TryExtract 非线程安全必须持锁，
+                        // 但只锁一张的耗时量级，锁外等待方最多等几毫秒）
+                        List<KeyValuePair<string, TrackMapRef>> found = new();
+                        lock (_wz.WzLock)
+                        {
                             try
                             {
                                 var img = imgNode.GetValue<Wz_Image>();
@@ -577,17 +605,7 @@ namespace MiniPet.Services
                                 int town = info?.FindNodeByPath("town")?.GetValueEx<int>(0) ?? 0;
                                 string mapId = imgNode.Text[..^4];
                                 var entry = new TrackMapRef(mapId, LookupMapName(mapId), town == 1);
-                                string key = $"{trackRef.Img}/{trackRef.Track}";
-                                if (!result.TryGetValue(key, out var list))
-                                {
-                                    list = new List<TrackMapRef>();
-                                    result[key] = list;
-                                }
-                                list.Add(entry);
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                throw;
+                                found.Add(new KeyValuePair<string, TrackMapRef>($"{trackRef.Img}/{trackRef.Track}", entry));
                             }
                             catch (Exception ex)
                             {
@@ -595,18 +613,191 @@ namespace MiniPet.Services
                                 Console.Error.WriteLine($"[MusicCatalog] 反向索引解析 {imgNode.Text} 失败: {ex.Message}");
                             }
                         }
+                        foreach (var kv in found)
+                        {
+                            changed |= AccumulateTrackMap(working, kv.Key, kv.Value);
+                        }
+                    }
+                    // 分组收尾：增量发布（UI 即便中途进来也能看到已完成分区的数据）+ 触发刷新
+                    if (changed)
+                    {
+                        lock (_reverseLock)
+                        {
+                            _reverseStore = working;
+                            MergeSlicesFromPendingImgNames(pendingImgs, working);
+                        }
+                        PersistReverseCacheToDisk(working);
+                        ReverseIndexChanged?.Invoke();
                     }
                 }
-                catch (OperationCanceledException)
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 反向索引扫描失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 聚合一条「曲目 ← 地图」记录（5 名封顶口径）：有名字的地图（name != null）才有资格占
+        /// ≤5 个展示名额，槽满后（含本条更好也不收）一律只累加 MoreCount；无名地图视为隐藏级
+        /// 永不占名额。返回存储是否发生变化。
+        /// </summary>
+        private static bool AccumulateTrackMap(
+            Dictionary<string, TrackMapSlice> store, string key, TrackMapRef entry)
+        {
+            store.TryGetValue(key, out var slice);
+            var items = slice.Items as List<TrackMapRef> ?? new List<TrackMapRef>(slice.Items);
+            int more = slice.MoreCount;
+            bool isFull = items.Count >= MusicCatalogLimits.MaxNamedEntriesPerTrack;
+            if (entry.MapName != null && !ContainsEntry(items, entry))
+            {
+                if (!isFull)
                 {
-                    throw;
+                    items.Add(entry);
+                    // 展示序：城镇优先，组内名称序（OrdinalIgnoreCase）——每次插入后就地重排保持不变式
+                    items.Sort((a, b) =>
+                    {
+                        int byTown = b.IsTown.CompareTo(a.IsTown);
+                        if (byTown != 0)
+                        {
+                            return byTown;
+                        }
+                        return string.Compare(a.MapName, b.MapName, StringComparison.OrdinalIgnoreCase);
+                    });
                 }
-                catch (Exception ex)
+                else
                 {
-                    Console.Error.WriteLine($"[MusicCatalog] 反向索引构建失败: {ex.Message}");
+                    more++;
+                }
+                store[key] = new TrackMapSlice(items, more);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>切片去重（同 mapId 视为同图）。</summary>
+        private static bool ContainsEntry(List<TrackMapRef> items, TrackMapRef entry)
+        {
+            foreach (var it in items)
+            {
+                if (string.Equals(it.MapId, entry.MapId, StringComparison.Ordinal))
+                {
+                    return true;
                 }
             }
-            return result;
+            return false;
+        }
+
+        /// <summary>
+        /// 把本轮待查节点名合并进扫过的记录里（Kick 的去重判断基于存储前缀匹配；此处仅语义占位：
+        /// 扫描覆盖全部节点，pending 天然被吸收）。
+        /// </summary>
+        private void MergeSlicesFromPendingImgNames(List<string> pendingImgs, Dictionary<string, TrackMapSlice> working)
+        {
+            pendingImgs.Clear(); // 单飞一轮即覆盖全库节点，无需按名裁剪
+        }
+
+        // ====== 反向索引磁盘缓存（.minipet 口径目录下 music-track-maps.json） ======
+
+        private static string ReverseCacheFilePath()
+        {
+            if (OperatingSystem.IsMacOS() || !OperatingSystem.IsWindows())
+            {
+                var home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var dir = Path.Combine(home, ".minipet");
+                Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "music-track-maps.json");
+            }
+            // Windows：优先 exe 同目录（绿色便携口径，同 ConfigService.GetConfigBaseDir）
+            try
+            {
+                var dir = AppContext.BaseDirectory;
+                var probe = Path.Combine(dir, ".minipet-write-test");
+                File.WriteAllText(probe, "ok");
+                File.Delete(probe);
+                Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "music-track-maps.json");
+            }
+            catch
+            {
+                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var dir = Path.Combine(appData, "MiniPet");
+                Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "music-track-maps.json");
+            }
+        }
+
+        /// <summary>构造时同步载入磁盘缓存（文件损坏静默放弃走重建，绝不影响启动）。</summary>
+        private void LoadReverseCacheFromDisk()
+        {
+            try
+            {
+                string path = ReverseCacheFilePath();
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, TrackMapSlice>>(
+                    File.ReadAllText(path), ReverseCacheJsonOptions());
+                if (loaded != null && loaded.Count > 0)
+                {
+                    lock (_reverseLock)
+                    {
+                        _reverseStore = new Dictionary<string, TrackMapSlice>(loaded, StringComparer.Ordinal);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 反向索引缓存载入失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>原子落盘（tmp + move）；写失败仅记日志不影响内存态。</summary>
+        private void PersistReverseCacheToDisk(Dictionary<string, TrackMapSlice> store)
+        {
+            try
+            {
+                string path = ReverseCacheFilePath();
+                string tmp = path + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(store, ReverseCacheJsonOptions()));
+                File.Move(tmp, path, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 反向索引缓存落盘失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>反向索引缓存 JSON 选项（camelCase + 大小写不敏感读回，对齐 ConfigService 风格）。</summary>
+        private static JsonSerializerOptions ReverseCacheJsonOptions() => new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            WriteIndented = false
+        };
+
+        /// <summary>WZ 重载时清空反向索引 + 删除磁盘缓存 + 废弃在途扫描（bump 代际使旧结果不可发布）。</summary>
+        private void ResetReverseIndex()
+        {
+            lock (_reverseLock)
+            {
+                _reverseGen++;
+                _reverseStore = new Dictionary<string, TrackMapSlice>(StringComparer.Ordinal);
+                _reversePendingImgs.Clear();
+            }
+            try
+            {
+                string path = ReverseCacheFilePath();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 反向索引缓存删除失败: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -734,4 +925,10 @@ namespace MiniPet.Services
     /// <param name="MapName">地图显示名（来自已有地图名缓存；缓存未就绪或无名时 null，UI 回退显示 MapId）。</param>
     /// <param name="IsTown">是否村庄地图（同 img 的 info/town 整型属性 == 1；探针实证取值仅 0/1）。</param>
     public sealed record TrackMapRef(string MapId, string? MapName, bool IsTown);
+
+    /// <summary>
+    /// 单首曲目的关联地图切片：Items ≤5 条**有名字**的地图（城镇优先，组内名称序）；
+    /// MoreCount = 未收录的其余地图张数（无名/超额），UI 以「…下略」代替展示。
+    /// </summary>
+    public sealed record TrackMapSlice(IReadOnlyList<TrackMapRef> Items, int MoreCount);
 }

@@ -26,8 +26,6 @@ public partial class PetWindow
     private MenuItem? _modeStaticItem;
     private MenuItem? _modeCameraItem;
     private MenuItem? _paperdollItem;
-    // 音乐模块 V0.2.0（F16）：右键菜单「🎵 音乐」项（播放中 header 动态显示当前曲名，见 RefreshMusicMenuItem）
-    private MenuItem? _musicItem;
     // 音乐模块 V0.2.1：右键菜单「🎵 迷你控制条」开关项（IsChecked 反映 MusicConfig.MiniBarEnabled，见 RefreshMiniBarMenuItem）
     private MenuItem? _miniBarItem;
 
@@ -160,16 +158,6 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonSettings: {ex.Message}"); }
             };
             cm.Items.Add(balloonItem);
-
-            // ── 🎵 音乐（音乐模块 V0.2.0 F16）：打开设置中心并切到音乐 tab（同 OpenBackgroundTab 的「Show + tab 切换」模式）；
-            //    播放中 header 动态显示当前曲名（设计 §11.9，RefreshMusicMenuItem 刷新）──
-            _musicItem = new MenuItem { Header = "🎵 音乐" };
-            _musicItem.Click += (_, _) =>
-            {
-                try { ShowSettingsWindow(); _settingsWindow?.OpenMusicTab(); }
-                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MusicTab: {ex.Message}"); }
-            };
-            cm.Items.Add(_musicItem);
 
             // ── 🎵 迷你控制条（音乐模块 V0.2.1）：开关勾选项，控制 B2 的 MusicMiniBarWindow 显隐；
             //    勾选态 = 配置 MiniBarEnabled（Opening 时经 RefreshMiniBarMenuItem 再同步一次），
@@ -322,43 +310,9 @@ public partial class PetWindow
                 }
             };
             cm.Items.Add(exitItem);
-
-            // 播放中菜单头部动态显示当前曲名（设计 §11.9）：订阅换曲/播放状态事件（可能来自后台线程）
-            // 经 Dispatcher.UIThread.Post 刷新 header；ContextMenu.Opening 时再刷一次（双保险，
-            // 同 RefreshPaperdollMenuItem 的 Opening 动态文本机制——BuildContextMenu 仅构造时调用一次，订阅不重复）。
-            _musicService.CurrentChanged += _ => Dispatcher.UIThread.Post(RefreshMusicMenuItem);
-            _musicService.StateChanged += _ => Dispatcher.UIThread.Post(RefreshMusicMenuItem);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BuildMenu: {ex.Message}"); }
         return cm;
-    }
-
-    /// <summary>
-    /// 刷新「🎵 音乐」菜单项 header（换曲/播放状态变化 + ContextMenu.Opening 时调用，设计 §11.9）：
-    /// 播放中显示「🎵 当前曲名」（暂停加 ⏸ 后缀区分）；停止时（Current 在 Stop 后仍保留旧曲目，
-    /// 必须以 State 为准）恢复原文「🎵 音乐」。
-    /// </summary>
-    private void RefreshMusicMenuItem()
-    {
-        if (_musicItem == null) { return; }
-        try
-        {
-            var track = _musicService.Current;
-            var state = _musicService.State;
-            if (track != null && state == PlaybackState.Playing)
-            {
-                _musicItem.Header = $"🎵 {track.Track}";
-            }
-            else if (track != null && state == PlaybackState.Paused)
-            {
-                _musicItem.Header = $"🎵 {track.Track} ⏸";
-            }
-            else
-            {
-                _musicItem.Header = "🎵 音乐";
-            }
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshMusicMenuItem: {ex.Message}"); }
     }
 
     /// <summary>
