@@ -15,6 +15,27 @@ class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        try { Console.Error.WriteLine($"[App] Main 入口 pid={Environment.ProcessId}"); Console.Error.Flush(); } catch { }
+        // 默认日志文件（2026-09-01）：无论启动方式，[App]/[Road] 等 stderr 日志统一落
+        // ~/.minipet/minipet.log（追加；>8MB 轮转改名 .old）——启动者终端之外可追溯
+        try
+        {
+            string logDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".minipet");
+            System.IO.Directory.CreateDirectory(logDir);
+            string logPath = System.IO.Path.Combine(logDir, "minipet.log");
+            if (System.IO.File.Exists(logPath) && new System.IO.FileInfo(logPath).Length > 8 * 1024 * 1024)
+            {
+                System.IO.File.Copy(logPath, logPath + ".old", overwrite: true);
+                System.IO.File.Delete(logPath);
+            }
+            var errSw = new System.IO.StreamWriter(logPath, append: true) { AutoFlush = true };
+            Console.SetError(errSw);
+            Console.SetOut(errSw);
+            Console.Error.WriteLine($"[App] 日志重定向 {logPath}（pid={Environment.ProcessId}）");
+            Console.Error.Flush();
+        }
+        catch { }
         // 最早时机加载用户配置的 wzlib（先于任何 WzComparerR2 类型解析；失败回退内置 DLL）
         WzLibRuntimeLoader.TryLoadUserWzLib();
 

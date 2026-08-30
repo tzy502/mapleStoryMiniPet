@@ -40,6 +40,7 @@ namespace MiniPet.Services
         public const string LocalCategoryName = "📁 本地";
 
         private readonly WzService _wz;
+        private readonly ConfigService? _config; // 反向索引扫描的独立 WZ 路径来源（可选）
         // 目录单飞与发布锁：保护 _catalogTask/_catalogCache/_catalogGen 三个字段
         private readonly object _catalogLock = new();
         // 单飞任务：缓存 Task 本身（而非 _loading bool 标志）——并发调用直接复用同一在途任务
@@ -78,15 +79,26 @@ namespace MiniPet.Services
         // 扫描代际：WZ 重载时自增使在途扫描结果作废
         private int _reverseGen;
 
-        public MusicCatalogService(WzService wz)
+        // ====== 原始全候选索引（V0.2.1 F18 第二产物，2026-08-28：与 UI 切片同源同扫） ======
+        // 键 = 带 .img 的 trackKey（"Bgm58.img/曲名"，与 MusicTrack.Key 同形态）；
+        // 值 = 该曲全部候选地图（不截断、不做 5 名封顶）——无限之路源图解析用；
+        // 磁盘缓存独立文件 music-raw-bgm-index.json（schema 版本化，仅整轮完成时落盘）
+        private Dictionary<string, List<RawBgmEntry>> _rawBgmIndex = new(StringComparer.Ordinal);
+        // 原始索引是否已覆盖全库（整轮扫描成功收尾 / 完整缓存载入；WZ 重载/新轮启动时置 false）
+        private bool _rawBgmComplete;
+
+        public MusicCatalogService(WzService wz, ConfigService? config = null)
         {
             _wz = wz;
+            _config = config;
             // WZ 重载 → 失效缓存与在途任务（WzService 不能反向依赖目录服务避免 DI 成环，故由此订阅；
             // 参数 = 新 WZ 代际号，本服务用自己的 _catalogGen 记代际，事件仅作失效触发）
             _wz.WzReloaded += OnWzReloaded;
             // 磁盘缓存随构造同步载入（几 MB 内小文件，毫秒级；WZ 数据基本不变故长期有效，
             // 仅 WZ 重载/手动刷新目录时删除重算——见 ResetReverseIndex）
             LoadReverseCacheFromDisk();
+            // 第二产物（F18 原始全候选索引）独立文件独立 schema，一并构造期载入
+            LoadRawBgmCacheFromDisk();
         }
 
         /// <summary>
@@ -391,27 +403,92 @@ namespace MiniPet.Services
             return false;
         }
 
-        /// <summary>保证增量扫描任务在跑（单飞；已结束的任务不复用，重新起一轮覆盖新入队节点）。</summary>
-        private void EnsureScanTask()
+        /// <summary>
+        /// 原始全候选查询（F18 无限之路源图解析，V0.2.1）：返回 trackKey（带 .img，
+        /// 如 "Bgm58.img/FloralLife"，与 MusicTrack.Key 同形态）被哪些地图用作 info/bgm——
+        /// **全部候选，不截断**（区别于 TryGetTrackMaps 的 5 名 UI 切片）。
+        /// - 索引已完整（FullComplete=true）：同步返回（可能空列表 = 全库确无地图用此曲）；
+        /// - 索引未就绪：kick 共享扫描（复用 EnsureScanTask 单飞机制，扫描跑内部代际）并等待
+        ///   本轮收场——**ct 只用于放弃调用方等待（Task.WhenAny 包装），绝不传进共享扫描**；
+        ///   放弃时返回当前不完整快照（FullComplete=false，调用方自行走回退链）；
+        /// - WZ 未加载：直接 FullComplete=false 空候选（不 kick）。
+        /// </summary>
+        public async Task<RawBgmResult> GetRawBgmCandidatesAsync(string trackKey, CancellationToken ct = default)
         {
-            Task? toAwait = null;
+            if (string.IsNullOrEmpty(trackKey) || !_wz.IsLoaded)
+            {
+                return new RawBgmResult(false, Array.Empty<(string, bool)>());
+            }
+            // 等待轮数上限：防「扫描立即收场但代际反复作废」死循环（WZ 未加载/反复重载时快速放弃）
+            const int MaxWaitRounds = 6;
+            for (int round = 0; round < MaxWaitRounds; round++)
+            {
+                List<(string MapId, bool IsTown)> snapshot = SnapshotRawBgmCandidates(trackKey, out bool complete);
+                if (complete)
+                {
+                    return new RawBgmResult(true, snapshot);
+                }
+                // 未就绪：kick 扫描（可能复用在途任务）→ WhenAny 等待本轮收场或调用方放弃
+                Task scan = EnsureScanTask();
+                Task giveUp = Task.Delay(Timeout.Infinite, ct);
+                Task finished = await Task.WhenAny(scan, giveUp).ConfigureAwait(false);
+                if (finished == giveUp)
+                {
+                    // 调用方放弃等待：返回当前不完整快照（扫描本身继续跑完，绝不被取消）
+                    return new RawBgmResult(false, snapshot);
+                }
+                // 本轮扫描收场 → 回到快照复核（期间若代际作废由上限兜底退出）
+            }
+            return new RawBgmResult(false, SnapshotRawBgmCandidates(trackKey, out _));
+        }
+
+        /// <summary>锁内快照某曲目原始候选（值拷贝，调用方可安全持有；complete = 索引是否已覆盖全库）。</summary>
+        private List<(string MapId, bool IsTown)> SnapshotRawBgmCandidates(string trackKey, out bool complete)
+        {
+            lock (_reverseLock)
+            {
+                complete = _rawBgmComplete;
+                if (_rawBgmIndex.TryGetValue(trackKey, out List<RawBgmEntry>? list))
+                {
+                    var result = new List<(string, bool)>(list.Count);
+                    foreach (RawBgmEntry e in list)
+                    {
+                        result.Add((e.MapId, e.IsTown));
+                    }
+                    return result;
+                }
+                return new List<(string, bool)>();
+            }
+        }
+
+        /// <summary>
+        /// 保证增量扫描任务在跑（单飞；已结束的任务不复用，重新起一轮覆盖新入队节点）。
+        /// 返回在途/新起任务的句柄（GetRawBgmCandidatesAsync 用 Task.WhenAny 等待其收场——
+        /// ct 绝不传进共享扫描，扫描只受内部代际约束）。
+        /// </summary>
+        private Task EnsureScanTask()
+        {
+            Task started;
             lock (_reverseLock)
             {
                 if (_reverseScanTask != null && !_reverseScanTask.IsCompleted)
                 {
-                    return;
+                    return _reverseScanTask;
                 }
                 _reverseGen++;
                 int gen = _reverseGen;
+                // 新一轮重扫期间原始索引视为不完整（消费方走回退链等待本轮收场）
+                _rawBgmComplete = false;
                 var pending = new List<string>(_reversePendingImgs);
                 _reversePendingImgs.Clear();
-                _reverseScanTask = Task.Run(() => ScanReverseCore(gen, pending));
-                toAwait = _reverseScanTask;
+                started = Task.Run(() => ScanReverseCore(gen, pending));
+                _reverseScanTask = started;
             }
             // 异步观察故障防 UnobservedTaskException；实际结果经事件推送
-            toAwait?.ContinueWith(
+            started.ContinueWith(
                 t => Console.Error.WriteLine($"[MusicCatalog] 反向索引扫描收场: {t.Exception?.GetBaseException().Message ?? "完成"}"),
                 TaskScheduler.Default);
+            return started;
         }
 
         // ====== private ======
@@ -543,13 +620,37 @@ namespace MiniPet.Services
                 return;
             }
             var working = new Dictionary<string, TrackMapSlice>(_reverseStore, StringComparer.Ordinal);
+            // 第二产物（F18）：原始全候选索引 working 副本（键同 trackKey 带 .img；全部候选不截断）
+            var rawWorking = new Dictionary<string, List<RawBgmEntry>>(_rawBgmIndex, StringComparer.Ordinal);
+            WzService? scanWz = null;
             try
             {
-                // 短锁一：拿 Map/Map 根节点引用（WZ 重载会换根，之后每组循环前再校验代际兜底）
-                Wz_Node? mapMapNode;
-                lock (_wz.WzLock)
+                // ★ 终极根因修复（白盒实证 2026-08-28）：全库扫描绝不可在主 WZ 实例上跑——
+                // 21254 张 map img TryExtract 常驻会打坏进程内后续一切 LoadMap/ExtractPng（模式3「一个图都
+                // 找不到」的真因）。改用**独立临时 WzService**（自 Load 自整体释放），主实例零污染。
+                // 主实例仅用于 IsLoaded 前置判定。
+                scanWz = new WzService();
+                // 路径来源 = WzConfig（~/.minipet/wz-config.json，应用真实加载口径 App.axaml.cs:204 同源）——
+                // 2026-08-29 白盒实证：此前误读 PetSettings.WzLibPath（恒空）→ 扫描静默放弃
+                // → raw 索引永不建成 → 所有 BGM「无候选」全走回退随机镇
+                var wzCfg = _config?.LoadWzConfig();
+                string wzLib = wzCfg?.WzLibPath ?? "";
+                string baseWz = wzCfg?.BaseWzPath ?? "";
+                if (string.IsNullOrEmpty(wzLib) || string.IsNullOrEmpty(baseWz))
                 {
-                    mapMapNode = _wz.WzRoot.FindNodeByPath(true, "Map", "Map");
+                    Console.Error.WriteLine("[MusicCatalog] 反向索引扫描跳过：wz-config.json 路径未配置");
+                    return;
+                }
+                var (scanOk, scanErr) = scanWz.LoadWz(wzLib, baseWz);
+                if (!scanOk)
+                {
+                    Console.Error.WriteLine($"[MusicCatalog] 扫描 WZ 加载失败: {scanErr}");
+                    return;
+                }
+                Wz_Node? mapMapNode;
+                lock (scanWz.WzLock)
+                {
+                    mapMapNode = scanWz.WzRoot.FindNodeByPath(true, "Map", "Map");
                 }
                 if (mapMapNode == null)
                 {
@@ -564,9 +665,8 @@ namespace MiniPet.Services
                             return; // WZ 已重载：整轮作废（新扫描任务会由重载后的 kick 重新拉起）
                         }
                     }
-                    // 短锁二：快照该组的 img 节点引用列表（WzLib 遍历非线程安全，必须在锁内完成）
+                    // 独立实例：无跨线程共享，直接遍历（WzLib 单线程约束在本扫描线程内自洽）
                     List<Wz_Node> imgNodes = new();
-                    lock (_wz.WzLock)
                     {
                         var groupNode = mapMapNode.FindNodeByPath($"Map{g}");
                         if (groupNode != null)
@@ -581,12 +681,13 @@ namespace MiniPet.Services
                         }
                     }
                     bool changed = false;
+                    bool rawChanged = false;
                     foreach (var imgNode in imgNodes)
                     {
                         // 短锁三：单张 img 的提取与字段读取（TryExtract 非线程安全必须持锁，
                         // 但只锁一张的耗时量级，锁外等待方最多等几毫秒）
                         List<KeyValuePair<string, TrackMapRef>> found = new();
-                        lock (_wz.WzLock)
+                        lock (scanWz.WzLock)
                         {
                             try
                             {
@@ -616,24 +717,67 @@ namespace MiniPet.Services
                         foreach (var kv in found)
                         {
                             changed |= AccumulateTrackMap(working, kv.Key, kv.Value);
+                            // 同一聚合点写第二产物：全部候选不截断（同 img 单轮内只扫一次，天然无重复 mapId）；
+                            // 无名地图不进 UI 切片（AccumulateTrackMap 返回 false）但必须进原始索引
+                            if (!rawWorking.TryGetValue(kv.Key, out List<RawBgmEntry>? rawList))
+                            {
+                                rawList = new List<RawBgmEntry>();
+                                rawWorking[kv.Key] = rawList;
+                                rawChanged = true;
+                            }
+                            rawList.Add(new RawBgmEntry(kv.Value.MapId, kv.Value.IsTown));
                         }
                     }
-                    // 分组收尾：增量发布（UI 即便中途进来也能看到已完成分区的数据）+ 触发刷新
-                    if (changed)
+                    // 分组收尾：增量发布（UI 即便中途进来也能看到已完成分区的数据）+ 触发刷新；
+                    // UI 切片三件套（store/落盘/事件）只在 changed 时执行——与原实现逐字节等价，行为零改动；
+                    // 原始索引独立发布（读方可见部分数据，但 _rawBgmComplete 仍为 false——消费方按
+                    // FullComplete 语义走回退链，不拿半成品做最终决策）
+                    if (changed || rawChanged)
                     {
                         lock (_reverseLock)
                         {
-                            _reverseStore = working;
-                            MergeSlicesFromPendingImgNames(pendingImgs, working);
+                            if (changed)
+                            {
+                                _reverseStore = working;
+                                MergeSlicesFromPendingImgNames(pendingImgs, working);
+                            }
+                            if (rawChanged)
+                            {
+                                _rawBgmIndex = rawWorking;
+                            }
                         }
-                        PersistReverseCacheToDisk(working);
-                        ReverseIndexChanged?.Invoke();
+                        if (changed)
+                        {
+                            PersistReverseCacheToDisk(working);
+                            ReverseIndexChanged?.Invoke();
+                        }
                     }
+                }
+                // 整轮收尾：原始索引标记全库完整 + 落盘（代际不符则整轮作废，不发布不落盘）；
+                // UI 切片缓存沿用「每分组落盘」旧节奏，行为零改动
+                bool commit;
+                lock (_reverseLock)
+                {
+                    commit = gen == _reverseGen;
+                    if (commit)
+                    {
+                        _rawBgmIndex = rawWorking;
+                        _rawBgmComplete = true;
+                    }
+                }
+                if (commit)
+                {
+                    PersistRawBgmCacheToDisk(rawWorking);
                 }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[MusicCatalog] 反向索引扫描失败: {ex.Message}");
+            }
+            finally
+            {
+                // 临时实例整体弃用（独立实例+局部引用，GC 回收其全部 img 原生资源）——主 WZ 实例零污染
+                scanWz = null;
             }
         }
 
@@ -646,8 +790,9 @@ namespace MiniPet.Services
             Dictionary<string, TrackMapSlice> store, string key, TrackMapRef entry)
         {
             store.TryGetValue(key, out var slice);
-            var items = slice.Items as List<TrackMapRef> ?? new List<TrackMapRef>(slice.Items);
-            int more = slice.MoreCount;
+            // 首次入店 slice 为 null（default(TrackMapSlice)）：空集起步，勿触 slice.Items
+            var items = slice?.Items as List<TrackMapRef> ?? new List<TrackMapRef>();
+            int more = slice?.MoreCount ?? 0;
             bool isFull = items.Count >= MusicCatalogLimits.MaxNamedEntriesPerTrack;
             if (entry.MapName != null && !ContainsEntry(items, entry))
             {
@@ -699,14 +844,15 @@ namespace MiniPet.Services
 
         // ====== 反向索引磁盘缓存（.minipet 口径目录下 music-track-maps.json） ======
 
-        private static string ReverseCacheFilePath()
+        /// <summary>缓存目录（.minipet 口径；Windows 优先 exe 同目录绿色便携，回退 ApplicationData）。</summary>
+        private static string ReverseCacheDirectory()
         {
             if (OperatingSystem.IsMacOS() || !OperatingSystem.IsWindows())
             {
                 var home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 var dir = Path.Combine(home, ".minipet");
                 Directory.CreateDirectory(dir);
-                return Path.Combine(dir, "music-track-maps.json");
+                return dir;
             }
             // Windows：优先 exe 同目录（绿色便携口径，同 ConfigService.GetConfigBaseDir）
             try
@@ -716,15 +862,26 @@ namespace MiniPet.Services
                 File.WriteAllText(probe, "ok");
                 File.Delete(probe);
                 Directory.CreateDirectory(dir);
-                return Path.Combine(dir, "music-track-maps.json");
+                return dir;
             }
             catch
             {
                 var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                 var dir = Path.Combine(appData, "MiniPet");
                 Directory.CreateDirectory(dir);
-                return Path.Combine(dir, "music-track-maps.json");
+                return dir;
             }
+        }
+
+        private static string ReverseCacheFilePath()
+        {
+            return Path.Combine(ReverseCacheDirectory(), "music-track-maps.json");
+        }
+
+        /// <summary>原始全候选索引缓存文件（独立于 UI 切片缓存；schema 版本化，不符作废重建）。</summary>
+        private static string RawBgmCacheFilePath()
+        {
+            return Path.Combine(ReverseCacheDirectory(), "music-raw-bgm-index.json");
         }
 
         /// <summary>构造时同步载入磁盘缓存（文件损坏静默放弃走重建，绝不影响启动）。</summary>
@@ -777,6 +934,80 @@ namespace MiniPet.Services
             WriteIndented = false
         };
 
+        // ====== 原始全候选索引磁盘缓存（music-raw-bgm-index.json，schema 版本化） ======
+
+        /// <summary>缓存 schema 版本（头部字段；不符即整文件作废重建）。</summary>
+        private const int RawBgmCacheSchema = 1;
+
+        /// <summary>
+        /// 构造时同步载入原始索引缓存：文件仅在整轮扫描成功后落盘（见 ScanReverseCore 整轮收尾），
+        /// 故文件存在且 schema 相符 ⟹ 上轮全库完整 → 直接置 _rawBgmComplete；
+        /// schema 不符/文件损坏 → 静默作废（删除文件走重建，绝不影响启动与 UI 切片缓存）。
+        /// </summary>
+        private void LoadRawBgmCacheFromDisk()
+        {
+            try
+            {
+                string path = RawBgmCacheFilePath();
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+                var file = JsonSerializer.Deserialize<RawBgmCacheFile>(
+                    File.ReadAllText(path), ReverseCacheJsonOptions());
+                if (file == null || file.Schema != RawBgmCacheSchema)
+                {
+                    // 版本不符：作废重建（下次 GetRawBgmCandidatesAsync kick 全量扫描）
+                    TryDeleteCacheFile(path);
+                    return;
+                }
+                lock (_reverseLock)
+                {
+                    _rawBgmIndex = file.Entries != null
+                        ? new Dictionary<string, List<RawBgmEntry>>(file.Entries, StringComparer.Ordinal)
+                        : new Dictionary<string, List<RawBgmEntry>>(StringComparer.Ordinal);
+                    _rawBgmComplete = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 原始索引缓存载入失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>原始索引原子落盘（tmp + move，头部 {"schema":1}）；只在整轮扫描成功后调用一次。</summary>
+        private void PersistRawBgmCacheToDisk(Dictionary<string, List<RawBgmEntry>> index)
+        {
+            try
+            {
+                string path = RawBgmCacheFilePath();
+                string tmp = path + ".tmp";
+                var file = new RawBgmCacheFile(RawBgmCacheSchema, index);
+                File.WriteAllText(tmp, JsonSerializer.Serialize(file, ReverseCacheJsonOptions()));
+                File.Move(tmp, path, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 原始索引缓存落盘失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>尽力删除缓存文件（失败仅记日志）。</summary>
+        private static void TryDeleteCacheFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 缓存文件删除失败({path}): {ex.Message}");
+            }
+        }
+
         /// <summary>WZ 重载时清空反向索引 + 删除磁盘缓存 + 废弃在途扫描（bump 代际使旧结果不可发布）。</summary>
         private void ResetReverseIndex()
         {
@@ -785,6 +1016,9 @@ namespace MiniPet.Services
                 _reverseGen++;
                 _reverseStore = new Dictionary<string, TrackMapSlice>(StringComparer.Ordinal);
                 _reversePendingImgs.Clear();
+                // 第二产物（F18 原始索引）一并失效：内存清空 + 标记不完整（新轮 kick 后重建）
+                _rawBgmIndex = new Dictionary<string, List<RawBgmEntry>>(StringComparer.Ordinal);
+                _rawBgmComplete = false;
             }
             try
             {
@@ -797,6 +1031,18 @@ namespace MiniPet.Services
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[MusicCatalog] 反向索引缓存删除失败: {ex.Message}");
+            }
+            try
+            {
+                string rawPath = RawBgmCacheFilePath();
+                if (File.Exists(rawPath))
+                {
+                    File.Delete(rawPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MusicCatalog] 原始索引缓存删除失败: {ex.Message}");
             }
         }
 
@@ -931,4 +1177,22 @@ namespace MiniPet.Services
     /// MoreCount = 未收录的其余地图张数（无名/超额），UI 以「…下略」代替展示。
     /// </summary>
     public sealed record TrackMapSlice(IReadOnlyList<TrackMapRef> Items, int MoreCount);
+
+    /// <summary>
+    /// 原始索引单条候选（F18）：某曲目被某地图用作 info/bgm 的记录（mapId + 是否城镇）。
+    /// 区别于 TrackMapRef：无名称字段、不做 5 名封顶——全部候选保真供无限之路选源图。
+    /// </summary>
+    /// <param name="MapId">地图 id（WZ 文件名去 .img 后缀，9 位补零形态）。</param>
+    /// <param name="IsTown">是否村庄地图（info/town == 1）。</param>
+    public sealed record RawBgmEntry(string MapId, bool IsTown);
+
+    /// <summary>
+    /// GetRawBgmCandidatesAsync 返回（F18）：
+    /// FullComplete = 索引是否已覆盖全库（true 时 Candidates 为最终事实，空 = 确无地图用此曲）；
+    /// Candidates = 全部候选（不截断；FullComplete=false 时为当前部分快照，只作参考不作最终决策）。
+    /// </summary>
+    public sealed record RawBgmResult(bool FullComplete, IReadOnlyList<(string MapId, bool IsTown)> Candidates);
+
+    /// <summary>原始索引缓存文件载荷（music-raw-bgm-index.json）：头部 schema 版本化，不符整文件作废重建。</summary>
+    internal sealed record RawBgmCacheFile(int Schema, Dictionary<string, List<RawBgmEntry>>? Entries);
 }

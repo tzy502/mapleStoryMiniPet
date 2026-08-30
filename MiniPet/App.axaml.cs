@@ -20,6 +20,9 @@ public partial class App : Application
 {
     private ServiceProvider? _serviceProvider;
 
+    /// <summary>DI 容器静态可达点（路模块 Extractor Configure / 白盒 harness 用）。</summary>
+    public static ServiceProvider? SP { get; private set; }
+
     // Agent 接入链（PLAN-agent-integration §1/§3）。关闭时统一 Stop，避免轮询/FSW 泄露。
     private AgentStateAggregator? _agentAggregator;
     private EffectLayerService? _effectLayer;
@@ -47,6 +50,7 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        Console.Error.WriteLine("[App] OnFrameworkInitializationCompleted 入口"); Console.Error.Flush();
         // 2026-08-17 用户要求：macOS 桌宠不进程序坞（Dock）——ActivationPolicy=Accessory，
         // 窗口照常显示/可输入（设置中心不受影响）；Windows 任务栏隐藏见 PetWindow.ShowInTaskbar。
         if (OperatingSystem.IsMacOS())
@@ -75,18 +79,31 @@ public partial class App : Application
         // （BASS 流随进程回收，PLAN 步骤 8 声明；与其他单例服务同样不走容器 dispose，保持现状一致）。
         services.AddSingleton<BassMusicPlayer>();
         services.AddSingleton<IMusicPlayer>(sp => sp.GetRequiredService<BassMusicPlayer>());
-        services.AddSingleton<MusicCatalogService>();
+        // 反向索引扫描的独立 WZ 路径来自 ConfigService——缺它则扫描永不执行（2026-08-29 白盒实证）
+        services.AddSingleton<MusicCatalogService>(sp =>
+            new MusicCatalogService(sp.GetRequiredService<WzService>(), sp.GetRequiredService<ConfigService>()));
         services.AddSingleton<MusicPlayerService>();
+        // F18 无限之路：路窗口单例（ctor 可选参 WzService，容器注入）
+        services.AddSingleton<MiniPet.Views.InfiniteRoadWindow>();
+        // F18 无限之路（V0.2.1）：战斗导演 + 模式3 编排控制器（唯一编排者——订阅音乐三路事件与
+        // WzReloaded，全链 UI 线程命令队列；依赖 MusicPlayerService/MusicCatalogService/ConfigService/
+        // RoadCombatDirector(AnimService+PaperdollService) 均可自动解析）。路窗口（D3）经反射网关
+        // 按契约签名绑定，不在 DI 显式注册（未落盘时路激活失败降级，不影响其余功能）。
+        services.AddSingleton<Services.Road.RoadCombatDirector>();
+        services.AddSingleton<Services.Road.RoadModeController>();
         // 音乐迷你控制条（V0.2.1 增量②）：单例窗口，构造注入 MusicPlayerService/EventBus/ConfigService
         // 自动解析；显隐自评驱动 Show/Hide，退出 Environment.Exit 硬退不走容器 dispose（与音乐服务同策略）
         services.AddSingleton<MusicMiniBarWindow>();
         services.AddTransient<PetWindow>();
         _serviceProvider = services.BuildServiceProvider();
+        SP = _serviceProvider; // 路模块等静态可达点（RoadMaterialExtractor.Configure 注入用）
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
+            Console.Error.WriteLine("[App] MainWindow resolve 开始…"); Console.Error.Flush();
             desktop.MainWindow = _serviceProvider.GetRequiredService<PetWindow>();
+            Console.Error.WriteLine("[App] MainWindow 就绪"); Console.Error.Flush();
 
             // 自动加载 WZ
             var wzService = _serviceProvider.GetRequiredService<WzService>();

@@ -36,9 +36,11 @@ public static class SettingsPreviewSelfTest
         var paperdoll = new PaperdollService(wz, cache, sprite);
         var map = new MapService(wz, cache);
 
-        // 2. 构造 SettingsWindow（构建全部 tab）
+        // 2. 构造 SettingsWindow（构建全部 tab；V0.2.0 构造新增音乐参数）
         Console.WriteLine("[自检] 构造 SettingsWindow…");
-        var win = new SettingsWindow(config, wz, paperdoll, map, balloon);
+        var musicCatalog = new MusicCatalogService(wz, config);
+        var musicPlayer = new MusicPlayerService(wz, musicCatalog, new BassMusicPlayer(), config);
+        var win = new SettingsWindow(config, wz, paperdoll, map, balloon, musicCatalog, musicPlayer);
         win.Show();
 
         // 3. 素材 tab 预览流程（反射驱动）

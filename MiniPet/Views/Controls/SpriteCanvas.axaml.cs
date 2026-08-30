@@ -44,6 +44,12 @@ public partial class SpriteCanvas : UserControl
         _lastPixelH = -1;
     }
 
+    /// <summary>当前帧内容底边相对窗口顶的偏移（F18 模式3 PetFollower 贴地用；位图绘于 (0,0) → 底边 = 帧高×缩放）。</summary>
+    public double ContentBottomPx => _lastPixelH > 0 && _lastScale > 0 ? _lastPixelH * _lastScale : 0;
+
+    /// <summary>当前帧 origin（脚底锚点）相对窗口顶的偏移（mob/npc 条带 origin 即脚底；F18 模式3 贴地用）。</summary>
+    public double OriginBottomPx => _originY > 0 && _lastScale > 0 ? _originY * _lastScale : 0;
+
     /// <summary>
     /// 设置容器高度下限（气泡锚点基准）：容器高 = max(帧高, 锚点高)，
     /// 保证 Grid 布局中气泡行位置不随动画帧高度变化（胶水规则：气泡位置按首个动作固定）。

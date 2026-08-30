@@ -75,6 +75,13 @@ namespace MiniPet.Services
         /// <summary>音量变化（0-100）。⚠️ 可能在任意线程触发，订阅方自行派发到 UI 线程。</summary>
         public event Action<int>? VolumeChanged;
 
+        /// <summary>
+        /// F17 互斥门（F18，静态可达）：无限之路激活期间 OnMapChanged 直接放弃（防止场景联动换歌
+        /// 把路打断/退出路后自动重进模式3）。RoadModeController 构造时设置（其构造注入
+        /// MusicPlayerService，反向注入会形成 DI 环——静态门是最小侵入解）。返回 true = 路激活中。
+        /// </summary>
+        public static volatile Func<bool>? RoadActiveGate;
+
         /// <summary>播放链路错误（携带错误串；stderr 已记录，绝不崩溃不弹模态，音乐 tab 状态栏显示）。⚠️ 可能从 BASS 回调线程触发。</summary>
         public event Action<string>? PlaybackError;
 
@@ -196,6 +203,7 @@ namespace MiniPet.Services
                     _state = PlaybackState.Playing;
                 }
                 PersistNowPlaying(track);
+                Console.Error.WriteLine($"[Road] 事件源 CurrentChanged→{track?.Img}/{track?.Track}");
                 CurrentChanged?.Invoke(track);
                 StateChanged?.Invoke(PlaybackState.Playing);
             }
@@ -401,6 +409,13 @@ namespace MiniPet.Services
         /// </summary>
         public Task OnMapChanged(string mapId)
         {
+            // F17 互斥（F18）：无限之路激活期间场景联动直接 return（静态门由 RoadModeController 设置；
+            // 路退出恢复旧背景后的 F17 重进由背景闸门的「地图命令抑制代际」防一轮，不在此处理）
+            var roadGate = RoadActiveGate;
+            if (roadGate != null && roadGate())
+            {
+                return Task.CompletedTask;
+            }
             int mapGen;
             lock (_stateLock)
             {
@@ -611,7 +626,8 @@ namespace MiniPet.Services
                     _state = PlaybackState.Playing;
                 }
                 PersistNowPlaying(sceneTrack);
-                CurrentChanged?.Invoke(sceneTrack);
+                Console.Error.WriteLine($"[Road] 事件源 CurrentChanged→{sceneTrack?.Img}/{sceneTrack?.Track}");
+            CurrentChanged?.Invoke(sceneTrack);
                 StateChanged?.Invoke(PlaybackState.Playing);
             }
             finally
@@ -682,6 +698,7 @@ namespace MiniPet.Services
                 _state = PlaybackState.Playing;
             }
             PersistNowPlaying(target);
+            Console.Error.WriteLine($"[Road] 事件源 CurrentChanged→{target?.Img}/{target?.Track}");
             CurrentChanged?.Invoke(target);
             StateChanged?.Invoke(PlaybackState.Playing);
         }
@@ -783,6 +800,7 @@ namespace MiniPet.Services
                 _state = PlaybackState.Playing;
             }
             PersistNowPlaying(target);
+            Console.Error.WriteLine($"[Road] 事件源 CurrentChanged→{target?.Img}/{target?.Track}");
             CurrentChanged?.Invoke(target);
             StateChanged?.Invoke(PlaybackState.Playing);
         }

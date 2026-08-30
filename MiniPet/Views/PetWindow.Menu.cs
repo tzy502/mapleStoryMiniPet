@@ -28,6 +28,8 @@ public partial class PetWindow
     private MenuItem? _paperdollItem;
     // 音乐模块 V0.2.1：右键菜单「🎵 迷你控制条」开关项（IsChecked 反映 MusicConfig.MiniBarEnabled，见 RefreshMiniBarMenuItem）
     private MenuItem? _miniBarItem;
+    // F18 无限之路：右键菜单「🛣 路窗可交互」开关项（IsChecked=路窗交互态；纯运行时态不持久化，见下方 Click）
+    private MenuItem? _roadInteractiveItem;
 
     private ContextMenu BuildContextMenu()
     {
@@ -183,6 +185,24 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MiniBarToggle: {ex.Message}"); }
             };
             cm.Items.Add(_miniBarItem);
+
+            // ── 🛣 路窗可交互（F18 无限之路）：切换路窗点击穿透——勾选=关穿透（右键可拖动/边框缩放），取消=恢复穿透；
+            //    照 _miniBarItem 的 IsChecked 勾选模式，但为纯运行时态：不落配置、不持久化（路窗关闭后勾选态复位）；
+            //    路窗不存在（未进模式3 / 已隐藏）时 no-op（勾选态不翻转，避免残留假勾选）──
+            _roadInteractiveItem = new MenuItem { Header = "🛣 路窗可交互", IsChecked = false };
+            _roadInteractiveItem.Click += (_, _) =>
+            {
+                try
+                {
+                    var win = InfiniteRoadWindow.Current;
+                    if (win == null || !win.IsVisible) { return; }
+                    var target = !win.IsInteractive;
+                    win.SetInteractive(target);
+                    _roadInteractiveItem.IsChecked = target;
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RoadInteractiveToggle: {ex.Message}"); }
+            };
+            cm.Items.Add(_roadInteractiveItem);
 
             cm.Items.Add(new Separator());
 

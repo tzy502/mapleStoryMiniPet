@@ -112,6 +112,8 @@ namespace MiniPet.Models
     public class MapLife
     {
         public int Id { get; set; }
+        /// <summary>真实 WZ life 实体 ID（字符串，保留前导零；Id 是数组下标非实体 ID，F18 无限之路用）。</summary>
+        public string LifeId { get; set; } = "";
         public string Type { get; set; } = "n"; // "m"=Mob, "n"=Npc
         public int X { get; set; }
         public int Y { get; set; }

@@ -67,6 +67,13 @@ namespace MiniPet.Services
         // 实体帧提供者（纸娃娃实时合成；Mob/NPC 为 null 走图条）
         private IEntityFrameProvider? _frameProvider;
 
+        // F18 战斗动画租约（CombatLease）：租约期抑制「空闲随机切换」与「OneShot 播完自动回 stand」，
+        // 动画推进/收招完全由租约方（RoadCombatDirector）接管；任何显式 Play（用户/拖拽/agent）
+        // 视为打断——租约先失效并回调通知战斗方作废该次遭遇。无租约时全部路径行为与旧版逐字节一致。
+        private CombatAnimLease? _combatLease;
+        // 租约期 OneShot 播完已停末帧（防完成分支每帧重入重复发 ActionCompleted；Dispose 后恢复推进）
+        private bool _leaseHoldLastFrame;
+
         // 空闲随机动作池缓存（A13）：避免每次空闲触发都枚举磁盘动作列表；缓存键含 mobId + 外观指纹，
         // mob/外观/武器变化自动失效重建（A15：纸娃娃换武器必须重建展示池，否则展示动作永不上池）
         private string _idlePoolKey = string.Empty;
@@ -100,6 +107,16 @@ namespace MiniPet.Services
         /// </summary>
         public void Play(string action, PlayMode mode)
         {
+            // F18 战斗租约：显式 Play = 打断（用户切动画/拖拽/agent 驱动）——租约立即失效并回调，
+            // 战斗方（RoadCombatDirector）据此作废该次遭遇（绝不与用户动画抢播）。
+            var lease = _combatLease;
+            if (lease != null)
+            {
+                _combatLease = null;
+                _leaseHoldLastFrame = false;
+                lease.NotifyBroken();
+            }
+
             // 直接 Play 会打断当前动作（含 OneShot）——「等 OneShot 播完再切」的契约破裂，
             // 残留的 pending（A1 拖拽/移动请求）应一并作废，否则会在下一次 OneShot 完成时误触发。
             _pendingAction = string.Empty;
@@ -207,6 +224,11 @@ namespace MiniPet.Services
             }
 
             _accumulatedDelay += deltaMs;
+            if (_leaseHoldLastFrame)
+            {
+                // F18 租约期停末帧：清累计防完成分支重入（Dispose 后恢复正常追帧）
+                _accumulatedDelay = 0;
+            }
 
             // 无论当前是循环还是 OneShot，都按真实经过时间累积空闲计时。
             if (_randomIdleEnabled)
@@ -215,7 +237,8 @@ namespace MiniPet.Services
                 if (_currentMode == PlayMode.Loop && _idleAccumulated >= _currentIdleThreshold)
                 {
                     var randomAction = GetRandomAction();
-                    if (randomAction != null && randomAction != _currentAction)
+                    // F18 战斗租约：空闲随机切换被抑制（等效无候选——重置阈值继续站桩）
+                    if (_combatLease == null && randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
                         // A10：随机空闲只选 Loop 类动作 → 直接 Loop 播放，不预置 pending
@@ -251,6 +274,16 @@ namespace MiniPet.Services
                         var onComplete = _onComplete;
                         _onComplete = null;
                         onComplete?.Invoke();
+
+                        if (_combatLease != null)
+                        {
+                            // F18 战斗租约：抑制「播完自动回 stand」——清 pending 停末帧（收招由租约方接管）
+                            _pendingAction = string.Empty;
+                            _currentFrameIndex = strip.FrameCount - 1;
+                            _accumulatedDelay = 0;
+                            _leaseHoldLastFrame = true;
+                            break;
+                        }
 
                         var nextAction = !string.IsNullOrEmpty(_pendingAction)
                             ? _pendingAction
@@ -292,6 +325,11 @@ namespace MiniPet.Services
         private FrameResult TickProvider(IEntityFrameProvider provider, double deltaMs)
         {
             _accumulatedDelay += deltaMs;
+            if (_leaseHoldLastFrame)
+            {
+                // F18 租约期停末帧：清累计防完成分支重入（Dispose 后恢复正常追帧）
+                _accumulatedDelay = 0;
+            }
 
             if (_randomIdleEnabled)
             {
@@ -309,7 +347,8 @@ namespace MiniPet.Services
                             randomMode = retryMode;
                         }
                     }
-                    if (randomAction != null && randomAction != _currentAction)
+                    // F18 战斗租约：空闲随机切换（含武器展示）被抑制——攻击期间不打岔
+                    if (_combatLease == null && randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发(纸娃娃): {randomAction} 模式={randomMode}");
                         // A15：空闲随机除 Loop 微动效外，还会选中武器展示 OneShot（swing*/stab*/shoot*）
@@ -353,6 +392,16 @@ namespace MiniPet.Services
                         var onComplete = _onComplete;
                         _onComplete = null;
                         onComplete?.Invoke();
+
+                        if (_combatLease != null)
+                        {
+                            // F18 战斗租约：抑制「播完自动回 stand1/2」——清 pending 停末帧（收招由租约方接管）
+                            _pendingAction = string.Empty;
+                            _currentFrameIndex = frameCount - 1;
+                            _accumulatedDelay = 0;
+                            _leaseHoldLastFrame = true;
+                            break;
+                        }
 
                         var nextAction = !string.IsNullOrEmpty(_pendingAction)
                             ? _pendingAction
@@ -719,8 +768,9 @@ namespace MiniPet.Services
         /// 121-132 系为 swingO 帧集、133-134 枪矛 swingP、137-138 弓弩 shoot、140-146 双手 swingT
         /// （对齐 PaperdollService.IsTwoHandWeapon 的 141-146）、153 系 swingT/swingP、170 系无展示帧。
         /// 映射未覆盖/不匹配时由兜底池接管（武器有帧即展示），不会因编号异常而无展示。
+        /// F18 起公开：RoadCombatDirector 用同一映射构造攻击动作候选序（族内序 × WeaponHasAction 过滤）。
         /// </summary>
-        private static string GetWeaponActionFamily(string? weaponId)
+        public static string GetWeaponActionFamily(string? weaponId)
         {
             if (string.IsNullOrEmpty(weaponId) || !int.TryParse(weaponId, out var n))
             {
@@ -922,6 +972,65 @@ namespace MiniPet.Services
         /// <summary>当前是否走帧提供者（纸娃娃哨兵 + 已注册）。</summary>
         public bool IsProviderActive => _frameProvider != null && _currentMobId == PaperdollService.SentinelMobId;
 
+        // ── F18 战斗动画租约（无租约时所有旧路径逐字节不变；细节见字段注释） ──
+
+        /// <summary>
+        /// 获取战斗动画租约（F18）：同一时刻至多一个；租约期空闲随机切换与 OneShot 播完自动回
+        /// stand 均被抑制（停末帧），动画时间线完全由租约方接管。任何显式 <see cref="Play"/> 视为
+        /// 打断——租约先失效并回调 <paramref name="onBroken"/>（战斗方作废该次遭遇）。
+        /// 已有租约在途时返回 null（不排队不抢占——战斗方自己串行）。
+        /// </summary>
+        /// <param name="action">租约锁定的攻击动作名（诊断/回调携带）</param>
+        /// <param name="onBroken">被打断时的失效回调（UI 线程 tick 内同步触发；参数 = 被打断的动作名）</param>
+        public IDisposable? AcquireCombatLease(string action, Action<string>? onBroken = null)
+        {
+            if (_combatLease != null)
+            {
+                return null;
+            }
+            _combatLease = new CombatAnimLease(this, action, onBroken);
+            return _combatLease;
+        }
+
+        /// <summary>释放战斗租约（租约方正常收招完毕调用；清停末帧标志恢复正常推进）。</summary>
+        internal void ReleaseCombatLease(CombatAnimLease lease)
+        {
+            if (ReferenceEquals(_combatLease, lease))
+            {
+                _combatLease = null;
+                _leaseHoldLastFrame = false;
+            }
+        }
+
+        /// <summary>
+        /// 当前动画可观测快照（F18 命中帧判定用）：在播且有帧数据时返回
+        /// (动作名, 当前帧号, 总帧数)，否则 null。攻击命中帧判据 = FrameIndex / FrameCount ≥ 0.5
+        /// （RoadConstants.HitFrameRatio 同源约定，此处只报数不判阈值）。
+        /// </summary>
+        public (string Action, int FrameIndex, int FrameCount)? CurrentAnimInfo
+        {
+            get
+            {
+                var provider = ActiveProvider;
+                if (provider != null)
+                {
+                    int frameCount = provider.GetFrameCount(_currentAction);
+                    if (frameCount > 0)
+                    {
+                        return (_currentAction, _currentFrameIndex, frameCount);
+                    }
+                    return null;
+                }
+                var strip = _currentStrip.Item1;
+                if (strip != null && strip.FrameCount > 0)
+                {
+                    int idx = Math.Min(_currentFrameIndex, strip.FrameCount - 1);
+                    return (_currentAction, idx, strip.FrameCount);
+                }
+                return null;
+            }
+        }
+
         private IEntityFrameProvider? ActiveProvider => IsProviderActive ? _frameProvider : null;
 
         // 标准动作 → 纸娃娃动作别名（对齐 MapleSalon2 updateActionByWeapon / stand 变体）
@@ -1122,5 +1231,49 @@ namespace MiniPet.Services
 
         /// <summary>在播但无帧可画（条带缺失/解码失败/离线兜底空）→ UI 应清画布防旧帧冻结（A9）。</summary>
         public bool Empty { get; set; }
+    }
+
+    /// <summary>
+    /// F18 战斗动画租约句柄：Dispose = 正常收招释放；被显式 Play 打断时由 AnimService 触发
+    /// NotifyBroken（一次性回调，战斗方据此作废该次遭遇）。线程模型：全部在 UI 线程 tick 序列内。
+    /// </summary>
+    internal sealed class CombatAnimLease : IDisposable
+    {
+        private readonly AnimService _owner;
+        private Action<string>? _onBroken;
+
+        /// <summary>租约锁定的攻击动作名（诊断与回调携带）。</summary>
+        public string Action { get; }
+
+        internal CombatAnimLease(AnimService owner, string action, Action<string>? onBroken)
+        {
+            _owner = owner;
+            Action = action;
+            _onBroken = onBroken;
+        }
+
+        /// <summary>打断通知（AnimService 显式 Play 路径调用；只触发一次）。</summary>
+        internal void NotifyBroken()
+        {
+            var callback = _onBroken;
+            _onBroken = null;
+            if (callback != null)
+            {
+                try
+                {
+                    callback(Action);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Anim] CombatLeaseBroken 回调异常: {ex.Message}");
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _onBroken = null;
+            _owner.ReleaseCombatLease(this);
+        }
     }
 }
