@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using MiniPet;
 using MiniPet.Services;
 using MiniPet.Views;
@@ -37,8 +38,18 @@ public static class SettingsPreviewSelfTest
         var map = new MapService(wz, cache);
 
         // 2. 构造 SettingsWindow（构建全部 tab）
+        // V0.1.3 多桌宠：SettingsWindow 构造函数新增 3 参（petManager / eventBus / targetPetId）。
+        // EventBus 供 PetManager 订阅命令事件（AddPet / RemovePet / SetPrimaryPet）；PetManager 构造只订阅事件，
+        // 不创建任何窗口（窗口创建在 CreateAllFromConfig 里，本自检不调用），故用最小 ServiceProvider 装配即可。
+        var eventBus = new EventBus();
+        var services = new ServiceCollection().BuildServiceProvider();
+        var petManager = new PetManager(services, config, eventBus, wz);
+        var targetPetId = GetTargetPetId(config);
+        // V0.2.1 合并：SettingsWindow 构造末尾还追加了音乐目录 / 播放服务两个参数（音乐页）
+        var musicCatalog = new MusicCatalogService(wz);
+        var musicPlayer = new MusicPlayerService(wz, musicCatalog, new BassMusicPlayer(), config);
         Console.WriteLine("[自检] 构造 SettingsWindow…");
-        var win = new SettingsWindow(config, wz, paperdoll, map, balloon);
+        var win = new SettingsWindow(config, wz, paperdoll, map, balloon, musicCatalog, musicPlayer, petManager, eventBus, targetPetId);
         win.Show();
 
         // 3. 素材 tab 预览流程（反射驱动）
@@ -116,4 +127,25 @@ public static class SettingsPreviewSelfTest
     private static MethodInfo GetMethod(object obj, string name)
         => obj.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)
            ?? throw new MissingMethodException(obj.GetType().FullName, name);
+
+    /// <summary>
+    /// 取设置中心要编辑的目标宠物 id（V0.1.3 多桌宠）：配置里第一只宠物的 id，取不到则退回 "pet-1"。
+    /// 与 SettingsWindow.TargetPet() 的兜底一致（id 失效时它会退回主宠 / 第一只，不会异常）。
+    /// </summary>
+    private static string GetTargetPetId(ConfigService config)
+    {
+        try
+        {
+            var first = config.LoadSettings().Pets?.FirstOrDefault();
+            if (!string.IsNullOrEmpty(first?.Id))
+            {
+                return first!.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[自检] 读取目标宠物 id 失败，回退 pet-1: {ex.Message}");
+        }
+        return "pet-1";
+    }
 }

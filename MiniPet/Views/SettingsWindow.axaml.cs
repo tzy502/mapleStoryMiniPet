@@ -176,17 +176,70 @@ public partial class SettingsWindow : Window
     private List<(int Id, string Name)> _realBalloonList = new();
     private Border? _balloonPreviewCanvas;
 
+    // ── V0.1.3 多桌宠：本设置窗口操作的目标宠物（默认 = 创建它的那只）──
+    private readonly PetManager _petManager;
+    private readonly EventBus _eventBus;
+    private string _targetPetId;
+    private Action<object?>? _paperdollDoneHandler;   // 换装完成回执订阅（真关闭时退订）
+    private bool _reallyClosing;                     // ForceCloseForRemoval：跳过「关闭=隐藏」
 
-    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc, BalloonService balloonSvc, MusicCatalogService musicCatalog, MusicPlayerService musicPlayer)
+    /// <summary>本设置窗口当前编辑的目标宠物（V0.1.3 多桌宠）；id 失效时退回主宠 / 第一只。</summary>
+    private PetInstanceConfig? TargetPet()
+    {
+        try
+        {
+            var list = _config.LoadSettings().Pets ?? new List<PetInstanceConfig>();
+            return list.FirstOrDefault(p => p.Id == _targetPetId)
+                   ?? list.FirstOrDefault(p => p.Primary)
+                   ?? list.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SettingsWindow] TargetPet: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 切换编辑目标（PetManager 在「右键某只桌宠 → 设置中心」时调用；设置中心全局唯一，
+    /// 同一窗口被多只桌宠复用，必须跟着切目标，否则会改到上一只）。
+    /// </summary>
+    internal void SetTargetPet(string petId)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(petId) || petId == _targetPetId)
+            {
+                return;
+            }
+            _targetPetId = petId;
+            RefreshPetList();   // 列表选中项 = 新目标；内部会同步纸娃娃草稿与提示
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SetTargetPet: {ex.Message}"); }
+    }
+
+    /// <summary>目标宠物 id（设置中心「桌宠」页切换目标用；外部只读）。</summary>
+    public string TargetPetId => _targetPetId;
+
+    /// <summary>多桌宠管理器（设置中心「桌宠」页添加 / 移除 / 设主宠用）。</summary>
+    public PetManager Pets => _petManager;
+
+    public SettingsWindow(ConfigService config, WzService wzService, PaperdollService paperdollSvc, MapService mapSvc, BalloonService balloonSvc, MusicCatalogService musicCatalog, MusicPlayerService musicPlayer, PetManager petManager, EventBus eventBus, string targetPetId)
+
     {
         _config = config;
         _wzService = wzService;
         _paperdollSvc = paperdollSvc;
         _mapSvc = mapSvc;
         _balloonService = balloonSvc;
+
         // 音乐模块服务（V0.2.0，A4 接线：PetWindow 从 App 容器获取后透传；末尾追加参数，现有调用方顺序不动）
         _musicCatalog = musicCatalog;
         _musicPlayer = musicPlayer;
+        _petManager = petManager;
+        _eventBus = eventBus;
+        _targetPetId = targetPetId ?? string.Empty;
+
         _settings = _config.LoadSettings();
         _wzConfig = _config.LoadWzConfig();
         _isDarkMode = _settings.Theme != "light";
@@ -194,9 +247,10 @@ public partial class SettingsWindow : Window
         // 纸娃娃页初始显示当前主窗口搭配（2026-08-17：原固定默认外观，用户在设置中心「查看
         // 现在用的搭配」时发型/脸型/装备全被默认值顶替，看不到当前搭配；有存档则克隆恢复，
         // 无存档保持默认外观）。窗口单例复用，仅首次构造生效，后续保留用户本次编辑状态。
+        // V0.1.3：改为「目标宠物」的搭配（多桌宠各看各的）。
         try
         {
-            var current = _settings.CurrentPaperdoll;
+            var current = TargetPet()?.Paperdoll ?? _settings.CurrentPaperdoll;
             if (current != null)
             {
                 _paperdollCurrent = CloneAppearance(current);
@@ -260,6 +314,25 @@ public partial class SettingsWindow : Window
             Dispatcher.UIThread.Post(() => RefreshFromSettings());
         };
 
+        // V0.1.3 多桌宠：「🐾 桌宠」页跟随宠物增删 / 主宠切换刷新列表。
+        // ⚠️ 只在构造里注册一次（本窗口关闭是 Hide 复用，若在 BuildPetsPane / 刷新里 += 会重复订阅）。
+        _petManager.PetsChanged += OnPetsChanged;
+
+        // I2：换装完成回执——发起换装的设置窗口可能不是「目标宠物自己的」设置窗口，
+        // 光靠目标 PetWindow 回调自己的 _settingsWindow 解除不了 busy（按钮会永久停在「⏳ 合成中…」）。
+        _paperdollDoneHandler = data =>
+        {
+            try
+            {
+                if (data is string donePetId && donePetId == (_targetPetId ?? string.Empty))
+                {
+                    Dispatcher.UIThread.Post(() => SetPaperdollApplyBusy(false));
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] PaperdollDone: {ex.Message}"); }
+        };
+        _eventBus.Subscribe(EventType.PaperdollAppliedDone, _paperdollDoneHandler);
+
         // WZ 未加载时禁用资源相关操作
         if (!_wzService.IsLoaded && _statusBarText != null)
         {
@@ -274,6 +347,21 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            if (_reallyClosing)
+            {
+                // I1：所属桌宠被移除 → 真正销毁（并退订全局事件），不再 Hide 复用
+                _previewAnimTimer.Stop();
+                _petSearchDebounce.Stop();
+                _balloonSearchDebounce.Stop();
+                try { _petManager.PetsChanged -= OnPetsChanged; } catch { }
+                if (_paperdollDoneHandler != null)
+                {
+                    try { _eventBus.Unsubscribe(EventType.PaperdollAppliedDone, _paperdollDoneHandler); } catch { }
+                    _paperdollDoneHandler = null;
+                }
+                base.OnClosing(e);
+                return;
+            }
             // 取消关闭，改为隐藏
             e.Cancel = true;
             _previewAnimTimer.Stop();
@@ -286,6 +374,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OnClosing: {ex.Message}"); }
     }
+
 
     /// <summary>
     /// 打开设置中心并切到音乐 tab（PetWindow 右键菜单「🎵 音乐」入口，设计 §11.9；A4 接线调用）。
@@ -301,6 +390,18 @@ public partial class SettingsWindow : Window
             OnMusicTabActivated();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] OpenMusicTab: {ex.Message}"); }
+    }
+
+    /// <summary>I1：所属桌宠被移除时真正关闭本窗口（普通关闭仍是「隐藏复用」）。</summary>
+    internal void ForceCloseForRemoval()
+    {
+        try
+        {
+            _reallyClosing = true;
+            Close();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ForceCloseForRemoval: {ex.Message}"); }
+
     }
 
     private Panel BuildTitleBar()
@@ -333,7 +434,10 @@ public partial class SettingsWindow : Window
     private Panel BuildMainTabBar()
     {
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 0, 14, 0) };
-        var tabs = new[] { "📦 桌宠设置", "🔗 AI 设置", "💬 对话记录", "🎵 音乐" };
+        // 🐾 桌宠 = V0.1.3 多桌宠管理页（索引必须与 BuildBody 的 _mainPanes 顺序、PetsMainTabIndex 一致）
+        // 🎵 音乐 = V0.2.1 音乐页（索引见 MusicTabIndex）
+        var tabs = new[] { "📦 桌宠设置", "🐾 桌宠", "🔗 AI 设置", "💬 对话记录", "🎵 音乐" };
+
         for (int i = 0; i < tabs.Length; i++)
         {
             var idx = i;
@@ -353,6 +457,13 @@ public partial class SettingsWindow : Window
         var pane0 = BuildPetSettingsPane();
         _mainPanes.Add(pane0);
         grid.Children.Add(pane0);
+
+        // 🐾 桌宠（多桌宠管理页）：pane 顺序必须与 tab 栏顺序一致（索引 = PetsMainTabIndex）
+        var panePets = BuildPetsPane();
+        panePets.IsVisible = false;
+        _mainPanes.Add(panePets);
+        grid.Children.Add(panePets);
+
         var pane1 = BuildAiSettingsPane();
         pane1.IsVisible = false;
         _mainPanes.Add(pane1);
@@ -609,7 +720,7 @@ public partial class SettingsWindow : Window
                 if (_favoriteList.SelectedItem is FavoriteItem fi)
                 {
                     _settings.Favorites.RemoveAll(f => f.Id == fi.Id && f.Type == fi.Type);
-                    _config.SaveSettings(_settings);
+                    _config.SaveSettingsKeepingPets(_settings);
                     RefreshFavoriteList();
                     if (_statusBarText != null)
                     {
@@ -646,7 +757,7 @@ public partial class SettingsWindow : Window
                 if (_recentList.SelectedItem is RecentItem ri)
                 {
                     _settings.RecentItems.RemoveAll(r => r.Id == ri.Id && r.Type == ri.Type);
-                    _config.SaveSettings(_settings);
+                    _config.SaveSettingsKeepingPets(_settings);
                     RefreshRecentList();
                     if (_statusBarText != null)
                     {
@@ -1036,7 +1147,21 @@ public partial class SettingsWindow : Window
 
     private void SwitchMainTab(int index)
     {
-        try { if (_activeMainTab == index) return; _activeMainTab = index; for (int i = 0; i < _mainTabHeaders.Count; i++) { _mainTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim; _mainPanes[i].IsVisible = i == index; } if (index == MusicTabIndex) { OnMusicTabActivated(); } else { UpdateMusicProgressTimer(); } }
+        try
+        {
+            if (_activeMainTab == index) { return; }
+            _activeMainTab = index;
+            for (int i = 0; i < _mainTabHeaders.Count; i++)
+            {
+                _mainTabHeaders[i].Foreground = i == index ? BrushAccent : BrushTxtDim;
+                _mainPanes[i].IsVisible = i == index;
+            }
+            // 切到「🐾 桌宠」页时刷新列表（宠物增删 / 实体变更后进页面即最新）
+            if (index == PetsMainTabIndex) { RefreshPetList(); }
+            // 音乐页（V0.2.1）：进入时懒加载 + 进度条三条件重估；离开时更新进度计时
+            if (index == MusicTabIndex) { OnMusicTabActivated(); } else { UpdateMusicProgressTimer(); }
+        }
+
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SwitchMainTab: {ex.Message}"); }
     }
 
@@ -1152,7 +1277,8 @@ public partial class SettingsWindow : Window
 
     private void RefreshFromSettings()
     {
-        try { RefreshFavoriteList(); RefreshRecentList(); RefreshBgHistoryList(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RefreshFromSettings: {ex.Message}"); }
+        // 「🐾 桌宠」列表也跟随配置变更刷新（实体 / 缩放 / 位置变了列表即最新；内部有目标选中保持 + 回环抑制）
+        try { RefreshFavoriteList(); RefreshRecentList(); RefreshBgHistoryList(); RefreshPetList(); } catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RefreshFromSettings: {ex.Message}"); }
     }
 
     private static Image MakeThumbImage(Bitmap bmp) => new Image { Source = bmp, Width = 26, Height = 26, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -1531,7 +1657,7 @@ public partial class SettingsWindow : Window
                 _settings.Favorites.Remove(existing);
             }
             else _settings.Favorites.Insert(0, new FavoriteItem { Type = type, Id = id, Name = name, AddedAt = DateTime.Now });
-            _config.SaveSettings(_settings);
+            _config.SaveSettingsKeepingPets(_settings);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ToggleFavorite: {ex.Message}"); }
     }
@@ -1623,20 +1749,39 @@ public partial class SettingsWindow : Window
                 {
                     try
                     {
-                        _settings.CurrentMobId = id;
-                        _settings.CurrentEntityType = _previewIsMob ? "mob" : "npc";
-                        var existing = _settings.RecentItems.FirstOrDefault(r => r.Id == id);
-                        if (existing != null)
+                        // V0.1.3：实体写到「目标宠物」自己那一份 + 最近使用记录合并写，
+                        // 不再整份覆盖（旧写法会把其他宠物刚写的实例数据回滚掉）
+                        _config.UpdateSettings(s =>
                         {
-                            existing.LastUsedAt = DateTime.Now;
-                        }
-                        else
-                        {
-                            _settings.RecentItems.Insert(0, new RecentItem { Type = _previewIsMob ? "mob" : "npc", Id = id, Name = name, LastUsedAt = DateTime.Now });
-                            if (_settings.RecentItems.Count > 20)
-                                _settings.RecentItems = _settings.RecentItems.Take(20).ToList();
-                        }
-                        _config.SaveSettings(_settings);
+                            var target = (s.Pets ?? new List<PetInstanceConfig>()).FirstOrDefault(p => p.Id == _targetPetId)
+                                         ?? (s.Pets ?? new List<PetInstanceConfig>()).FirstOrDefault(p => p.Primary);
+                            if (target != null)
+                            {
+                                target.MobId = id;
+                                target.EntityType = _previewIsMob ? "Mob" : "Npc";
+                                // V0.1.3：记下 WZ 名，桌宠列表直接显示名字（否则多只同类只能看 id）
+                                target.Name = name ?? string.Empty;
+                            }
+                            else
+                            {
+                                s.CurrentMobId = id;
+                                s.CurrentEntityType = _previewIsMob ? "mob" : "npc";
+                            }
+                            var existing = s.RecentItems.FirstOrDefault(r => r.Id == id);
+                            if (existing != null)
+                            {
+                                existing.LastUsedAt = DateTime.Now;
+                            }
+                            else
+                            {
+                                s.RecentItems.Insert(0, new RecentItem { Type = _previewIsMob ? "mob" : "npc", Id = id, Name = name, LastUsedAt = DateTime.Now });
+                                if (s.RecentItems.Count > 20)
+                                {
+                                    s.RecentItems = s.RecentItems.Take(20).ToList();
+                                }
+                            }
+                        });
+                        _settings = _config.LoadSettings();   // 刷新本地快照（后续 tab 写回基于最新）
                         _previewAnimTimer.Stop();
 
                         if (applyBtn != null)
@@ -1663,7 +1808,12 @@ public partial class SettingsWindow : Window
                             _ = HideCacheToastAfter(1500);
                         }
 
-                        OnPetApplied?.Invoke(id, name, _previewIsMob ? "Mob" : "Npc");
+                        // V0.1.3 定向：只有「目标宠物」切实体（旧链路 OnPetApplied 回调创建者，
+                        // 编辑目标切到别的宠物时会把创建者也一起改成同一只）
+                        var appliedType = _previewIsMob ? "Mob" : "Npc";
+                        _eventBus.Publish(EventType.EntityApplied,
+                            new PetEntityAppliedEvent(TargetPet()?.Id ?? _targetPetId, id, name, appliedType));
+                        OnPetApplied?.Invoke(id, name, appliedType);
                         Hide();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] ApplyPost: {ex.Message}"); }

@@ -26,8 +26,14 @@ public partial class PetWindow
     private MenuItem? _modeStaticItem;
     private MenuItem? _modeCameraItem;
     private MenuItem? _paperdollItem;
+
     // 音乐模块 V0.2.1：右键菜单「🎵 迷你控制条」开关项（IsChecked 反映 MusicConfig.MiniBarEnabled，见 RefreshMiniBarMenuItem）
     private MenuItem? _miniBarItem;
+    // V0.1.3 多桌宠菜单项
+    private MenuItem? _addPetMenuItem;
+    private MenuItem? _primaryPetMenuItem;
+    private MenuItem? _removePetMenuItem;
+
 
     private ContextMenu BuildContextMenu()
     {
@@ -238,6 +244,35 @@ public partial class PetWindow
             };
             cm.Items.Add(dshStatusItem);
 
+            // ── V0.1.3 多桌宠：添加 / 移除 / 设为主宠 ──
+            var petMenuItem = new MenuItem { Header = "🐾 桌宠" };
+            _addPetMenuItem = new MenuItem { Header = "➕ 添加桌宠（复制这只）" };
+            _addPetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.AddPet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AddPet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_addPetMenuItem);
+
+            _primaryPetMenuItem = new MenuItem { Header = "⭐ 设为主宠" };
+            _primaryPetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.SetPrimaryPet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SetPrimaryPet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_primaryPetMenuItem);
+
+            _removePetMenuItem = new MenuItem { Header = "🗑 移除这只桌宠" };
+            _removePetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.RemovePet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RemovePet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_removePetMenuItem);
+
+            cm.Items.Add(petMenuItem);
+            cm.Items.Add(new Separator());
+
             // ── 设置中心 ──
             var settingsItem = new MenuItem { Header = "设置中心" };
             settingsItem.Click += (_, _) =>
@@ -295,7 +330,7 @@ public partial class PetWindow
                 {
                     _isExiting = true;
                     _trayService.HideTrayIcon();
-                    _settingsWindow?.Close();
+                    // V0.1.3：设置中心全局唯一（由 PetManager 持有），随进程一起退出，不在这里关
                     _backgroundWindow.Close();
                     _mapViewportWindow.Close();
                     _eventBus.Publish(EventType.AppExit);
@@ -339,7 +374,8 @@ public partial class PetWindow
         try
         {
             var settings = _configService.LoadSettings();
-            var hasPreset = settings.CurrentPaperdoll != null;
+            // V0.1.3：看本宠物自己的搭配是否存在
+            var hasPreset = ((settings.Pets?.FirstOrDefault(p => p.Id == _petId)?.Paperdoll) ?? _cfg.Paperdoll) != null;
             if (IsSentinelActive())
             {
                 _paperdollItem.Header = "✓ 纸娃娃（当前）";
@@ -355,6 +391,33 @@ public partial class PetWindow
     }
 
     /// <summary>
+    /// 刷新「桌宠」菜单（ContextMenu.Opening 时调用，V0.1.3）：
+    /// 当前主宠标记为 ✓ 并禁用重复设置；仅剩一只时禁用移除。
+    /// </summary>
+    private void RefreshPetMenu()
+    {
+        try
+        {
+            var count = _petManager?.Count ?? 1;
+            if (_primaryPetMenuItem != null)
+            {
+                _primaryPetMenuItem.Header = _isPrimaryRole ? "✓ 主宠（当前）" : "⭐ 设为主宠";
+                _primaryPetMenuItem.IsEnabled = !_isPrimaryRole;
+            }
+            if (_removePetMenuItem != null)
+            {
+                _removePetMenuItem.Header = count > 1 ? "🗑 移除这只桌宠" : "🗑 移除这只桌宠（仅剩一只，不可移除）";
+                _removePetMenuItem.IsEnabled = count > 1;
+            }
+            if (_addPetMenuItem != null)
+            {
+                _addPetMenuItem.Header = $"➕ 添加桌宠（当前 {count} 只）";
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshPetMenu: {ex.Message}"); }
+    }
+
+    /// <summary>
     /// 切换到纸娃娃模式：恢复当前预设搭配（复用 LoadDefaultPet 启动恢复路径的 SetAppearance + 哨兵 mobId），
     /// 持久化哨兵以便重启恢复，循环播放 stand1（同 ApplyPaperdoll 完成路径），后台预热常用动作。
     /// </summary>
@@ -363,7 +426,8 @@ public partial class PetWindow
         try
         {
             var settings = _configService.LoadSettings();
-            var pa = settings.CurrentPaperdoll;
+            // V0.1.3：本宠物自己的纸娃娃搭配（旧版读全局 CurrentPaperdoll = 所有宠物共用一套外观）
+            var pa = (settings.Pets?.FirstOrDefault(p => p.Id == _petId)?.Paperdoll) ?? _cfg.Paperdoll;
             if (pa == null)
             {
                 ShowInfoPopup("切换人物", "未保存纸娃娃预设。\n请先在设置中心 > 玩家 (PLAYER) > 纸娃娃编辑器 保存搭配。");
@@ -372,10 +436,8 @@ public partial class PetWindow
             if (IsSentinelActive()) { return; } // 已在纸娃娃模式（菜单项已禁用，双保险）
             _currentEntityType = "player";
             _paperdoll.SetAppearance(pa); // 同启动恢复：切换外观清依赖外观缓存；引用赋值原子，帧循环安全
-            // 持久化哨兵（启动恢复依赖 CurrentMobId == SentinelMobId）
-            settings.CurrentMobId = PaperdollService.SentinelMobId;
-            settings.CurrentEntityType = "player";
-            _configService.SaveSettings(settings);
+            // 持久化哨兵（V0.1.3：只写本宠物这一只的实例配置）
+            PersistEntity(PaperdollService.SentinelMobId, "player");
             _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
             _animService.Play("stand1", PlayMode.Loop);
             _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，同 SwitchToPet）
@@ -659,6 +721,14 @@ public partial class PetWindow
         try
         {
             _bgMenu.Items.Clear();
+
+            // V0.1.3 多桌宠：地图背景只挂主宠（背景窗口是「全局单份」语义——同一张地图 + 全局层开关，
+            // 多只同时挂会互相遮挡，且 MapService 整图缓存单槽会互相顶掉）。
+            if (!_isPrimaryRole)
+            {
+                _bgMenu.Items.Add(new MenuItem { Header = "（仅主宠可挂地图背景）", IsEnabled = false });
+                return;
+            }
 
             // 1. 开关（背景=静态+摄像机抽象：任一可见即"开"）
             bool bgOn = _backgroundWindow.IsVisible || _mapViewportWindow.IsVisible;

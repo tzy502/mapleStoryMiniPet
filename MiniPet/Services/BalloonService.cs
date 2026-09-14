@@ -16,7 +16,10 @@ namespace MiniPet.Services
         private readonly CacheManager _cache;
         private readonly WzService _wz;
         private int _displayDurationMs = 5000;
-        private CancellationTokenSource? _hideCts;
+        // V0.1.3 多桌宠：按目标宠物分槽（key = petId，空串 = 广播槽）。旧实现单槽会在 B 弹气泡时
+        // 取消 A 正在渲染/显示的气泡（跨宠物互相打断），多只桌宠同屏时表现为「谁说话谁把别人掐掉」。
+        private readonly Dictionary<string, CancellationTokenSource> _hideCtsMap = new(StringComparer.Ordinal);
+        private readonly object _hideCtsLock = new();
         private readonly HashSet<string> _seeding = new();
 
         // 补-13/S12：按 balloonId 缓存的解码后瓦片（预览与显示反复 RenderBalloon，避免每次重解 11 张 PNG）。
@@ -27,8 +30,11 @@ namespace MiniPet.Services
         private readonly Queue<string> _tileOrder = new();
         private const int MaxTileCacheEntries = 24;
 
-        /// <summary>气泡渲染完成回调：(text, data, pngBytes) — 由上层在 UI 线程显示</summary>
-        public event Action<string, BalloonData, byte[], int?>? OnBalloonReady;
+        /// <summary>
+        /// 气泡渲染完成回调：(text, data, pngBytes, durationMs, targetPetId) — 由上层在 UI 线程显示。
+        /// targetPetId 非空时只有该宠物显示（多桌宠定向）；null = 广播给所有桌宠。
+        /// </summary>
+        public event Action<string, BalloonData, byte[], int?, string?>? OnBalloonReady;
 
         public BalloonService(CacheManager cache, WzService wz)
         {
@@ -320,11 +326,21 @@ namespace MiniPet.Services
         /// 后台线程合成气泡 PNG，完成后通过 OnBalloonReady 回调（由上层在 UI 线程显示）。
         /// 自动淡出计时由 BalloonControl 内部负责。
         /// </summary>
-        public async Task Show(string text, BalloonData data, int? durationMs = null, bool bold = false)
+        public async Task Show(string text, BalloonData data, int? durationMs = null, bool bold = false, string? targetPetId = null)
         {
-            _hideCts?.Cancel();
-            _hideCts = new CancellationTokenSource();
-            var token = _hideCts.Token;
+            var key = targetPetId ?? string.Empty;
+            CancellationTokenSource cts;
+            lock (_hideCtsLock)
+            {
+                if (_hideCtsMap.TryGetValue(key, out var prev))
+                {
+                    try { prev.Cancel(); } catch { }
+                    try { prev.Dispose(); } catch { }
+                }
+                cts = new CancellationTokenSource();
+                _hideCtsMap[key] = cts;
+            }
+            var token = cts.Token;
             try
             {
                 byte[]? rendered = null;
@@ -335,18 +351,25 @@ namespace MiniPet.Services
                 }, token);
 
                 if (rendered != null)
-                    OnBalloonReady?.Invoke(text, data, rendered, durationMs);
+                    OnBalloonReady?.Invoke(text, data, rendered, durationMs, targetPetId);
             }
             catch (TaskCanceledException) { }
             catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Show: {ex.Message}"); }
         }
 
         /// <summary>
-        /// 隐藏气泡
+        /// 隐藏气泡（targetPetId 为空 = 隐藏广播槽；多桌宠时各宠物各隐藏自己的）。
         /// </summary>
-        public void Hide()
+        public void Hide(string? targetPetId = null)
         {
-            _hideCts?.Cancel();
+            var key = targetPetId ?? string.Empty;
+            lock (_hideCtsLock)
+            {
+                if (_hideCtsMap.TryGetValue(key, out var cts))
+                {
+                    try { cts.Cancel(); } catch { }
+                }
+            }
         }
 
         /// <summary>

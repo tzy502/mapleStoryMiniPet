@@ -32,7 +32,9 @@ public partial class SettingsWindow
 {
     // ====== 常量 ======
     /// <summary>音乐 tab 在顶层 tab 行的索引（第 4 个：桌宠设置 / AI 设置 / 对话记录 / 音乐）。</summary>
-    private const int MusicTabIndex = 3;
+    // V0.1.3 合并后 tab 顺序：0=📦 桌宠设置 1=🐾 桌宠(V0.1.3 插入) 2=🔗 AI 设置 3=💬 对话记录 4=🎵 音乐
+    // → 音乐页从索引 3 顺延到 4（必须与 BuildMainTabBar 的 tabs 数组、BuildBody 的 _mainPanes 顺序一致）
+    private const int MusicTabIndex = 4;
     /// <summary>进度条轮询间隔（毫秒）——只刷新进度与 mm:ss 时间文本，无需高频。</summary>
     private const int MusicProgressIntervalMs = 250;
     /// <summary>搜索输入即过滤的防抖间隔（毫秒，同素材/气泡 tab 的防抖模式）。</summary>

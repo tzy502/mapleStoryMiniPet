@@ -1,6 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+
 using System.Threading.Tasks;
+
+using System.Linq;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
@@ -35,7 +40,10 @@ public static class MiniPetEvents
 public class TrayService
 {
     private TrayIcon? _trayIcon;
-    private Window? _mainWindow;
+    // V0.1.3 多桌宠：登记全部桌宠窗口，托盘动作（显示/隐藏/居中）作用于全部
+    // （旧版单槽 _mainWindow 只认最后创建的那只 → 第 2 只出现后"显示主窗口"永远只动一只）。
+    private readonly List<Window> _pets = new();
+    private readonly object _petsLock = new();
     private readonly EventBus _eventBus;
     private string _tooltip = "MiniPet 桌宠";
     // 音乐模块 V0.2.1：托盘音乐快捷分组依赖的播放编排服务（由 PetWindow 构造经 SetMusicService 注入，
@@ -64,13 +72,14 @@ public class TrayService
     {
         try
         {
-            _mainWindow = window;
+            RegisterPet(window);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[TrayService] SetMainWindow: {ex.Message}");
         }
     }
+
 
     /// <summary>
     /// 注入音乐播放服务（V0.2.1，PetWindow 构造调用——它同时持有本服务与 MusicPlayerService 引用；
@@ -105,6 +114,55 @@ public class TrayService
         {
             Console.Error.WriteLine($"[TrayService] SetMusicService: {ex.Message}");
         }
+    }
+
+    /// <summary>登记一只桌宠窗口（V0.1.3 多桌宠）。</summary>
+    public void RegisterPet(Window window)
+    {
+        try
+        {
+            if (window == null) { return; }
+            lock (_petsLock)
+            {
+                if (!_pets.Contains(window)) { _pets.Add(window); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[TrayService] RegisterPet: {ex.Message}");
+        }
+    }
+
+    /// <summary>注销桌宠窗口（窗口销毁时）；全部注销后撤掉托盘图标。</summary>
+    public void UnregisterPet(Window window)
+    {
+        try
+        {
+            if (window == null) { return; }
+            bool empty;
+            lock (_petsLock)
+            {
+                _pets.Remove(window);
+                empty = _pets.Count == 0;
+            }
+            if (empty) { HideTrayIcon(); }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[TrayService] UnregisterPet: {ex.Message}");
+        }
+    }
+
+    private List<Window> PetSnapshot()
+    {
+        lock (_petsLock) { return new List<Window>(_pets); }
+    }
+
+    /// <summary>全部桌宠是否都处于隐藏状态（托盘点击 = 全显示 / 全隐藏切换）。</summary>
+    private bool AllPetsHidden()
+    {
+        var pets = PetSnapshot();
+        return pets.Count > 0 && pets.All(p => !p.IsVisible);
     }
 
     public void ShowTrayIcon()
@@ -200,13 +258,20 @@ public class TrayService
     {
         try
         {
-            if (_mainWindow == null) return;
+            if (PetSnapshot().Count == 0) { return; }
             Dispatcher.UIThread.Post(() =>
             {
-                if (_mainWindow.IsVisible)
-                    _mainWindow.Hide();
-                else
-                    _mainWindow.Show();
+                // V0.1.3：全部可见 → 全部隐藏；有隐藏 → 全部显示（多桌宠一起进退）
+                var show = AllPetsHidden();
+                foreach (var win in PetSnapshot())
+                {
+                    try
+                    {
+                        if (show) { win.Show(); }
+                        else { win.Hide(); }
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[TrayService] TogglePet: {ex.Message}"); }
+                }
             });
         }
         catch (Exception ex)
@@ -220,12 +285,19 @@ public class TrayService
         try
         {
             var menu = new NativeMenu();
-            var showItem = CreateMenuItem("显示主窗口", () =>
+            var showItem = CreateMenuItem("显示全部桌宠", () =>
             {
                 try
                 {
-                    if (_mainWindow == null) return;
-                    Dispatcher.UIThread.Post(() => _mainWindow.Show());
+                    if (PetSnapshot().Count == 0) { return; }
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        foreach (var win in PetSnapshot())
+                        {
+                            try { win.Show(); }
+                            catch (Exception ex) { Console.Error.WriteLine($"[TrayService] Show: {ex.Message}"); }
+                        }
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -241,10 +313,11 @@ public class TrayService
             {
                 try
                 {
-                    if (_mainWindow == null) return;
+                    if (PetSnapshot().Count == 0) { return; }
                     Dispatcher.UIThread.Post(() =>
                     {
-                        _eventBus.Publish(EventType.OpenSettings);
+                        // V0.1.3：定向到主宠（PetId 空 = 主宠），不再让 N 只宠物各弹一个设置窗
+                        _eventBus.Publish(EventType.OpenSettings, new Models.OpenSettingsEvent(null));
                     });
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[TrayService] Settings: {ex.Message}"); }
@@ -253,25 +326,32 @@ public class TrayService
 
             menu.Items.Add(new NativeMenuItemSeparator());
 
-            // 重置到桌面中央
+            // 重置到桌面中央（V0.1.3：全部桌宠一起居中并错开，位置写回各自配置）
             var centerItem = CreateMenuItem("重置到桌面中央", () =>
             {
                 try
                 {
-                    if (_mainWindow == null) return;
+                    if (PetSnapshot().Count == 0) { return; }
                     Dispatcher.UIThread.Post(() =>
                     {
-                        if (_mainWindow is Window win)
+                        var pets = PetSnapshot();
+                        for (int i = 0; i < pets.Count; i++)
                         {
-                            var screens = win.Screens;
-                            if (screens != null && screens.ScreenCount > 0)
+                            var win = pets[i];
+                            try
                             {
+                                var screens = win.Screens;
+                                if (screens == null || screens.ScreenCount == 0) { continue; }
                                 var screen = screens.Primary ?? screens.All[0];
-                                var bounds = screen.Bounds;
-                                win.Position = new PixelPoint(
-                                    (int)(bounds.X + (bounds.Width - win.Width) / 2),
-                                    (int)(bounds.Y + (bounds.Height - win.Height) / 2));
+                                var bounds = screen.WorkingArea;
+                                int x = (int)(bounds.X + (bounds.Width - win.Width) / 2) + i * 150;
+                                int y = (int)(bounds.Y + (bounds.Height - win.Height) / 2) + i * 110;
+                                if (x + win.Width > bounds.X + bounds.Width) { x = (int)(bounds.X + bounds.Width - win.Width); }
+                                if (y + win.Height > bounds.Y + bounds.Height) { y = (int)(bounds.Y + bounds.Height - win.Height); }
+                                win.Position = new PixelPoint(x, y);
+                                if (win is Views.PetWindow pw) { pw.SavePositionNow(); }
                             }
+                            catch (Exception ex) { Console.Error.WriteLine($"[TrayService] Center: {ex.Message}"); }
                         }
                     });
                 }

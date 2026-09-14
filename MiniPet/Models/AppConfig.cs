@@ -5,10 +5,54 @@ using MiniPet.Services;
 namespace MiniPet.Models
 {
     /// <summary>
+    /// 单只桌宠的实例配置（V0.1.3 多桌宠）：一只宠物一份，实体 / 外观 / 位置 / 缩放各自独立。
+    /// 旧版单值字段（CurrentMobId / CurrentEntityType / CurrentPaperdoll / WindowScale）保留为
+    /// 主宠的兼容镜像：首次启动由 <see cref="Services.ConfigService.EnsurePets"/> 迁移成 Pets[0]，
+    /// 主宠的这些字段变化时同步写回旧字段（旧版本/旧配置读取方仍能用）。
+    /// </summary>
+    public class PetInstanceConfig
+    {
+        /// <summary>稳定标识（"pet-1"…），跨启动不变；宠物列表 / 事件按它定位。</summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>实体类型：Mob / Npc / player（player = 纸娃娃，MobId 为哨兵）。</summary>
+        public string EntityType { get; set; } = "Mob";
+
+        /// <summary>实体 id（Mob/Npc 为 WZ id）；纸娃娃时为 <see cref="Services.PaperdollService.SentinelMobId"/>。</summary>
+        public string MobId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 显示名（V0.1.3）：纸娃娃用预设名（如「菲伦」），Mob/Npc 可用 WZ 名；
+        /// 为空时列表回退「WZ 名 [id]」/ 纯 id。用于区分多只同类桌宠（否则全是「纸娃娃」）。
+        /// </summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>纸娃娃外观（EntityType=player 时有效）。</summary>
+        public CharacterAppearance? Paperdoll { get; set; }
+
+        /// <summary>窗口左上角屏幕坐标；<see cref="int.MinValue"/> = 未设置（首次启动按序号错开摆放）。</summary>
+        public int WindowX { get; set; } = int.MinValue;
+
+        public int WindowY { get; set; } = int.MinValue;
+
+        /// <summary>该只宠物的渲染缩放（&lt;=0 = 用 1.0）。</summary>
+        public double WindowScale { get; set; } = 1.0;
+
+        /// <summary>主宠：挂地图背景 + 响应 Agent 状态特效；同一时刻有且仅有一只（由 ConfigService 保证）。</summary>
+        public bool Primary { get; set; }
+    }
+
+    /// <summary>
     /// 宠物设置
     /// </summary>
     public class PetSettings
     {
+        /// <summary>
+        /// 桌宠实例列表（顺序 = 创建顺序，第一只默认主宠）。空 = 未迁移；
+        /// ConfigService.LoadSettings 会从下面的单值字段迁移出第一只（不落盘，首次保存时写入）。
+        /// </summary>
+        public List<PetInstanceConfig> Pets { get; set; } = new List<PetInstanceConfig>();
+
         public string WzLibPath { get; set; } = string.Empty;
         public string BaseWzPath { get; set; } = string.Empty;
         public string CurrentMobId { get; set; } = string.Empty;
