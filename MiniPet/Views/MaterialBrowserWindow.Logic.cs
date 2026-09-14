@@ -947,7 +947,10 @@ public partial class MaterialBrowserWindow
                 // 2026-08-16：同名直接覆盖（用户要求「保存搭配是覆盖不是新增」）；
                 // 原逻辑 ContainsKey 时直接关闭不保存——同名存档无法更新
                 cfg.SavedPaperdolls[name] = CloneDraft(_draftAppearance);
-                _configService!.SaveSettings(cfg);
+                // V0.1.3 多桌宠：cfg 是弹「保存搭配」对话框**之前**取的快照，裸 SaveSettings 会把快照里的
+                // Pets 整份写回，回滚弹窗期间其它宠物写入的位置 / 实体 / 外观。改用合并保存：
+                // 只用 cfg 的非 Pets 字段覆盖磁盘最新配置，Pets 保留磁盘最新值。
+                _configService!.SaveSettingsKeepingPets(cfg);
                 RefreshOutfitList();
                 win.Close();
             }

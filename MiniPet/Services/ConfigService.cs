@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using MiniPet.Models;
@@ -56,6 +58,7 @@ namespace MiniPet.Services
                         var settings = JsonSerializer.Deserialize<PetSettings>(_settingsJsonCache, GetJsonOptions());
                         if (settings != null)
                         {
+                            EnsurePets(settings);   // V0.1.3：旧单宠配置 → Pets[0]（内存内迁移，不落盘）
                             _settings = settings;
                             return _settings;
                         }
@@ -74,6 +77,7 @@ namespace MiniPet.Services
 
                 // 缓存未命中或解析失败，创建默认值
                 _settings = CreateDefaultSettings();
+                EnsurePets(_settings);
                 SaveSettings(_settings);
                 return _settings;
             }
@@ -144,6 +148,183 @@ namespace MiniPet.Services
                     // 忽略写入错误
                 }
             }
+        }
+
+        // ───────────────────────── V0.1.3 多桌宠 ─────────────────────────
+
+        /// <summary>
+        /// 保证 settings.Pets 至少有一只（旧配置迁移）：空列表时用旧单值字段生成 pet-1；
+        /// 并保证有且仅有一只主宠。纯内存操作不写盘（首次 SaveSettings 时落盘）。
+        /// </summary>
+        public static List<PetInstanceConfig> EnsurePets(PetSettings settings)
+        {
+            if (settings.Pets == null) { settings.Pets = new List<PetInstanceConfig>(); }
+
+            if (settings.Pets.Count == 0)
+            {
+                var isPaperdoll = settings.CurrentMobId == PaperdollService.SentinelMobId;
+                // 旧 WindowX/WindowY 全仓无写入方 → (0,0) 视为「从未摆放过」，交给启动错开逻辑
+                var legacyPos = !(settings.WindowX == 0 && settings.WindowY == 0);
+                settings.Pets.Add(new PetInstanceConfig
+                {
+                    Id = "pet-1",
+                    EntityType = isPaperdoll
+                        ? "player"
+                        : (string.IsNullOrEmpty(settings.CurrentEntityType) ? "Mob" : settings.CurrentEntityType),
+                    MobId = (settings.CurrentMobId ?? string.Empty).Trim(),
+                    Paperdoll = settings.CurrentPaperdoll,
+                    WindowX = legacyPos ? settings.WindowX : int.MinValue,
+                    WindowY = legacyPos ? settings.WindowY : int.MinValue,
+                    WindowScale = settings.WindowScale > 0 ? settings.WindowScale : 1.0,
+                    Primary = true
+                });
+            }
+
+            // 手改配置可能塞进 null 元素 → 先剔除，避免下面 Where/FirstOrDefault 直接 NRE
+            settings.Pets.RemoveAll(p => p == null);
+
+            // 主宠唯一性自愈（配置被手改 / 旧版本写入 / 迁移异常时）
+            var primaries = settings.Pets.Where(p => p.Primary).ToList();
+            if (primaries.Count == 0)
+            {
+                settings.Pets[0].Primary = true;
+            }
+            else if (primaries.Count > 1)
+            {
+                foreach (var extra in primaries.Skip(1)) { extra.Primary = false; }
+            }
+            return settings.Pets;
+        }
+
+        /// <summary>生成当前配置里未被占用的宠物 id（pet-N）。</summary>
+        public static string NewPetId(PetSettings settings)
+        {
+            EnsurePets(settings);
+            for (int i = 1; i < 1000; i++)
+            {
+                var id = $"pet-{i}";
+                if (!settings.Pets.Any(p => p.Id == id)) { return id; }
+            }
+            return $"pet-{Guid.NewGuid():N}";
+        }
+
+        /// <summary>
+        /// 合并保存（多桌宠安全）：把 <paramref name="local"/> 的**非 Pets 字段**写回磁盘最新配置，
+        /// Pets（宠物实例列表）保持磁盘最新值。仍持有旧快照的调用方（设置中心各 tab）用它写全局设置，
+        /// 不会把别的宠物刚写的实例数据回滚掉。
+        /// </summary>
+        public void SaveSettingsKeepingPets(PetSettings local)
+        {
+            if (local == null) { return; }
+            UpdateSettings(latest =>
+            {
+                var pets = latest.Pets;
+                foreach (var prop in typeof(PetSettings).GetProperties())
+                {
+                    if (prop.Name == nameof(PetSettings.Pets)) { continue; }
+                    if (!prop.CanRead || !prop.CanWrite) { continue; }
+                    try { prop.SetValue(latest, prop.GetValue(local)); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[ConfigService] MergeField {prop.Name}: {ex.Message}"); }
+                }
+                latest.Pets = pets;
+            });
+        }
+
+        /// <summary>
+        /// 原子更新：锁内 Load → mutate → Save。SaveSettings 是整份覆盖写，多只宠物各自
+        /// 「读快照 → 改 → 写」会互相回滚（V0.1.3 前只有一只宠物，无此问题）；多宠物写入一律走这里。
+        /// </summary>
+        public void UpdateSettings(Action<PetSettings> mutate)
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    var s = LoadSettings();   // 同线程锁可重入（Monitor），内部走内存缓存
+                    mutate(s);
+                    SaveSettings(s);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ConfigService] UpdateSettings: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 原子更新指定宠物的实例配置；返回更新后的实例（找不到该 id 返回 null）。
+        /// 主宠的实体 / 外观 / 缩放变化会同步写回旧单值字段（兼容旧读法）。
+        /// </summary>
+        public PetInstanceConfig? UpdatePet(string petId, Action<PetInstanceConfig> mutate)
+        {
+            PetInstanceConfig? result = null;
+            UpdateSettings(s =>
+            {
+                var pet = EnsurePets(s).FirstOrDefault(p => p.Id == petId);
+                if (pet == null) { return; }
+                mutate(pet);
+                SyncLegacyFields(s, pet);
+                result = pet;
+            });
+            return result;
+        }
+
+        /// <summary>添加一只宠物（忽略传入的 Primary：主宠只能经 <see cref="SetPrimaryPet"/> 变更）。</summary>
+        public PetInstanceConfig AddPet(PetInstanceConfig pet)
+        {
+            UpdateSettings(s =>
+            {
+                var list = EnsurePets(s);
+                if (string.IsNullOrEmpty(pet.Id)) { pet.Id = NewPetId(s); }
+                pet.Primary = false;
+                list.Add(pet);
+            });
+            return pet;
+        }
+
+        /// <summary>移除一只宠物；主宠被移除时第一只剩余宠物继任。仅剩一只时拒绝移除（返回 false）。</summary>
+        public bool RemovePet(string petId)
+        {
+            var ok = false;
+            UpdateSettings(s =>
+            {
+                var list = EnsurePets(s);
+                if (list.Count <= 1) { return; }
+                var pet = list.FirstOrDefault(p => p.Id == petId);
+                if (pet == null) { return; }
+                var wasPrimary = pet.Primary;
+                list.Remove(pet);
+                if (wasPrimary && list.Count > 0) { list[0].Primary = true; }
+                SyncLegacyFields(s, list.FirstOrDefault(p => p.Primary));
+                ok = true;
+            });
+            return ok;
+        }
+
+        /// <summary>切换主宠（唯一性由 <see cref="EnsurePets"/> 兜底）。</summary>
+        public bool SetPrimaryPet(string petId)
+        {
+            var ok = false;
+            UpdateSettings(s =>
+            {
+                var list = EnsurePets(s);
+                var pet = list.FirstOrDefault(p => p.Id == petId);
+                if (pet == null) { return; }
+                foreach (var p in list) { p.Primary = ReferenceEquals(p, pet); }
+                SyncLegacyFields(s, pet);
+                ok = true;
+            });
+            return ok;
+        }
+
+        /// <summary>把主宠的实体 / 外观 / 缩放同步到旧单值字段（旧版本回读 + 旧代码路径兼容）。</summary>
+        private static void SyncLegacyFields(PetSettings s, PetInstanceConfig? primary)
+        {
+            if (primary == null || !primary.Primary) { return; }
+            s.CurrentMobId = primary.MobId ?? string.Empty;
+            s.CurrentEntityType = (primary.EntityType ?? string.Empty).ToLowerInvariant();
+            s.CurrentPaperdoll = primary.Paperdoll;
+            if (primary.WindowScale > 0) { s.WindowScale = primary.WindowScale; }
         }
 
         /// <summary>

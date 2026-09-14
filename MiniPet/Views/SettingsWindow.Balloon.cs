@@ -290,7 +290,8 @@ public partial class SettingsWindow
         try
         {
             _settings.BalloonId = item.Id.ToString();
-            _config.SaveSettings(_settings);
+            // V0.1.3 多桌宠：气泡 id 是全局设置——合并写（保留磁盘最新 Pets），不整份覆盖
+            _config.SaveSettingsKeepingPets(_settings);
             Console.WriteLine($"[SettingsWindow] 应用气泡: {item.Id} {item.Name}");
             if (_balloonApplyHint != null)
             {
@@ -313,7 +314,8 @@ public partial class SettingsWindow
             _settings.BalloonHistory.Insert(0, idStr);
             if (_settings.BalloonHistory.Count > 8)
                 _settings.BalloonHistory.RemoveRange(8, _settings.BalloonHistory.Count - 8);
-            _config.SaveSettings(_settings);
+            // V0.1.3 多桌宠：气泡历史是全局设置——合并写（保留磁盘最新 Pets），不整份覆盖
+            _config.SaveSettingsKeepingPets(_settings);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] AddBalloonHistory: {ex.Message}"); }
     }

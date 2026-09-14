@@ -32,6 +32,9 @@ namespace MiniPet.Services
         private readonly EventBus _eventBus;
         private readonly BalloonService _balloonService;
         private readonly ConfigService _configService;
+        // V0.1.3 已知限制：PaperdollService 改为 per-pet（Transient）后，这里注入的是一个独立实例，
+        // 不再与任何桌宠窗口共享 → ExpressionDriver 目前只装在该游离实例上（当前无行为差异：
+        // 兜底也是 ExpressionDefault）。将来接真实表情驱动时，需改为随 PetManager.PrimaryChanged 绑定主宠实例。
         private readonly PaperdollService? _paperdoll;
 
         // 当前生效态，避免重复触发同一反馈（例如 Run 期间连续 OnReflect 只触发一次 busy 表情）
@@ -47,6 +50,12 @@ namespace MiniPet.Services
         /// 由装配方（PetWindow / App）在构造后注入 AnimService 实例。null 时 Run 仅记日志不抛。
         /// </summary>
         internal IActionDriver? ActionDriver { get; set; }
+
+        /// <summary>
+        /// Agent 状态气泡的目标宠物（V0.1.3 多桌宠）：只让主宠弹状态气泡；null = 广播给所有桌宠
+        /// （单宠场景与旧行为一致）。由 PetManager 在主宠变化时同步更新。
+        /// </summary>
+        internal string? TargetPetId { get; set; }
 
         /// <summary>
         /// 构造注入：EventBus 必需；BalloonService/ConfigService 必需（Jump/Failed/Wave/Review/Waiting 走气泡）；
@@ -205,7 +214,8 @@ namespace MiniPet.Services
                     return;
                 }
                 // fire-and-forget：Show 内部已切后台线程渲染，OnBalloonReady 回调到 UI 线程
-                _ = _balloonService.Show(text, data, durationMs, bold);
+                // V0.1.3：定向到主宠（多桌宠时只有主宠弹 Agent 状态气泡）
+                _ = _balloonService.Show(text, data, durationMs, bold, TargetPetId);
             }
             catch (Exception ex)
             {

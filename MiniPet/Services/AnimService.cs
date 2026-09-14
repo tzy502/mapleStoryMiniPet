@@ -592,12 +592,37 @@ namespace MiniPet.Services
                 return (null, PlayMode.Loop);
             }
 
-            var chosen = candidates[Random.Shared.Next(candidates.Count)];
+            // V0.1.3（胶水反馈「stand 12 的切换不要那么频繁」）：stand1/stand2 视觉几乎一致，
+            // 当前已在 stand 族时不再切到另一个 stand 变体——优先挑非 stand 动作；若候选里只剩
+            // stand 变体，则本轮不切（返回 null），避免原地"抽搐"。
+            var pool = candidates;
+            if (IsStandFamily(_currentAction))
+            {
+                var nonStand = new List<string>();
+                foreach (var a in candidates)
+                {
+                    if (!IsStandFamily(a)) { nonStand.Add(a); }
+                }
+                if (nonStand.Count == 0)
+                {
+                    return (null, PlayMode.Loop);
+                }
+                pool = nonStand;
+            }
+
+            var chosen = pool[Random.Shared.Next(pool.Count)];
             var mode = effectiveDisplay.Contains(chosen) ? PlayMode.OneShot : PlayMode.Loop;
             return (chosen, mode);
         }
 
         /// <summary>空闲随机 Loop 池：仅 Loop 类动作（A13 缓存；与展示池同键同建）。</summary>
+        /// <summary>是否 stand 族动作（stand / stand1 / stand2…）。</summary>
+        private static bool IsStandFamily(string? action)
+        {
+            return !string.IsNullOrEmpty(action)
+                   && action.StartsWith("stand", StringComparison.OrdinalIgnoreCase);
+        }
+
         private List<string> GetIdleActionPool()
         {
             BuildIdlePools();

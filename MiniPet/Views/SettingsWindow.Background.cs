@@ -145,7 +145,8 @@ public partial class SettingsWindow
                     {
                         _settings.ViewportW = w;
                         _settings.ViewportH = h;
-                        _config.SaveSettings(_settings);
+                        // V0.1.3 多桌宠：镜头大小是全局设置（背景只挂主宠）——合并写，Pets 保持磁盘最新
+                        _config.SaveSettingsKeepingPets(_settings);
                         OnViewportSizeApplied?.Invoke(w, h);
                         if (_statusBarText != null) _statusBarText.Text = $"镜头大小已应用: {w}×{h}";
                     }
@@ -272,7 +273,8 @@ public partial class SettingsWindow
                     try
                     {
                         captured.apply(cb.IsChecked ?? true);
-                        _config.SaveSettings(_settings);
+                        // V0.1.3 多桌宠：层开关全局共享（地图背景只挂主宠）——合并写，不整份覆盖
+                        _config.SaveSettingsKeepingPets(_settings);
                         _mapSvc.InvalidateFullRenderCache();
                         if (_bgCurrentMap != null) BgRenderPreview(_bgCurrentMap.Id, null);
                         // 通知 PetWindow：桌面背景窗口按新 flag 重渲染（否则桌面仍显示旧图）
