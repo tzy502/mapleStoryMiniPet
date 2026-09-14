@@ -425,8 +425,6 @@ public partial class MapService
                 Fh = _wz.GetIntProperty($"{p}/fh"),
                 Flip = _wz.GetIntProperty($"{p}/f") != 0,
                 Hide = _wz.GetIntProperty($"{p}/hide") != 0,
-                // F18：补存真实实体 ID 到 LifeId（id 节点缺失留空串——idStr 的 int 回退会产生假 "0"，不采用）
-                LifeId = _wz.GetStringProperty($"{p}/id") ?? "",
                 Resource = new Sprite { ResourceUrl = PickLifeFrameUrl(type, idStr) ?? "" }
             });
         }

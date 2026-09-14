@@ -34,8 +34,6 @@ public partial class PetWindow : Window
     // 音乐模块 V0.2.0（F15-F17）：目录服务（透传给 SettingsWindow 音乐 tab）+ 播放编排服务（气泡/菜单/场景联动挂钩）
     private readonly MusicCatalogService _musicCatalog;
     private readonly MusicPlayerService _musicService;
-    // F18 无限之路：模式3 编排控制器（tick 两段式挂钩 + 背景闸门 + 气泡通知）
-    private readonly Services.Road.RoadModeController _roadController;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
@@ -44,6 +42,10 @@ public partial class PetWindow : Window
     private AgentState _agentReflect = AgentState.Idle;   // 最近一次 Agent 反映态（PetReflectStateChanged 订阅，随机气泡仅在 Idle 触发）
     private int _paperdollGen;
     private int _petSwitchGen;
+    /// <summary>切换素材 loading 的超时兜底计时器（后台 PreloadMob 卡住时复位 UI，见 SwitchToPet）。</summary>
+    private DispatcherTimer? _petSwitchTimeout;
+    /// <summary>切换素材 loading 超时阈值（ms）。</summary>
+    private const int PetSwitchTimeoutMs = 10000;
     private static readonly string[] _randomLines = {
         "今天天气真好~", "加油！", "记得喝水哦", "嘿嘿~", "我在看着你呢",
         "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？",
@@ -98,7 +100,7 @@ public partial class PetWindow : Window
     private PixelPoint? _petMovedLastSent;
     private long _petMovedLastMs;
 
-    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager, MusicCatalogService musicCatalog, MusicPlayerService musicService, Services.Road.RoadModeController roadController)
+    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager, MusicCatalogService musicCatalog, MusicPlayerService musicService)
     {
         _configService = configService;
         _wzService = wzService;
@@ -113,36 +115,6 @@ public partial class PetWindow : Window
         _cacheManager = cacheManager;
         _musicCatalog = musicCatalog;
         _musicService = musicService;
-        _roadController = roadController;
-        // F18 无限之路接入：背景三委托（快照/隐藏/恢复——两旧窗口归 PetWindow 所有）+ 宠物落位通道
-        // （路窗口 W/H 由控制器直接读 InfiniteRoadWindow 实际尺寸）；路状态通知走气泡（进入/失败提示）
-        _roadController.AttachPetWindow(
-            this,
-            () => new Services.Road.RoadBackgroundSnapshot(_backgroundWindow.IsVisible, _mapViewportWindow.IsVisible, LoadMapModeSnapshot(), Position),
-            snap => RestoreBackgroundSnapshot(snap),
-            () =>
-            {
-                _backgroundWindow.HideMap();
-                _backgroundWindow.Hide();
-                _mapViewportWindow.Stop();
-                _mapViewportWindow.Hide();
-            });
-        _roadController.SetPetPositionSink((x, y) =>
-        {
-            try
-            {
-                Position = new PixelPoint((int)x, (int)y);
-            }
-            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RoadPetPos: {ex.Message}"); }
-        });
-        _roadController.RoadNotice += msg =>
-        {
-            Dispatcher.UIThread.Post(async () =>
-            {
-                try { await ShowBalloonNow(msg); }
-                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RoadNotice: {ex.Message}"); }
-            });
-        };
         _backgroundWindow = new BackgroundWindow();
         _backgroundWindow.RequestHide += () => Dispatcher.UIThread.Post(() => { _backgroundWindow.HideMap(); _backgroundWindow.Hide(); RaisePet(); });
         _backgroundWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
@@ -515,26 +487,9 @@ public partial class PetWindow : Window
                         await _balloonWindow.BalloonControl.ShowBalloon(text, data, bmp, autoHide);
                         _balloonWindow.Width = bw;
                         _balloonWindow.Height = bh;
-                        // 锚点基准 = 当前角色锚点（拖拽结束会更新）；Mode3 人物在路窗——锚跟路窗人物
-                        if (_roadController.IsRoadActive)
-                        {
-                            var ra = _roadController.GetRoadBalloonAnchor();
-                            if (ra.HasValue)
-                            {
-                                _balloonAnchorX = ra.Value.X;
-                                _balloonAnchorY = ra.Value.Y;
-                            }
-                            else
-                            {
-                                _balloonAnchorX = Position.X + _lastOriginX;
-                                _balloonAnchorY = Position.Y + _lastOriginY;
-                            }
-                        }
-                        else
-                        {
-                            _balloonAnchorX = Position.X + _lastOriginX;
-                            _balloonAnchorY = Position.Y + _lastOriginY;
-                        }
+                        // 锚点基准 = 当前角色锚点（拖拽结束会更新）
+                        _balloonAnchorX = Position.X + _lastOriginX;
+                        _balloonAnchorY = Position.Y + _lastOriginY;
                         _balloonWindow.ShowBalloonWindow();
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonShow: {ex.Message}"); }
@@ -820,7 +775,6 @@ public partial class PetWindow : Window
                 _dragCandidate = false;
                 if (!_isDragging) { return; }
                 _isDragging = false;
-                _lastDragReleaseTick = Environment.TickCount64; // 拖拽宽限 2s（模式3 落位跳过）
                 _eventBus.Publish(EventType.UserDragEnd);
                 // 气泡锚点基准 = 拖拽结束时的角色锚点（动画切换气泡位置不动）
                 _balloonAnchorX = Position.X + _lastOriginX;
@@ -852,70 +806,30 @@ public partial class PetWindow : Window
             // 改为封顶 500ms：保留大部分实际时间，既防失焦跳变失控，又不饿死空闲累计。
             if (delta > 500) { delta = 500; }
 
-            // F18 两段式（前半）：路模式下以 road delta 喂动画——暂停=0（宠物动画随路全停），
-            // 非路模式返回 null 透传原 delta（行为与旧版完全一致）
-            var roadDelta = _roadController.BeginTick(delta);
-            var fr = _animService.Tick(roadDelta ?? delta);
+            var fr = _animService.Tick(delta);
             byte[]? pngData = null;
             int ox = 0, oy = 0, fw = 0, fh = 0;
-            // 人物实体化（2026-09）：Mode3 纸娃娃人物由路窗实体管线绘制（DrawEntities 取 PaperdollService 合成帧，
-            // 与 NPC/mob 同基准）——本窗不再独立画人物（避免双画）；动画状态仍由 AnimService 推进（实体取帧）。
-            // 拖拽期间（IsDragHold）恢复本窗绘制（人物随鼠标走，路侧实体由控制器跳过——保留拖动行为）。
-            // 仅路窗已上屏（Entering/Running/Exiting）才切实体渲染——Building 阶段旧背景仍在，人物继续留本窗。
-            bool roadEntityMode = _roadController.State.Phase is Services.Road.RoadPhase.Entering
-                    or Services.Road.RoadPhase.Running
-                    or Services.Road.RoadPhase.Exiting
-                && _animService.IsProviderActive
-                && !IsDragHold;
-            if (roadEntityMode)
+            if (fr.Bitmap != null)
             {
-                // 动画继续推进（roadDelta 已喂），仅不落到画布：清空防旧帧残留，释放合成位图
+                // 纸娃娃 provider：合成帧位图（BGRA premul）+ union 公共 origin
+                ox = fr.OriginX; oy = fr.OriginY; fw = fr.FrameW; fh = fr.FrameH;
+            }
+            else if (fr.Png != null)
+            {
+                pngData = fr.Png;
+                // A13：直接读 AnimService 持有的当前图条，不再每帧二次 GetCachedStrip（锁 + LRU 链表维护）
+                var strip = _animService.CurrentStrip;
+                ox = strip?.OriginX ?? 0;
+                oy = strip?.OriginY ?? 0;
+                fw = strip?.FrameWidth ?? 0;
+                fh = strip?.FrameHeight ?? 0;
+            }
+            else if (fr.Empty)
+            {
+                // A9：在播但无帧数据（条带缺失/解码失败/离线兜底空）→ 清画布，避免旧帧冻结
                 _spriteCanvas.Clear();
-                fr.Bitmap?.Dispose();
             }
-            else
-            {
-                DrawPetFrame(fr, ref pngData, ref ox, ref oy, ref fw, ref fh);
-            }
-            _infoText.Text = _animService.GetCurrentAction();
-
-            // F18 两段式（后半）：origin 补偿之后、pet:moved 哨兵之前——推进路时钟（补柱/Follower/
-            // 战斗导演/RoadFrame 发布渲染）；Follower 落位覆盖 origin 补偿的窗口位移（宠物归路所有），
-            // pet:moved 哨兵随后以最终位置发布（迷你控制条跟随正确）
-            _roadController.EndTick(delta);
-
-            // 音乐模块 V0.2.1：宠物位置哨兵（pet:moved）——帧尾统一比对发布，
-            // 拖拽 / 释放绝对定位 / 动画 origin 补偿与落地 / 重置桌面中央（含托盘菜单路径）/
-            // 摄像机模式落地（PetWindow.Mode.cs）等一切改 Position 的路径都在此被捕获
-            PublishPetMovedThrottled();
-        }
-        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
-    }
-
-    /// <summary>把 AnimService.Tick 的当前帧落到 SpriteCanvas（尺寸/补偿/气泡锚点全链）。Mode3 实体渲染时跳过。</summary>
-    private void DrawPetFrame(FrameResult fr, ref byte[]? pngData, ref int ox, ref int oy, ref int fw, ref int fh)
-    {
-        if (fr.Bitmap != null)
-        {
-            // 纸娃娃 provider：合成帧位图（BGRA premul）+ union 公共 origin
-            ox = fr.OriginX; oy = fr.OriginY; fw = fr.FrameW; fh = fr.FrameH;
-        }
-        else if (fr.Png != null)
-        {
-            pngData = fr.Png;
-            // A13：直接读 AnimService 持有的当前图条，不再每帧二次 GetCachedStrip（锁 + LRU 链表维护）
-            var strip = _animService.CurrentStrip;
-            ox = strip?.OriginX ?? 0;
-            oy = strip?.OriginY ?? 0;
-            fw = strip?.FrameWidth ?? 0;
-            fh = strip?.FrameHeight ?? 0;
-        }
-        else if (fr.Empty)
-        {
-            // A9：在播但无帧数据（条带缺失/解码失败/离线兜底空）→ 清画布，避免旧帧冻结
-            _spriteCanvas.Clear();
-        }
-        if (pngData != null || fr.Bitmap != null)
+            if (pngData != null || fr.Bitmap != null)
             {
                 if (fr.Bitmap != null)
                 {
@@ -1045,49 +959,16 @@ public partial class PetWindow : Window
                         (int)by);
                 }
             }
-    }
+            // 状态文字只显示动作名（去掉原调试用 tick 计数）
+            _infoText.Text = _animService.GetCurrentAction();
 
-    /// <summary>是否拖拽中（F18 模式3：拖拽期间 PetFollower 跳过落位，松手恢复贴地）。</summary>
-    public bool IsDragging => _isDragging;
-
-    /// <summary>可见脚底相对窗口顶的偏移（F18 模式3 PetFollower 贴地用）。
-    /// 2026-08-29 修复③：此前纸娃娃恒取「锚点动作帧高×scale」（stand1），而路模式行走用 walk1 等
-    /// 更高帧——实际位图绘于窗口 (0,0)，底边 = 当前帧高×scale，两者差值即脚底陷进路面的量。
-    /// 现改取 SpriteCanvas 实测内容底边（当前动作帧高）；mob/npc 取当前帧 origin（脚底锚点）×scale；
-    /// 均无值时退回旧公式兜底。</summary>
-    public double PetFeetOffset
-    {
-        get
-        {
-            if (!IsSentinelActive())
-            {
-                // b3fd 诊断：mob 可见内容底边远低于 origin 行（9602448 差 138px ≈ 半身位悬空根因）
-                // → 与纸娃娃分支同源：优先当前帧可见内容底边；无值回退 origin 行
-                double mobBottom = _spriteCanvas.ContentBottomPx;
-                if (mobBottom > 0) { return mobBottom; }
-                double originBottom = _spriteCanvas.OriginBottomPx;
-                return originBottom > 0 ? originBottom : 0;
-            }
-            double bottom = _spriteCanvas.ContentBottomPx;
-            if (bottom > 0)
-            {
-                return bottom;
-            }
-            return _anchorFrameH > 0 ? _anchorFrameH * _scale : 80;
+            // 音乐模块 V0.2.1：宠物位置哨兵（pet:moved）——帧尾统一比对发布，
+            // 拖拽 / 释放绝对定位 / 动画 origin 补偿与落地 / 重置桌面中央（含托盘菜单路径）/
+            // 摄像机模式落地（PetWindow.Mode.cs）等一切改 Position 的路径都在此被捕获
+            PublishPetMovedThrottled();
         }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
     }
-
-    /// <summary>拖拽保持态：拖拽中或松手后 2 秒内为 true（F18 模式3：期间 PetFollower 跳过落位，用户可拖到别处右键）。</summary>
-    public bool IsDragHold
-    {
-        get
-        {
-            if (_isDragging) { return true; }
-            return _lastDragReleaseTick > 0 && Environment.TickCount64 - _lastDragReleaseTick < 2000;
-        }
-    }
-
-    private long _lastDragReleaseTick;
 
     /// <summary>
     /// 发布宠物桌面位置变化 pet:moved（V0.2.1 迷你控制条跟随契约）：EventBus 通道 MiniPetEvents.PetMoved，
@@ -1116,7 +997,7 @@ public partial class PetWindow : Window
             if (IsSentinelActive())
             {
                 feetX = Position.X + (_anchorFrameW > 0 ? _anchorFrameW * _scale / 2 : 40);
-                feetY = Position.Y + PetFeetOffset; // 2026-08-29 与贴地偏移同源（此前锚点帧高与实际帧底不一致）
+                feetY = Position.Y + (_anchorFrameH > 0 ? _anchorFrameH * _scale : 80);
             }
             else
             {
@@ -1301,6 +1182,34 @@ public partial class PetWindow : Window
     }
 
     /// <summary>
+    /// 启动切换超时兜底：PreloadMob 后台任务若因异常情况（WZ 锁长占用/磁盘不可写）迟迟不返回，
+    /// 原实现没有任何取消或超时，loading 会永久停在「切换中…」。超时后复位 UI 并提示，不再无限等待。
+    /// </summary>
+    private void StartPetSwitchTimeout(int gen, string name)
+    {
+        StopPetSwitchTimeout();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(PetSwitchTimeoutMs) };
+        timer.Tick += (_, _) =>
+        {
+            StopPetSwitchTimeout();
+            if (gen != _petSwitchGen) { return; }         // 已被更新的切换接管
+            if (_loadingBar?.IsVisible != true) { return; } // loading 已正常结束
+            ShowPetLoading(false);
+            Console.Error.WriteLine($"[PetWindow] SwitchToPet 超时({PetSwitchTimeoutMs}ms)：gen={gen} name={name}");
+            ShowInfoPopup("切换宠物", $"素材 [{name}] 加载超时（{PetSwitchTimeoutMs / 1000}s），已保持当前宠物。");
+        };
+        _petSwitchTimeout = timer;
+        timer.Start();
+    }
+
+    /// <summary>停止切换超时兜底计时器。</summary>
+    private void StopPetSwitchTimeout()
+    {
+        _petSwitchTimeout?.Stop();
+        _petSwitchTimeout = null;
+    }
+
+    /// <summary>
     /// 切换到指定素材桌宠：stand 已缓存则立即切；未缓存则后台预加载（显示 loading 菊花），期间保持旧角色播放，加载完成后切换。
     /// 避免首次切换（WZ 构建/磁盘读取）在 UI 线程同步执行导致的明显卡顿。代际 token 防快速连点竞态。
     /// A8：加载失败不再静默——提示用户且不发布 PetChanged（托盘 tooltip 与最近使用记录不脏数据）。
@@ -1313,6 +1222,7 @@ public partial class PetWindow : Window
             var gen = ++_petSwitchGen;
             if (_spriteService.GetCachedStrip(id, "stand").Item1 != null)
             {
+                StopPetSwitchTimeout();
                 ShowPetLoading(false);
                 _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
                 _lastFrameW = 0; _lastFrameH = 0;
@@ -1324,6 +1234,7 @@ public partial class PetWindow : Window
             else
             {
                 ShowPetLoading(true, name);
+                StartPetSwitchTimeout(gen, name);
                 System.Threading.Tasks.Task.Run(() =>
                 {
                     bool ok;
@@ -1333,7 +1244,8 @@ public partial class PetWindow : Window
                     {
                         try
                         {
-                            if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖
+                            if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖（loading 由新切换接管）
+                            StopPetSwitchTimeout();
                             ShowPetLoading(false);
                             if (!ok)
                             {
@@ -1354,7 +1266,13 @@ public partial class PetWindow : Window
                 });
             }
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPet: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            // 同步段异常也要复位 loading/超时，避免「切换中…」永久残留
+            StopPetSwitchTimeout();
+            ShowPetLoading(false);
+            Console.Error.WriteLine($"[PetWindow] SwitchToPet: {ex.Message}");
+        }
     }
 
     private bool IsSentinelActive() => _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;

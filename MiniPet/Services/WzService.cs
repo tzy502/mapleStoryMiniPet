@@ -846,6 +846,14 @@ namespace MiniPet.Services
         public (byte[]? pngData, SpriteStrip? strip, PetConfig? config) BuildSpriteStrip(string id, string action, string type = "Mob")
         {
             if (!_wzLoaded || _wzs?.WzNode == null) return (null, null, null);
+
+            // 分段持锁（锁粒度收窄）：① 锁内只做 WZ 节点遍历 + 像素解码（WzLib 非线程安全，必须串行）；
+            // ② 条带拼装 + PNG 编码是纯 CPU 运算，移出锁执行——大素材单动作 Optimal 级 deflate 可达数百 ms，
+            // 原实现全程持 _wzLock，会阻塞 UI 帧循环、纸娃娃合成与其它素材的切换预加载。
+            var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
+            var frameDataList = new List<FrameData>();
+            int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
+
             lock (_wzLock)
             try
             {
@@ -858,10 +866,7 @@ namespace MiniPet.Services
                 if (actionNode == null) return (null, null, null);
 
                 // 单次遍历：收集帧像素 + 元数据
-                var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
-                var frameDataList = new List<FrameData>();
                 int f = 0;
-                int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
                     var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
@@ -884,8 +889,18 @@ namespace MiniPet.Services
                     maxB = Math.Max(maxB, fh - oy);
                     frameDataList.Add(new FrameData { Index = f++, Delay = delay, A0 = a0, A1 = a1 });
                 }
-                if (frames.Count == 0 || frameDataList.Count == 0) return (null, null, null);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}) 读取: {ex.Message}");
+                return (null, null, null);
+            }
 
+            if (frames.Count == 0 || frameDataList.Count == 0) return (null, null, null);
+
+            // ② 锁外：条带拼装 + PNG 编码（纯 CPU，不碰 WzLib）
+            try
+            {
                 int cw = maxL + maxR, ch = maxT + maxB;
                 int finalOx = maxL, finalOy = maxT;
 
@@ -932,7 +947,7 @@ namespace MiniPet.Services
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}): {ex.Message}");
+                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}) 编码: {ex.Message}");
                 return (null, null, null);
             }
         }
