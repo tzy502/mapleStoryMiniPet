@@ -43,6 +43,32 @@ public class MusicModuleTests
     }
 
     [Fact]
+    public void NormalizeBgm_Silence_ReturnsNull()
+    {
+        // 硬编码忽略（2026-09-14 定）：Bgm00/Silence 是静音轨，项目内完全忽略 ——
+        // 地图 bgm 指向它等价于「无 BGM」，场景联动 / 无限之路选图都不会命中。
+        Assert.Null(MusicDecisions.NormalizeBgm("Bgm00/Silence"));
+        Assert.True(MusicDecisions.IsIgnoredBgm(" Bgm00/Silence "));
+        Assert.True(MusicDecisions.IsIgnoredBgm("bgm00/silence"));
+        Assert.False(MusicDecisions.IsIgnoredBgm("Bgm00/FloralLife"));
+        Assert.False(MusicDecisions.IsIgnoredBgm(null));
+    }
+
+    [Fact]
+    public void FirstMapByReturnMap_TakesMode_AndBreaksTieBySmallerMapId()
+    {
+        // 实时算：returnMap 众数 = 无限之路第一张地图；并列取 mapId 小者
+        var votes = new Dictionary<string, int> { ["302001000"] = 366, ["706020100"] = 100 };
+        Assert.Equal("302001000", MusicDecisions.FirstMapByReturnMap(votes));
+
+        var tie = new Dictionary<string, int> { ["910194100"] = 5, ["100000000"] = 5 };
+        Assert.Equal("100000000", MusicDecisions.FirstMapByReturnMap(tie));
+
+        Assert.Null(MusicDecisions.FirstMapByReturnMap(null));
+        Assert.Null(MusicDecisions.FirstMapByReturnMap(new Dictionary<string, int>()));
+    }
+
+    [Fact]
     public void NormalizeBgm_AlreadyHasImgSuffix_DoesNotDuplicate()
     {
         var result = MusicDecisions.NormalizeBgm("Bgm58.img/SleepyWood");

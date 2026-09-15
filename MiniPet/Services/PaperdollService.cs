@@ -169,9 +169,10 @@ public class PaperdollService : IEntityFrameProvider
         try
         {
             var hash = HashAppearance(a);
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault));
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault), action, frame);
             ResolveAnchors(pieces);
             AssignLayers(pieces);
+            HideFrontFaceLayersOnBackAction(pieces, a, action, frame);
             ApplyLocks(hash, a, pieces);
             foreach (var p in pieces)
             {
@@ -356,7 +357,7 @@ public class PaperdollService : IEntityFrameProvider
                 return (null, 0, 0, 0, 0);
             }
 
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression));
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression), action, frame);
             ResolveAnchors(pieces);
             // R5 诊断：锚点解算后 body 未锁定（数据缺失/断件）——只打一次，防 30fps 刷屏
             var bodyDiagnostic = pieces.FirstOrDefault(p => p.Category == "body");
@@ -366,6 +367,7 @@ public class PaperdollService : IEntityFrameProvider
                 Console.Error.WriteLine($"[Paperdoll] ResolveAnchors: body 未锁定（body 数据缺失）hash={hash} action={action} frame={frame} pieces={pieces.Count}");
             }
             AssignLayers(pieces);
+            HideFrontFaceLayersOnBackAction(pieces, a, action, frame);
             // 遮挡锁：帽子遮发 / 套服遮裤等覆盖关系（对齐 MapleSalon2 buildLock/refreshLock）
             ApplyLocks(hash, a, pieces);
 
@@ -457,6 +459,14 @@ public class PaperdollService : IEntityFrameProvider
         // R20 骑乘：坐骑 characterAction 映射叠加在坐姿之上——01930001 等飞行坐骑角色应播映射动作
         // （stand1→fly），坐骑部件由 AddMountPieces 按原角色动作独立解析（保持 MapleSalon2 语义）。
         var (renderAction, renderFrame) = ResolveRenderAction(a, action, frame);
+        // 背面动作判定（对齐 sdlMS character_render_system.cpp:129 `bone_data[action][frame].face` 与
+        // MapleSalon2 CharacterFaceFrame.isBackAction）：body 帧 face=0（爬绳 ladder/rope 等）→ 不渲染
+        // 脸型与 101 面饰，否则后脑勺上会贴一张正脸（「背部有眼睛」）。
+        // isHideFace（MapleSalon2 characterFaceFrame.ts:106-109）：body 动作为 blink / hide 时也不画脸
+        bool faceVisible = IsBodyFaceVisible(a, renderAction, renderFrame)
+                           && action != "blink" && action != "hide";
+        // invisibleFace（MapleSalon2 item.ts:311）：穿戴物 info.invisibleFace == 1（面罩类）→ 覆盖脸型
+        bool overrideFace = IsFaceOverriddenByEquipment(hash, a);
 
         var sources = new List<PieceSource>();
         // R18 hideBody：坐骑动作映射 hideBody（characterAction[坐骑动作] == "hideBody"，坐骑完全覆盖角色）
@@ -484,14 +494,25 @@ public class PaperdollService : IEntityFrameProvider
             // blink/angry 等为数字帧（blink/0/face…）；帧号取模循环（对齐 MapleSalon2 frame % frames.length）。
             if (category == "face")
             {
+                if (!faceVisible || overrideFace) { continue; }
                 AddExpressionPieces(sources, a, category, root, ResolveFaceAction(root, expression), frame);
                 continue;
             }
             // R14 饰品三分类（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 拆分，可同时穿戴）：
             // 动作结构优先，动作缺失回退 default 静态帧；101 面饰与脸型同构（表情结构 default/blink…），走表情收集。
-            if (category is "faceaccessory" or "eyeaccessory" or "earring")
+            if (category == "faceaccessory")
             {
-                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame);
+                // 101 面饰与脸型同层：背面动作时随脸一起隐藏
+                // （对齐 MapleSalon2 item.ts isFaceAccessory = isFace || isFaceAccessory）
+                if (!faceVisible) { continue; }
+                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame, faceVisible);
+                continue;
+            }
+            if (category is "eyeaccessory" or "earring")
+            {
+                // 102 眼饰 / 103 耳环不属于 faceAccessory：背面动作保留（与 MapleSalon2 一致）；
+                // 但静态回退时要走 backDefault（103 耳环自带背面粉）
+                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame, faceVisible);
                 continue;
             }
 
@@ -597,7 +618,7 @@ public class PaperdollService : IEntityFrameProvider
     /// ③ 无动作结构（101 面饰实测：仅 default/blink/hit… 表情结构，与脸型同构）→ 走表情收集 AddExpressionPieces。
     /// 修复前 101 面饰被当动作结构走 {root}/stand1/0 → 不存在 → 永不渲染（用户反馈「面饰不显示」）。
     /// </summary>
-    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, string expression, int frame)
+    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, string expression, int frame, bool faceVisible = true)
     {
         string itemId = GetCategoryItemId(a, category);
         // ① 动作结构
@@ -614,8 +635,8 @@ public class PaperdollService : IEntityFrameProvider
                 }
                 return;
             }
-            // ② 帧缺失 → 静态 default 回退
-            AddDefaultStaticPiece(sources, a, category, root, itemId);
+            // ② 帧缺失 → 静态 default 回退（背面动作优先用物品自带的 backDefault 背面粉）
+            AddDefaultStaticPiece(sources, a, category, root, itemId, backFace: !faceVisible);
             return;
         }
         // ③ 表情结构（101 面饰）：default 直接 piece / blink 数字帧
@@ -623,9 +644,15 @@ public class PaperdollService : IEntityFrameProvider
     }
 
     /// <summary>静态默认帧收集：{root}/default 直接 piece（102/103 动作缺失时的回退；piece 名同节点名 "default"，z 指向对应 accessory 层）。</summary>
-    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string category, string root, string itemId)
+    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string category, string root, string itemId, bool backFace = false)
     {
+        // 背面动作（爬绳/趴下等 face=0）：优先用物品的 backDefault 背面粉（WZ 里 103 耳环等有该节点）；
+        // 没有 backDefault 的物品退回 default（对齐 MapleSalon2 的背面处理缺口，本项目自行补齐）。
         string defaultPath = $"{root}/default";
+        if (backFace && _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/backDefault") != null))
+        {
+            defaultPath = $"{root}/backDefault";
+        }
         if (!_wz.WithWzLock(() => _wz.FindNodeByPath(defaultPath) != null)) return;
         foreach (var pieceName in _wz.GetFramePieceNames(defaultPath))
         {
@@ -1132,24 +1159,97 @@ public class PaperdollService : IEntityFrameProvider
         return mv;
     }
 
-    private List<Piece> MaterializePieces(List<PieceSource> sources)
+    private List<Piece> MaterializePieces(List<PieceSource> sources, string action = "", int frame = 0)
     {
         var pieces = new List<Piece>();
         foreach (var s in sources)
         {
             var meta = GetMeta(s.PiecePath);
             if (meta == null) continue;
-            pieces.Add(new Piece
+            var piece = new Piece
             {
                 Category = s.Category, PieceName = s.PieceName, PiecePath = s.PiecePath,
                 ItemId = s.ItemId, Ox = meta.Ox, Oy = meta.Oy, Map = meta.Map,
                 // R-chair：椅子特效层层覆盖（z>0 置顶）与 pos 偏移从 PieceSource 透传
                 ZField = s.ZFieldOverride.Length > 0 ? s.ZFieldOverride : meta.ZField,
                 OffsetX = s.OffsetX, OffsetY = s.OffsetY,
-            });
+            };
+            // alert / heal 动作：动作型装备提供 handMove 手部锚点（对齐 MapleSalon2
+            // CharacterActionItem.ancherSetup —— 这两个动作抬手/施放，武器等要挂到手部锚点；
+            // 部件若自带 handMove 则不覆盖）
+            if ((action == "alert" || action == "heal")
+                && IsActionItemCategory(piece.Category)
+                && !piece.Map.ContainsKey("handMove"))
+            {
+                piece.Map["handMove"] = HandMoveDefaultAnchor(frame);
+            }
+            pieces.Add(piece);
         }
         return pieces;
     }
+
+    /// <summary>
+    /// 背面动作（body 帧 face=0 / blink / hide）时，脸层容器整体隐藏
+    /// （对齐 MapleSalon2 characterFaceFrame.ts:185-196 `layer.visible = !isBackAction`）。
+    /// </summary>
+    private void HideFrontFaceLayersOnBackAction(List<Piece> pieces, CharacterAppearance a, string action, int frame)
+    {
+        var (renderAction, renderFrame) = ResolveRenderAction(a, action, frame);
+        bool back = !IsBodyFaceVisible(a, renderAction, renderFrame)
+                    || action == "blink" || action == "hide";
+        if (!back) { return; }
+        foreach (var p in pieces)
+        {
+            if (!string.IsNullOrEmpty(p.ResolvedLayer) && FrontFaceLayers.Contains(p.ResolvedLayer))
+            {
+                p.Hidden = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 脸层容器（对齐 MapleSalon2 characterFaceFrame.ts:185-196 的 FrontFaceLayers）：
+    /// 背面动作时这些层的部件整体不渲染 —— 不区分 category（102 眼饰若落在 accessoryEyeBelowFace 同样隐藏）。
+    /// </summary>
+    private static readonly HashSet<string> FrontFaceLayers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "accessoryFace", "capAccessoryBelowAccFace", "accessoryFaceOverFaceBelowCap",
+        "face", "accessoryEyeBelowFace", "accessoryFaceBelowFace",
+    };
+
+    /// <summary>
+    /// 是否有穿戴物声明 info.invisibleFace == 1（面罩类，遮住脸型）。
+    /// 对齐 MapleSalon2 item.ts:311 `isOverrideFace = wz?.info?.invisibleFace === 1`。
+    /// </summary>
+    private bool IsFaceOverriddenByEquipment(string hash, CharacterAppearance a)
+    {
+        try
+        {
+            foreach (var (category, root) in GetRoots(hash, a))
+            {
+                if (category is not ("face" or "faceaccessory" or "cap" or "capaccessory")) { continue; }
+                if (_wz.WithWzLock(() => _wz.GetIntProperty($"{root}/info/invisibleFace")) == 1)
+                {
+                    return true;
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>是否为「动作型装备」部件（非 body/head/hair/face/mount/chair/effect 的穿戴物）。</summary>
+    private static bool IsActionItemCategory(string category) =>
+        category is not ("body" or "head" or "hair" or "face" or "mount" or "chair" or "effect" or "ear");
+
+    /// <summary>alert / heal 动作的手部默认锚点（MapleSalon2 const/ancher.ts handMoveDefaultAnchers；
+    /// 帧号越界取第 0 个）。</summary>
+    private static (int x, int y) HandMoveDefaultAnchor(int frame) => frame switch
+    {
+        1 => (-10, 0),
+        2 => (-12, 3),
+        _ => (-8, -2),
+    };
 
     /// <summary>head 的耳朵 canvas：以 "ear" 结尾（排除 capeArm 等含 ear 子串的 key）。</summary>
     private static bool IsEarPiece(string name) => name.EndsWith("ear", StringComparison.OrdinalIgnoreCase);
@@ -1548,6 +1648,7 @@ public class PaperdollService : IEntityFrameProvider
     /// </summary>
     private static readonly Dictionary<string, string> CapeLayerAliases = new(StringComparer.OrdinalIgnoreCase)
     {
+        // —— 披风系（本项目原有）——
         ["capeArm"] = "cape",
         ["capeBack"] = "backCape",
         ["backCapeBelowHead"] = "backMailChestOverPants",
@@ -1560,6 +1661,36 @@ public class PaperdollService : IEntityFrameProvider
         ["capeOverBody"] = "weaponOverBody",
         ["capeBelowHead"] = "armBelowHead",
         ["capeOverArm"] = "gloveWrist",
+        // —— MapleSalon2 zmapIndex.fixLayers 其余条目（WZ 里层名与真实层不一致的装备）——
+        ["accessoryFaceOverCap"] = "accessoryEyeOverCap",   // 1012781
+        ["backBelowBody"] = "backShieldBelowBody",          // 1402233
+        ["backCapAcssesary"] = "backHairBelowCap",          // 1012418
+        ["backCapBelowHair"] = "backCap",                   // 1003169
+        ["backWeaponBelowGlove"] = "backWeaponOverGlove",   // 1472196
+        ["capBelowHair"] = "hairBelowBody",                 // 1004506
+        ["capBelowBody"] = "hairBelowBody",                 // 1004962
+        ["capBackHair"] = "hairOverHead",                   // 1006737
+        ["capBelowHead"] = "capAccessoryBelowBody",         // 1003975
+        ["gloveBelowHair"] = "hair",                        // 1082738
+        ["hairBelowHead"] = "mailArmBelowHead",             // 33525
+        ["mailChestBelowBody"] = "gloveWristBelowBody",     // 1053813
+        ["shieldBelowArm"] = "weaponBelowArm",              // 1092062
+        ["weapnBelowBody"] = "weaponBelowBody",             // 1702891（拼写错误）
+        ["weponBelowBody"] = "weaponBelowBody",             // 1402235（拼写错误）
+        ["weaponBelowArmOverHead"] = "head",                // 1332168
+        ["weaponBelowGlove"] = "gloveWristOverBody",        // 1703541
+        ["weaponBelowHand"] = "weaponOverArmBelowHead",     // 1702012
+        ["weaponBelowHandOverBody"] = "weaponOverArmBelowHead", // 1702288
+        ["weaponBelowHead"] = "weaponOverArmBelowHead",     // Blaster 武器
+        ["weaponBelowbody"] = "weaponBelowBody",            // 1703234（大小写）
+        ["weaponBodyBelow"] = "weaponBelowBody",            // 1412004
+        ["weaponOverArmBelowBody"] = "weaponOverArmBelowHead",  // 1342028
+        ["weaponOverBelowArm"] = "weaponOverArmBelowHead",  // 1703029
+        ["weaponOverGloveBelowMailArm"] = "glove",          // 1702443
+        ["weaponOverHead"] = "hairOverHead",                // 1703236
+        ["weaponWrist"] = "gloveWrist",                     // 1472152
+        ["weaponback"] = "backWeapon",                      // 1702556
+        ["weaponWristOverGloveOverArm"] = "weaponOverArm",  // v0.8.20
     };
 
     private static string? ResolveCapeLayerAlias(string name)
@@ -1673,6 +1804,25 @@ public class PaperdollService : IEntityFrameProvider
         if (a.BodyId >= 2000 && a.BodyId <= 2999) return a.BodyId;
         return a.Gender == 0 ? 2000 : 2001;
     }
+    /// <summary>
+    /// 该 body 动作帧是否显示面部：WZ `{body}/{action}/{frame}/face`（1=显示；0=背面动作，如 ladder/rope）。
+    /// 字段缺失按「显示」处理（老版本 WZ / 特殊动作）。对齐 sdlMS 的 bone_data.face 与 MapleSalon2 isBackAction。
+    /// </summary>
+    private bool IsBodyFaceVisible(CharacterAppearance a, string action, int frame)
+    {
+        try
+        {
+            string path = $"{BodyRoot(a)}/{action}/{frame}/face";
+            return _wz.WithWzLock(() =>
+            {
+                var node = _wz.FindNodeByPath(path);
+                if (node == null) { return true; }
+                try { return node.GetValue<int>() != 0; } catch { return true; }
+            });
+        }
+        catch { return true; }
+    }
+
     private static string BodyRoot(CharacterAppearance a) => $"Character/{BodyNumber(a):D8}.img";
     private static string HeadRoot(CharacterAppearance a) => $"Character/{BodyNumber(a) + 10000:D8}.img";
 

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using MiniPet.Models;
 using MiniPet.Services;
+using MiniPet.Services.Walk;
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views;
@@ -41,6 +42,15 @@ public partial class PetWindow : Window
     // 音乐模块 V0.2.0（F15-F17）：目录服务（透传给 SettingsWindow 音乐 tab）+ 播放编排服务（气泡/菜单/场景联动挂钩）
     private readonly MusicCatalogService _musicCatalog;
     private readonly MusicPlayerService _musicService;
+    // F18 行走模式（胶水 2026-09-14 规则）：只由主宠承载；其余宠物在行走期间隐藏
+    private WalkModeService? _walkMode;
+    private WalkMusicBridge? _walkBridge;
+    private IDisposable? _walkVisibility;
+    private DateTime _walkLastTickUtc;
+    private DateTime _walkLogLastUtc;
+    private string _walkLastAction = string.Empty;
+    // 行走相机（缓动跟随）：人物因此在视口内有位移，宠物窗口位置随之前后移动
+    private float _walkCamX, _walkCamY;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
@@ -155,10 +165,16 @@ public partial class PetWindow : Window
 
         // 模式2 摄像机窗口：RequestHide → 切回静态模式（与「背景模式」菜单一致）；RequestSwitchMap → 进设置中心。
         _mapViewportWindow = new MapViewportWindow();
+        // 行走/背景视口不应抢焦点（Activate/激活会打断用户当前操作）
+        _mapViewportWindow.ShowActivated = false;
+        _mapViewportWindow.Focusable = false;
         var vpSettings = _configService.LoadSettings();
         _mapViewportWindow.SetViewportSize(vpSettings.ViewportW, vpSettings.ViewportH);
         _mapViewportWindow.RequestHide += () => Dispatcher.UIThread.Post(() => SwitchToStaticMode());
         _mapViewportWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
+        // F18 行走模式：服务改为**懒创建**（见 EnsureWalkServices）——
+        // 构造这一刻 PetManager 还没 ApplyPrimaryRole，IsPrimaryRole 恒为 false，
+        // 在这里判断会导致服务永远不创建（正是「播放音乐后宠物不动」的原因）。
 
         Title = "MiniPet";
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -237,7 +253,7 @@ public partial class PetWindow : Window
         // 帧循环：30fps 轮询（预裁剪帧缓存 + 追帧，多帧动画顺滑）
         _stopwatch = new Stopwatch();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
-        _timer.Tick += OnTimerTick;
+        _timer.Tick += (s, e) => { TickWalkMode(); OnTimerTick(s, e); };
         _balloonTimer = new DispatcherTimer();
         _animService.EnableRandomIdle(true);
         _lastOriginX = 0;
@@ -1041,6 +1057,220 @@ public partial class PetWindow : Window
         };
     }
 
+    // ═══════════════════════════════════════════
+    // F18 行走模式（相机跟随 + 宠物动画 + 多宠隐藏 + 0.5s 淡入淡出）
+    // ═══════════════════════════════════════════
+
+    /// <summary>
+    /// 懒创建行走服务 + 音乐桥（幂等，只有主宠会创建）。
+    /// PetManager 是「先建完所有宠物、再 ApplyPrimaryRole」，所以构造期判断 IsPrimaryRole 必然为 false；
+    /// 这里在每帧开头补一次检查，主宠角色一确定（同一轮 CreateAllFromConfig 内）就立刻就绪。
+    /// </summary>
+    private void EnsureWalkServices()
+    {
+        if (_walkMode != null || _walkBridge != null)
+        {
+            return;
+        }
+        if (!IsPrimaryRole)
+        {
+            return;
+        }
+        // 行走模式必须独占动作：随机 idle 会在行走途中把 walk1/walk2 顶成 stand/alert（胶水实测「走一半变 stand」）
+        _animService.EnableRandomIdle(false);
+        try
+        {
+            _walkMode = new WalkModeService(_wzService, _mapService, _paperdoll, _musicCatalog,
+                mapPickerOf: PickWalkMap);
+            _walkMode.MapChanged += OnWalkMapChanged;
+            _walkMode.Exited += OnWalkExited;
+            _walkBridge = new WalkMusicBridge(_walkMode, _musicService);
+            Console.Error.WriteLine("[Walk] 行走模式服务就绪（主宠）");
+            // 预热反向索引：首帧就开始后台全量扫描（否则首次播放只能兜底到默认主城）
+            _musicCatalog.WarmUpReverseIndex();
+            try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} 服务已创建 pet={_petId}\n"); } catch { }
+            // 保险：服务就绪时音乐若已在播放（用户抢在懒创建之前点了播放），桥收不到那次事件 → 补一次 Start
+            var cur = _musicService.Current;
+            if (cur != null && _musicService.State == PlaybackState.Playing)
+            {
+                string? key = WalkPathPlanner.TrackKeyOf($"{cur.Img}/{cur.Track}");
+                if (!string.IsNullOrEmpty(key))
+                {
+                    Console.Error.WriteLine($"[Walk] 服务就绪时音乐已在播 → 直接进入行走：{key}");
+                    _walkMode.Start(key);
+                }
+            }
+            // 调试入口（验收用，不影响正常逻辑）：MINIPET_WALK_AUTOSTART=Bgm00/FloralLife 启动即进入行走模式
+            string? auto = Environment.GetEnvironmentVariable("MINIPET_WALK_AUTOSTART");
+            if (!string.IsNullOrEmpty(auto))
+            {
+                Console.Error.WriteLine($"[Walk] 调试自启（MINIPET_WALK_AUTOSTART={auto}）");
+                try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} 调试自启 {auto}\n"); } catch { }
+                _walkMode.Start(auto);
+                try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} Start 后 active={_walkMode.IsActive} map={_walkMode.CurrentMapId}\n"); } catch { }
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Walk] 初始化失败: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 选曲目对应的地图（F18 §2）：反向索引是**懒建**的，首次播放时还没就绪 →
+    /// 主动 Kick 扫描并最多等 3 秒（一次性；建好后后续即时命中），
+    /// 避免「所有歌都走默认主城」（胶水 2026-09-14）。3 秒仍未就绪才返回 null 交给默认图回退。
+    /// </summary>
+    private string? PickWalkMap(string trackKey)
+    {
+        try
+        {
+            string? m = _musicCatalog.GetFirstMapByReturnMap(trackKey);
+            if (!string.IsNullOrEmpty(m)) { return m; }
+            int slash = trackKey.IndexOf('/');
+            _musicCatalog.KickTrackMapsForImg(slash > 0 ? trackKey[..slash] + ".img" : trackKey);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 3000)
+            {
+                System.Threading.Thread.Sleep(200);
+                m = _musicCatalog.GetFirstMapByReturnMap(trackKey);
+                if (!string.IsNullOrEmpty(m)) { return m; }
+            }
+            Console.Error.WriteLine($"[Walk] 反向索引 3s 未就绪，回退默认图：{trackKey}");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Walk] PickWalkMap: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>每帧驱动行走（挂在既有的 33ms 主定时器上）。</summary>
+    private void TickWalkMode()
+    {
+        EnsureWalkServices();
+        if (_walkMode is not { IsActive: true })
+        {
+            return;
+        }
+        var now = DateTime.UtcNow;
+        double dt = _walkLastTickUtc == default ? 1.0 / 30 : (now - _walkLastTickUtc).TotalSeconds;
+        _walkLastTickUtc = now;
+        try
+        {
+            _walkMode.Tick(dt);
+            // 相机缓动跟随（不硬跟）：人物在视口中央附近有小幅位移，宠物看起来真的在地图上移动
+            _walkCamX += (_walkMode.X - _walkCamX) * 0.06f;
+            _walkCamY += (_walkMode.Y - _walkCamY) * 0.06f;
+            _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+            // 人物朝向 = 行进方向。纸娃娃原始帧是**朝左**的（实测：向右走时脸朝反了），
+            // 所以 Facing >= 0（向右）时才翻转。
+            _spriteCanvas.FlipX = _walkMode.Facing >= 0;
+            // 窗口位置**直接绑定行走位置**：世界坐标 → 地图视口内屏幕点（脚底锚点精确对齐，不贴 fd 的旧算法整窗高度算错）
+            try
+            {
+                var vp = _mapViewportWindow.Position;
+                double vw = _mapViewportWindow.Width, vh = _mapViewportWindow.Height;
+                double sx = (_walkMode.X - _walkCamX) + vw / 2.0;
+                double sy = (_walkMode.Y - _walkCamY) + vh / 2.0;
+                var spriteTopLeft = _spriteCanvas.TranslatePoint(new Avalonia.Point(0, 0), this) ?? new Avalonia.Point(0, 0);
+                // ⚠️ 逻辑像素 → 物理像素必须乘 RenderScaling（Retina 2x）：项目其它地方（拖拽）也是这个口径，
+                // 少了这一步宠物脚底会整体偏一倍窗口高度（正是「脚不贴 fd」的原因）。
+                double rs = RenderScaling > 0 ? RenderScaling : 1.0;
+                Position = new PixelPoint(
+                    vp.X + (int)Math.Round((sx - spriteTopLeft.X - _lastOriginX * _scale) * rs),
+                    vp.Y + (int)Math.Round((sy - spriteTopLeft.Y - _lastOriginY * _scale) * rs));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] 位置绑定失败: {ex.Message}"); }
+            // 注：这里**不能**每帧 RaisePet()——它的实现是 Activate()，会导致行走期间持续抢焦点
+            //（胶水 2026-09-14：播放音乐时不应该强焦点）。层级只在切图时提一次（OnWalkMapChanged）。
+            // 坐标日志（限频 1s，写文件供诊断「瞬移/绳下徘徊」）
+            if ((now - _walkLogLastUtc).TotalSeconds >= 1.0)
+            {
+                _walkLogLastUtc = now;
+                try
+                {
+                    System.IO.File.AppendAllText("/tmp/mp-walk.log",
+                        $"{now:HH:mm:ss.fff} map={_walkMode.CurrentMapId} pos=({_walkMode.X:F0},{_walkMode.Y:F0}) phase={_walkMode.Phase} act={_walkMode.CurrentAction} facing={_walkMode.Facing} hop={_walkMode.CurrentHopIndex}/{_walkMode.PathLength} noNext={_walkMode.NoNextPortal} half={_walkMode.HalfLen:F0}\n");
+                }
+                catch { }
+            }
+            string act = _walkMode.CurrentAction;
+            if (!string.Equals(act, _walkLastAction, StringComparison.Ordinal))
+            {
+                _walkLastAction = act;
+                _animService.Play(act, PlayMode.Loop);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Walk] Tick: {ex.Message}"); }
+    }
+
+    /// <summary>切图（走到传送门 / 歌曲播完）：载入新地图 + 相机跟随 + 0.5s 淡入淡出 + 只留主宠。</summary>
+    private void OnWalkMapChanged(string mapId)
+    {
+        try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} MapChanged → {mapId}\n"); } catch { }
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                var mi = _mapService.LoadMap(mapId);
+                if (mi == null)
+                {
+                    Console.Error.WriteLine($"[Walk] 地图加载失败: {mapId}");
+                    return;
+                }
+                _mapViewportWindow.SetMap(mi, _mapService);
+                if (_walkMode != null)
+                {
+                    _walkCamX = _walkMode.X;
+                    _walkCamY = _walkMode.Y;
+                    _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+                }
+                if (!_mapViewportWindow.IsVisible)
+                {
+                    // 摆到主屏中央（行走模式的背景视口；不定位会出现在默认角落）
+                    try
+                    {
+                        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+                        if (screen != null)
+                        {
+                            _mapViewportWindow.Position = new Avalonia.PixelPoint(
+                                Math.Max(0, (screen.Bounds.Width - (int)_mapViewportWindow.Width) / 2),
+                                Math.Max(0, (screen.Bounds.Height - (int)_mapViewportWindow.Height) / 2));
+                        }
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[Walk] 视口定位失败: {ex.Message}"); }
+                    _mapViewportWindow.Show();
+                    RaisePet();
+                }
+                _ = WalkTransition.CrossFadeAsync(_mapViewportWindow, () => { }, WalkTransition.DefaultMs);
+                // 行走期间只有主宠可见（其余 Hide，句柄 Dispose 时还原）
+                _walkVisibility ??= WalkPetVisibility.HideOthers(this, _petManager.Pets.Where(p => !ReferenceEquals(p, this)));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] MapChanged: {ex.Message}"); }
+        });
+    }
+
+    /// <summary>退出行走模式：恢复其余宠物 + 收起行走背景。</summary>
+    private void OnWalkExited()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                _walkVisibility?.Dispose();
+                _walkVisibility = null;
+                _walkLastAction = string.Empty;
+                _spriteCanvas.FlipX = false;
+                _animService.EnableRandomIdle(true);   // 退出行走恢复随机 idle
+                if (_mapViewportWindow.IsVisible)
+                {
+                    _mapViewportWindow.Hide();
+                    RaisePet();
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] Exited: {ex.Message}"); }
+        });
+    }
+
     private void OnTimerTick(object? sender, EventArgs e)
     {
         try
@@ -1062,6 +1292,8 @@ public partial class PetWindow : Window
             {
                 // 纸娃娃 provider：合成帧位图（BGRA premul）+ union 公共 origin
                 ox = fr.OriginX; oy = fr.OriginY; fw = fr.FrameW; fh = fr.FrameH;
+                _lastOriginX = ox;
+                _lastOriginY = oy;
             }
             else if (fr.Png != null)
             {

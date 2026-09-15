@@ -92,46 +92,68 @@ public partial class MapService
                         }
                     }
 
-                    // 2. 8 层 obj + tile：同层混合按 (Z0,Z1) 升序排序（对齐 R2 容器内排序）。
-                    //    obj.Z0 = obj.Z(WZ z 字段)，tile.Z0 = 精灵帧 z（M3：R2 GetMeshTile mesh.Z0 = frame.Z），同 z 按 Id。
-                    //    修正层级 bug：原"obj 全画完再 tile"导致地面(tile)盖建筑(obj)；混合排序后 z 小先画被盖，建筑在上。
-                    //    排序结果按 (mapId, layer, showObj, showTile) 缓存——地图不变时顺序固定，免每帧 LINQ（P5-2）。
+                    // 2. 8 层 obj + tile + life —— 严格按 **R2 的 RenderPatchComarison 排序键**：
+                    //    FrmMapRender.cs:1353-1358  patch.ZIndex = [ Obj(3)=大类, layer, patch.ObjectType, z, loadIndex, zM ]
+                    //    逐元素比较，于是层内顺序 = ① ObjectType（Obj=3 → Tile=4 → Npc=5，见 Patches/RenderObjectType.cs）
+                    //                              ② z（obj 用地图节点 z；tile 用**帧** z，frames[0].Z）
+                    //                              ③ loadIndex（加载序号）
+                    //    即 **先画该层全部 obj，再画全部 tile，最后画该层 life**，各自内部按 (z, id)。
+                    //    （曾用"obj/tile 混合 (z,id) 排序"+"层序反转"，均与 R2 不符，已按参考代码纠正。）
                     for (int i = 0; i < 8; i++)
                     {
                         var layer = map.Layers[i];
-                        var sortKey = $"{map.Id}|{i}|{MapShowObj}|{MapShowTile}";
+                        var sortKey = $"{map.Id}|{i}|{MapShowObj}|{MapShowTile}|{MapShowLife}";
                         if (!_layerSortCache.TryGetValue(sortKey, out var items))
                         {
-                            items = new List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile)>();
+                            items = new List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile, MapLife? Life)>();
+                            // ① ObjectType = Obj
                             if (MapShowObj)
-                                foreach (var o in layer.Objs) items.Add((o.Z, o.Id, true, o, null));
+                            {
+                                foreach (var o in layer.Objs.OrderBy(o => o.Z).ThenBy(o => o.Id))
+                                {
+                                    items.Add((o.Z, o.Id, true, o, null, null));
+                                }
+                            }
+                            // ② ObjectType = Tile（tile 的 z 取精灵帧 z，MapTile.Z 已是该值）
                             if (MapShowTile)
-                                foreach (var t in layer.Tiles) items.Add((t.Z, t.Id, false, null, t));
-                            items = items.OrderBy(d => d.Z0).ThenBy(d => d.Z1).ToList();
+                            {
+                                foreach (var t in layer.Tiles.OrderBy(t => t.Z).ThenBy(t => t.Id))
+                                {
+                                    items.Add((t.Z, t.Id, false, null, t, null));
+                                }
+                            }
+                            // ③ ObjectType = Npc/Mob（R2 把 life 挂在**该层 foothold 容器**里 → 归属层 = 它踩的 fh 所在层）
+                            if (MapShowLife)
+                            {
+                                foreach (var lf in map.Lifes)
+                                {
+                                    if (lf.Hide || string.IsNullOrEmpty(lf.Resource.ResourceUrl)) { continue; }
+                                    int lifeLayer = 0;
+                                    foreach (var fh in map.Footholds)
+                                    {
+                                        if (fh.Id == lf.Fh) { lifeLayer = fh.Layer; break; }
+                                    }
+                                    if (lifeLayer == i) { items.Add((lf.Z, lf.Id, false, null, null, lf)); }
+                                }
+                            }
                             _layerSortCache[sortKey] = items;
                         }
                         foreach (var it in items)
                         {
                             if (it.IsObj)
                             {
-                                if (it.Obj!.Resource.Frames.Count == 0) continue;
+                                if (it.Obj!.Resource.Frames.Count == 0) { continue; }
                                 DrawWorldSprite(canvas, it.Obj.Resource.Frames[0].ResourceUrl, it.Obj.X, it.Obj.Y, it.Obj.FlipX, camCenterX, camCenterY, zoom, halfW, halfH, 255);
                             }
-                            else
+                            else if (it.Tile != null)
                             {
-                                DrawWorldSprite(canvas, it.Tile!.Resource.ResourceUrl, it.Tile.X, it.Tile.Y, false, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                                DrawWorldSprite(canvas, it.Tile.Resource.ResourceUrl, it.Tile.X, it.Tile.Y, false, camCenterX, camCenterY, zoom, halfW, halfH, 255);
                             }
-                        }
-                    }
-
-                    // 3. life — 定位 (X, Cy)（Cy 缺失回退 Y），flip，hide 跳过
-                    if (MapShowLife)
-                    {
-                        foreach (var life in map.Lifes)
-                        {
-                            if (life.Hide || string.IsNullOrEmpty(life.Resource.ResourceUrl)) continue;
-                            int ly = life.Cy != 0 ? life.Cy : life.Y;
-                            DrawWorldSprite(canvas, life.Resource.ResourceUrl, life.X, ly, life.Flip, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                            else if (it.Life != null)
+                            {
+                                int ly = it.Life.Cy != 0 ? it.Life.Cy : it.Life.Y;
+                                DrawWorldSprite(canvas, it.Life.Resource.ResourceUrl, it.Life.X, ly, it.Life.Flip, camCenterX, camCenterY, zoom, halfW, halfH, 255);
+                            }
                         }
                     }
 

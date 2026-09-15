@@ -338,6 +338,24 @@ namespace MiniPet.Services
         /// 磁盘缓存/内存已命中则立即返回；否则入队并启动后台增量扫描（单飞，一次遍历顺带补齐所有节点）。
         /// fire-and-forget 调用即可，进度经 ReverseIndexChanged 事件推送。
         /// </summary>
+        /// <summary>
+        /// 启动预热：后台**全量**扫描「曲目 ← 地图」反向索引（ScanReverseCore 会遍历 Map0..Map9 的全部 img，
+        /// 两万张量级，耗时以分钟计）。结果落盘（PersistReverseCacheToDisk），下次启动由
+        /// LoadReverseCacheFromDisk 秒读。不预热的话，用户首次播放时索引必然没就绪 → 全部走默认主城兜底。
+        /// </summary>
+        public void WarmUpReverseIndex()
+        {
+            if (!_wz.IsLoaded)
+            {
+                return;
+            }
+            lock (_reverseLock)
+            {
+                _reversePendingImgs.Add("__warmup__");
+            }
+            EnsureScanTask();
+        }
+
         public void KickTrackMapsForImg(string? imgName)
         {
             if (string.IsNullOrEmpty(imgName) || !_wz.IsLoaded)
@@ -604,7 +622,10 @@ namespace MiniPet.Services
                                 }
                                 int town = info?.FindNodeByPath("town")?.GetValueEx<int>(0) ?? 0;
                                 string mapId = imgNode.Text[..^4];
-                                var entry = new TrackMapRef(mapId, LookupMapName(mapId), town == 1);
+                                // returnMap：无限之路「第一张地图」的选图依据（运行时实时算众数，不落表）
+                                string returnMap = info?.FindNodeByPath("returnMap")?.GetValueEx<string>(null) ?? "";
+                                var entry = new TrackMapRef(mapId, LookupMapName(mapId), town == 1,
+                                    string.IsNullOrEmpty(returnMap) ? null : returnMap);
                                 found.Add(new KeyValuePair<string, TrackMapRef>($"{trackRef.Img}/{trackRef.Track}", entry));
                             }
                             catch (Exception ex)
@@ -615,7 +636,7 @@ namespace MiniPet.Services
                         }
                         foreach (var kv in found)
                         {
-                            changed |= AccumulateTrackMap(working, kv.Key, kv.Value);
+                            changed |= AccumulateTrackMap(working, kv.Key, kv.Value, kv.Value.ReturnMap);
                         }
                     }
                     // 分组收尾：增量发布（UI 即便中途进来也能看到已完成分区的数据）+ 触发刷新
@@ -643,11 +664,22 @@ namespace MiniPet.Services
         /// 永不占名额。返回存储是否发生变化。
         /// </summary>
         private static bool AccumulateTrackMap(
-            Dictionary<string, TrackMapSlice> store, string key, TrackMapRef entry)
+            Dictionary<string, TrackMapSlice> store, string key, TrackMapRef entry, string? returnMap)
         {
             store.TryGetValue(key, out var slice);
             var items = slice.Items as List<TrackMapRef> ?? new List<TrackMapRef>(slice.Items);
             int more = slice.MoreCount;
+            // returnMap 票数：与该曲目相关的**每张**地图都计一票（不受 5 名展示封顶影响）
+            Dictionary<string, int>? votes = slice.ReturnMapVotes == null
+                ? null
+                : new Dictionary<string, int>(slice.ReturnMapVotes, StringComparer.Ordinal);
+            bool votesChanged = false;
+            if (!string.IsNullOrEmpty(returnMap))
+            {
+                votes ??= new Dictionary<string, int>(StringComparer.Ordinal);
+                votes[returnMap] = votes.TryGetValue(returnMap, out var vc) ? vc + 1 : 1;
+                votesChanged = true;
+            }
             bool isFull = items.Count >= MusicCatalogLimits.MaxNamedEntriesPerTrack;
             if (entry.MapName != null && !ContainsEntry(items, entry))
             {
@@ -669,7 +701,12 @@ namespace MiniPet.Services
                 {
                     more++;
                 }
-                store[key] = new TrackMapSlice(items, more);
+                store[key] = new TrackMapSlice(items, more, votes);
+                return true;
+            }
+            if (votesChanged)
+            {
+                store[key] = new TrackMapSlice(items, more, votes);
                 return true;
             }
             return false;
@@ -686,6 +723,28 @@ namespace MiniPet.Services
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// 实时算「无限之路第一张地图」（**不查表**）：该曲目所有相关地图里，`info/returnMap`
+        /// 得票最多的那张（并列取 mapId 小者，保证确定性）。
+        /// 数据来自反向索引一次性扫描时顺带累计的票数——调用是纯内存计算，切 BGM 时可随取随算。
+        /// 曲目无索引 / 无 returnMap 票 / trackKey 为空 → null（调用方走回退链）。
+        /// </summary>
+        public string? GetFirstMapByReturnMap(string? trackKey)
+        {
+            if (string.IsNullOrEmpty(trackKey))
+            {
+                return null;
+            }
+            lock (_reverseLock)
+            {
+                if (!_reverseStore.TryGetValue(trackKey, out var slice))
+                {
+                    return null;
+                }
+                return MusicDecisions.FirstMapByReturnMap(slice.ReturnMapVotes);
+            }
         }
 
         /// <summary>
@@ -924,11 +983,14 @@ namespace MiniPet.Services
     /// <param name="MapId">地图 id（WZ 文件名去 .img 后缀，9 位补零形态）。</param>
     /// <param name="MapName">地图显示名（来自已有地图名缓存；缓存未就绪或无名时 null，UI 回退显示 MapId）。</param>
     /// <param name="IsTown">是否村庄地图（同 img 的 info/town 整型属性 == 1；探针实证取值仅 0/1）。</param>
-    public sealed record TrackMapRef(string MapId, string? MapName, bool IsTown);
+    public sealed record TrackMapRef(string MapId, string? MapName, bool IsTown, string? ReturnMap = null);
 
     /// <summary>
     /// 单首曲目的关联地图切片：Items ≤5 条**有名字**的地图（城镇优先，组内名称序）；
     /// MoreCount = 未收录的其余地图张数（无名/超额），UI 以「…下略」代替展示。
     /// </summary>
-    public sealed record TrackMapSlice(IReadOnlyList<TrackMapRef> Items, int MoreCount);
+    public sealed record TrackMapSlice(
+        IReadOnlyList<TrackMapRef> Items,
+        int MoreCount,
+        IReadOnlyDictionary<string, int>? ReturnMapVotes = null);
 }

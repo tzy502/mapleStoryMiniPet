@@ -43,6 +43,9 @@ public class TrayService
     // V0.1.3 多桌宠：登记全部桌宠窗口，托盘动作（显示/隐藏/居中）作用于全部
     // （旧版单槽 _mainWindow 只认最后创建的那只 → 第 2 只出现后"显示主窗口"永远只动一只）。
     private readonly List<Window> _pets = new();
+    /// <summary>音乐分组是否已就地重建过（V0.1.3 多桌宠：每只桌宠构造都会调 SetMusicService，
+    /// 反复重建托盘菜单会触发 Avalonia「The menu being updated does not match」）。</summary>
+    private bool _musicMenuRebuilt;
     private readonly object _petsLock = new();
     private readonly EventBus _eventBus;
     private string _tooltip = "MiniPet 桌宠";
@@ -102,9 +105,12 @@ public class TrayService
                 musicService.CurrentChanged += _ => Dispatcher.UIThread.Post(RefreshMusicMenuItems);
                 musicService.StateChanged += _ => Dispatcher.UIThread.Post(RefreshMusicMenuItems);
             }
-            // 菜单已存在（注入晚于 ShowTrayIcon 的时序兜底）：就地重建补入音乐分组
-            if (_trayIcon != null)
+            // 菜单已存在（注入晚于 ShowTrayIcon 的时序兜底）：就地重建补入音乐分组。
+            // V0.1.3 多桌宠：只在首次兜底时重建一次——N 只桌宠构造都会调本方法，反复重建托盘菜单会抛
+            // 「The menu being updated does not match」（日志实测），且首建菜单时音乐分组已在。
+            if (_trayIcon != null && !_musicMenuRebuilt)
             {
+                _musicMenuRebuilt = true;
                 _trayIcon.Menu = BuildTrayMenu();
                 RefreshMusicMenuItems();
             }

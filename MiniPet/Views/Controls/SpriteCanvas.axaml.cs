@@ -117,6 +117,29 @@ public partial class SpriteCanvas : UserControl
     /// 跳过 PNG 编码 + Bitmap 解码往返（对齐 MapViewportWindow 直拷，30fps 热路径）。
     /// 容器尺寸/缩放逻辑与 SetFrame 一致（±2px 容忍）。
     /// </summary>
+    private bool _flipX;
+
+    /// <summary>
+    /// 水平翻转（F18 行走模式：人物朝向左右）。以图像中心为轴镜像 ——
+    /// 纸娃娃 origin 基本落在身体中心，镜像带来的 1~2px 偏移可忽略；
+    /// 若将来需要严格对齐，应按 `anchor - (px - ox)` 重算（对齐 MapService 的 flip 语义）。
+    /// </summary>
+    public bool FlipX
+    {
+        get => _flipX;
+        set
+        {
+            if (_flipX == value) { return; }
+            _flipX = value;
+            try
+            {
+                SpriteImage.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
+                SpriteImage.RenderTransform = new ScaleTransform(value ? -1 : 1, 1);
+            }
+            catch { }
+        }
+    }
+
     public void SetFrameBitmap(SKBitmap bmp, int originX = 0, int originY = 0, double scale = 1.0)
     {
         if (bmp == null || bmp.Width <= 0 || bmp.Height <= 0)

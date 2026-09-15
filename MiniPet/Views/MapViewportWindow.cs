@@ -138,6 +138,17 @@ public class MapViewportWindow : Window
     /// 跳过 PNG 编码/解码：RenderViewport 输出 BGRA8888/Premul SKBitmap → WriteableBitmap 直拷像素（省 ~20-40ms/帧）。
     /// M11：SKBitmap/WriteableBitmap 双缓冲复用，尺寸变化才重建；渲染结果仅在「渲染参数与当前一致」时清脏（M10）。
     /// </summary>
+    /// <summary>
+    /// F18 行走模式：把相机挪到指定世界坐标（角色跟随）。zoom 默认 1。
+    /// </summary>
+    public void SetCamera(float x, float y, float zoom = 1f)
+    {
+        _camX = x;
+        _camY = y;
+        _zoom = zoom;
+        Dispatcher.UIThread.Post(KickRender);
+    }
+
     private void KickRender()
     {
         if (!IsVisible || _map == null || _mapService == null) return;

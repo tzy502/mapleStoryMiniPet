@@ -106,6 +106,12 @@ namespace MiniPet.Services
             wz.WzReloaded += OnWzReloaded;
         }
 
+        /// <summary>
+        /// 曲目**自然播完**（区别于用户 Stop / Next / Prev；运行于后台工作线程，订阅者需自行切 UI 线程）。
+        /// F18 行走模式据此「立即停走 + 0.5s 淡入淡出切换下一张地图」。
+        /// </summary>
+        public event Action<MusicTrack?>? TrackEnded;
+
         /// <summary>当前曲目（未播放为 null）。</summary>
         public MusicTrack? Current
         {
@@ -917,6 +923,10 @@ namespace MiniPet.Services
                         // 拿到编排锁后再复核一次
                         return;
                     }
+                    // 自然播完确认（代际未被用户操作取代）→ 通知订阅者（F18 行走模式：停走 + 切下一张地图）
+                    MusicTrack? endedTrack = Current;
+                    try { TrackEnded?.Invoke(endedTrack); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[Music] TrackEnded 订阅者异常: {ex.Message}"); }
                     // 自动续播也是换曲类操作：bump 操作代际
                     Interlocked.Increment(ref _opGen);
                     // 自然播完：旧流已终结——后续任何失败都是终态（oldStreamAlive=false）

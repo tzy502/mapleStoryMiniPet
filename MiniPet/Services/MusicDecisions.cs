@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using MiniPet.Models;
 
@@ -12,15 +13,58 @@ namespace MiniPet.Services
     public static class MusicDecisions
     {
         /// <summary>
+        /// 硬编码忽略的 BGM（2026-09-14 定）：Bgm00/Silence 是静音轨，项目内**完全忽略**——
+        /// 不视为场景 BGM，场景联动（F17）与无限之路选图（F18）都不会命中它。
+        /// </summary>
+        public const string IgnoredSilenceBgm = "Bgm00/Silence";
+
+        /// <summary>
+        /// returnMap 票数 → 无限之路「第一张地图」（实时算，不查表）：
+        /// 取票数最多者；并列取 mapId 小者（Ordinal）保证结果确定。无票 / null → null。
+        /// </summary>
+        public static string? FirstMapByReturnMap(IReadOnlyDictionary<string, int>? votes)
+        {
+            if (votes == null || votes.Count == 0)
+            {
+                return null;
+            }
+            string? best = null;
+            int bestVotes = 0;
+            foreach (var kv in votes)
+            {
+                if (kv.Value > bestVotes
+                    || (kv.Value == bestVotes && best != null && string.CompareOrdinal(kv.Key, best) < 0))
+                {
+                    best = kv.Key;
+                    bestVotes = kv.Value;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>是否为硬编码忽略的 BGM（去首尾空白、大小写不敏感）。</summary>
+        public static bool IsIgnoredBgm(string? bgm)
+        {
+            return !string.IsNullOrWhiteSpace(bgm)
+                && bgm.Trim().Equals(IgnoredSilenceBgm, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// 归一化地图 info/bgm 字段值为曲目引用。
         /// ⚠️ 探针实证：WZ 的 bgm 值形如 "Bgm58/The Beginnig of The Adventure"——
         /// 分类部分**无 .img 后缀**，必须补 ".img" 才能匹配 Sound 目录（"Bgm58" → "Bgm58.img"）。
         /// 无斜杠 / 空串 / null 一律返回 null（无法定位分类，视为无场景 BGM）。
+        /// 硬编码忽略的 BGM（Bgm00/Silence）同样返回 null。
         /// 例："Bgm58/xxx" → MusicTrackRef(Img="Bgm58.img", Track="xxx")。
         /// </summary>
         public static MusicTrackRef? NormalizeBgm(string? bgm)
         {
             if (string.IsNullOrWhiteSpace(bgm))
+            {
+                return null;
+            }
+            // 硬编码忽略：Bgm00/Silence 是静音轨，项目内完全忽略（不视为场景 BGM）
+            if (IsIgnoredBgm(bgm))
             {
                 return null;
             }
