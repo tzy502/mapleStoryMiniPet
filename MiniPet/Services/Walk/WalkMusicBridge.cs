@@ -39,10 +39,14 @@ namespace MiniPet.Services.Walk
         // Dispose 标记（Interlocked 保证幂等；事件回调里复查避免投递体在退订后仍调用已销毁的行走服务）
         private int _disposed;
 
-        public WalkMusicBridge(WalkModeService walk, MusicPlayerService player)
+        /// <summary>「播放音乐时加载地图」开关（false = 只听音乐，完全不加载地图/不进入行走模式）。null = 恒启用。</summary>
+        private readonly Func<bool>? _isEnabled;
+
+        public WalkMusicBridge(WalkModeService walk, MusicPlayerService player, Func<bool>? isEnabled = null)
         {
             _walk = walk ?? throw new ArgumentNullException(nameof(walk));
             _music = player ?? throw new ArgumentNullException(nameof(player));
+            _isEnabled = isEnabled;
             _onCurrentChanged = OnCurrentChanged;
             _onTrackEnded = OnTrackEnded;
             _onStateChanged = OnStateChanged;
@@ -83,6 +87,23 @@ namespace MiniPet.Services.Walk
             {
                 if (Volatile.Read(ref _disposed) != 0)
                 {
+                    return;
+                }
+                // 「播放音乐时加载地图」关闭 → 只听音乐：正在行走则退出，且不再进入（不触发任何 LoadMap）
+                if (_isEnabled != null && !_isEnabled())
+                {
+                    bool walkingNow;
+                    lock (_lock)
+                    {
+                        walkingNow = _walking;
+                        _walking = false;
+                        _currentKey = null;
+                    }
+                    if (walkingNow)
+                    {
+                        Console.Error.WriteLine("[WalkMusicBridge] 「播放音乐时加载地图」已关闭 → 停止行走（只听音乐）");
+                        Post("开关关闭退出行走", () => _walk.Stop());
+                    }
                     return;
                 }
                 string? key = TrackKeyOf(track);

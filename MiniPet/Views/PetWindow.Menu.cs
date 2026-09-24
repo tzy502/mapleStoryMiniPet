@@ -337,6 +337,24 @@ public partial class PetWindow
             };
             petMenuItem.Items.Add(centerItem);   // 收进「🐾 桌宠」
 
+            // ── 📌 置顶（胶水 2026-09-24）──
+            var topmostItem = new MenuItem
+            {
+                Header = (_configService.GetTopmost() ? "✓ " : "   ") + "📌 置顶",
+            };
+            topmostItem.Click += (_, _) =>
+            {
+                try
+                {
+                    bool v = !_configService.GetTopmost();
+                    _configService.SetTopmost(v);
+                    Topmost = v;
+                    topmostItem.Header = (v ? "✓ " : "   ") + "📌 置顶";
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] TopmostToggle: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(topmostItem);
+
             cm.Items.Add(new Separator());
 
             // ── 退出 ──

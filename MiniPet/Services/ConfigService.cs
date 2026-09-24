@@ -244,6 +244,8 @@ namespace MiniPet.Services
         /// <summary>
         /// 读取「自动眨眼」开关（默认 true）。走 LoadSettings 的内存缓存，不额外读盘。
         /// </summary>
+        public bool GetTopmost() => LoadSettings().Topmost;
+        public void SetTopmost(bool enabled) => UpdateSettings(s => s.Topmost = enabled);
         public bool GetAutoBlink() => LoadSettings().AutoBlink;
 
         /// <summary>

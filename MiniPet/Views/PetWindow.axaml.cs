@@ -219,7 +219,9 @@ public partial class PetWindow : Window
         SizeToContent = SizeToContent.WidthAndHeight;
         MinWidth = 64;
         MinHeight = 64;
-        Topmost = true;
+        // 置顶以配置为准（🐾 桌宠 → 📌 置顶 可关；关掉后会被其它窗口盖住）
+        try { Topmost = _configService.GetTopmost(); }
+        catch { Topmost = true; }
         // 2026-08-17 用户要求：桌宠不进任务栏（Windows），仅托盘展示；设置中心正常显示
         ShowInTaskbar = false;
         // V0.1.3 备注：这里**不能**设 ShowActivated=false —— 实测会让桌宠窗口收不到右键/拖拽
@@ -1150,7 +1152,9 @@ public partial class PetWindow : Window
                 mapPickerOf: PickWalkMap);
             _walkMode.MapChanged += OnWalkMapChanged;
             _walkMode.Exited += OnWalkExited;
-            _walkBridge = new WalkMusicBridge(_walkMode, _musicService);
+            // 「播放音乐时加载地图」关闭 → 桥不启动行走（只听音乐，不触发任何 LoadMap）
+            _walkBridge = new WalkMusicBridge(_walkMode, _musicService,
+                () => { try { return _configService.LoadSettings().WalkShowMapBackground; } catch { return true; } });
             Console.Error.WriteLine("[Walk] 行走模式服务就绪（主宠）");
             // 预热反向索引：首帧就开始后台全量扫描（否则首次播放只能兜底到默认主城）
             _musicCatalog.WarmUpReverseIndex();
@@ -1251,6 +1255,16 @@ public partial class PetWindow : Window
         {
             return;
         }
+        // 播放中途关掉「加载地图」→ 立刻退出行走（已加载的地图窗由 OnWalkExited 收起）
+        try
+        {
+            if (!_configService.LoadSettings().WalkShowMapBackground)
+            {
+                _walkMode.Stop();
+                return;
+            }
+        }
+        catch { }
         var now = DateTime.UtcNow;
         double dt = _walkLastTickUtc == default ? 1.0 / 30 : (now - _walkLastTickUtc).TotalSeconds;
         _walkLastTickUtc = now;
