@@ -32,11 +32,11 @@ static class DollDiag
 
         // 每个动作取一帧（ladder/rope 是背面动作，face=0）
         var acts = new[] { "stand1", "walk1", "alert", "ladder", "rope", "prone", "jump" };
-        var frames = new List<(string Act, SKBitmap? Bmp, int Ox, int Oy)>();
+        var frames = new List<(string Act, SKBitmap? Bmp)>();
         foreach (var act in acts)
         {
             var (bmp, ox, oy, w, h) = pd.RenderFrame(act, 0);
-            frames.Add((act, bmp, ox, oy));
+            frames.Add((act, bmp));
             Console.WriteLine($"[doll] {act,-8} → {(bmp == null ? "null" : $"{bmp.Width}x{bmp.Height} origin=({ox},{oy})")}");
         }
 
@@ -53,11 +53,8 @@ static class DollDiag
                 if (frames[i].Bmp != null)
                 {
                     var b = frames[i].Bmp!;
-                    // **按 origin 对齐**：origin 落在每个 cell 的 (cx, anchorY) —— 若各动作的锚点一致，
-                    // 人物相对该点的位置也应一致（验证「纸娃娃按基础来」是否真的锚点不漂）。
-                    float anchorY = cellH - 20;
-                    cv.DrawBitmap(b, cx - frames[i].Ox, anchorY - frames[i].Oy);
-                    cv.DrawCircle(cx, anchorY, 3, new SKPaint { Color = SKColors.Red, IsAntialias = true });
+                    // 帧底边对齐 cell 底部（纸娃娃 origin 在脚底）
+                    cv.DrawBitmap(b, cx - b.Width / 2f, cellH - b.Height);
                 }
                 cv.DrawText(frames[i].Act, i * cellW + 6, cellH + 18, label);
             }
