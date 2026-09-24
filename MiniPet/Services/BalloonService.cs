@@ -253,8 +253,19 @@ namespace MiniPet.Services
                 rects.Add((e, rightX - PivotX(tiles.EOrigin.X), y - tiles.EOrigin.Y, rightX - PivotX(tiles.EOrigin.X) + e.Width, y - tiles.EOrigin.Y + e.Height, false));
                 y += colH;
             }
-            // 中心块位置 = (leftOffset2, topLeftPadding.y)，无 origin 偏移（MapleSalon2 addCenterTile 不用 pivot）
-            rects.Add((c, leftOffset2, centerTop, leftOffset2 + colW * colCount, centerTop + colH * rowCount, true));
+            // 中心块 = (leftOffset2, topLeftPadding.y)，无 origin 偏移（MapleSalon2 addCenterTile 不用 pivot）。
+            // ⚠️ 参考实现用的是 **TilingSprite 平铺**（chatBalloonBackground.ts addCenterTile:
+            //    `TilingSprite.from(assets[4])` + `setSize(w,h)`）——即按 colWidth×colHeight 网格**重复** c 瓦片，
+            // 不是把一块 c 拉伸铺满（拉伸会把图案拉长，与游戏观感不同，胶水 2026-09-24 指出）。
+            for (int ty = 0; ty < rowCount; ty++)
+            {
+                for (int tx = 0; tx < colCount; tx++)
+                {
+                    float cx0 = leftOffset2 + tx * colW;
+                    float cy0 = centerTop + ty * colH;
+                    rects.Add((c, cx0, cy0, cx0 + colW, cy0 + colH, false));
+                }
+            }
 
             // bottom：sw → s×colCount（i==0 画 arrow）→ se
             rects.Add((sw, -(float)PivotX(tiles.SWOrigin.X), y - tiles.SWOrigin.Y, -tiles.SWOrigin.X + sw.Width, y - tiles.SWOrigin.Y + sw.Height, false));
