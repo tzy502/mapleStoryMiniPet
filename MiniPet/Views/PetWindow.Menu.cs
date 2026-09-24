@@ -299,9 +299,7 @@ public partial class PetWindow
             };
             cm.Items.Add(settingsItem);
 
-            cm.Items.Add(new Separator());
-
-            // ── 重置到桌面中央 ──
+            // ── 重置到桌面中央（收进「🐾 桌宠」）──
             var centerItem = new MenuItem { Header = "重置到桌面中央" };
             centerItem.Click += (_, _) =>
             {
@@ -354,8 +352,6 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] TopmostToggle: {ex.Message}"); }
             };
             petMenuItem.Items.Add(topmostItem);
-
-            cm.Items.Add(new Separator());
 
             // ── 退出 ──
             var exitItem = new MenuItem { Header = "退出" };
