@@ -1145,8 +1145,8 @@ public partial class PetWindow : Window
         {
             return;
         }
-        // 行走模式必须独占动作：随机 idle 会在行走途中把 walk1/walk2 顶成 stand/alert（胶水实测「走一半变 stand」）
-        _animService.EnableRandomIdle(false);
+        // 注：随机 idle 的关闭**不能**放这里——本方法主宠第一帧就会执行，会把随机动画机制整体关掉
+        //（胶水 2026-09-24 报「默认一定时间随机切换动画的机制没了」）。改为在真正进入行走时关（见 OnWalkMapChanged）。
         try
         {
             _walkMode = new WalkModeService(_wzService, _mapService, _paperdoll, _musicCatalog,
@@ -1364,6 +1364,8 @@ public partial class PetWindow : Window
     /// <summary>切图（走到传送门 / 歌曲播完）：载入新地图 + 相机跟随 + 0.5s 淡入淡出 + 只留主宠。</summary>
     private void OnWalkMapChanged(string mapId)
     {
+        // 行走模式独占动作：否则随机 idle 会在行走途中把 walk1/walk2 顶成 stand/alert
+        try { _animService.EnableRandomIdle(false); } catch { }
         try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} MapChanged → {mapId}\n"); } catch { }
         Dispatcher.UIThread.Post(() =>
         {
