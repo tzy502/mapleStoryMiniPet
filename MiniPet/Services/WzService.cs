@@ -1143,7 +1143,11 @@ namespace MiniPet.Services
             lock (_wzLock)
             try
             {
-                foreach (var imgPath in new[] { "UI/_Canvas/ChatBalloon.img", "UI/ChatBalloon.img" })
+                // ⚠️ 路径顺序很重要：`UI/ChatBalloon.img` 才是**正版**（瓦片带 origin/z/_outlink，
+                // 含 c/head/arrow）；`UI/_Canvas/ChatBalloon.img` 是精简版子集（部分样式连 c 都没有，
+                // 如 520 只有 8 个裸节点）→ 之前优先读 _Canvas 导致「中央瓦片缺失、气泡拼不出来」。
+                // 对齐参考实现 MapleSalon2 loader.ts:215 `UI/ChatBalloon.img/${id}`。
+                foreach (var imgPath in new[] { "UI/ChatBalloon.img", "UI/_Canvas/ChatBalloon.img" })
                 {
                     var imgNode = _wzs.WzNode.FindNodeByPath(true, imgPath.Split('/'));
                     var img = imgNode?.GetValue<Wz_Image>();
