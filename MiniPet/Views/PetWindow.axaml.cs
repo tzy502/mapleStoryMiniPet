@@ -825,8 +825,9 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonSilentRound = _rng.Next(100) < 40; // 40% 静默轮
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(30, 43)); // 30~42s（胶水 2026-08-19：期望约 1 分钟一条——均值 36s ÷ 60% 出泡率 = 60s）
+            // 胶水 2026-09-24：说话频率高一点（原 30~42s + 40% 静默 ≈ 1 分钟一条）
+            _balloonSilentRound = _rng.Next(100) < 20; // 20% 静默轮
+            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(8, 20)); // 8~19s（均 ~13s ÷ 80% 出泡率 ≈ 17s 一条）
             _balloonTimer.Stop();
             _balloonTimer.Start();
         }

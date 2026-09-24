@@ -195,12 +195,9 @@ namespace MiniPet.Services
                 // 且中央透明会让文字悬空（520 实测）。白底 + 深色字 = 可读。
                 colW = Math.Max(colW, Math.Max(80, wrapW));
                 colH = Math.Max(colH, Math.Max(20, lines.Count * (int)lineHeight + 10));
-                var blank = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
-                using (var bcv = new SKCanvas(blank))
-                {
-                    bcv.Clear(new SKColor(0xFF, 0xFF, 0xFF, 0xFF));
-                }
-                c = blank;
+                // 只撑尺寸，**不填白块**：填白会把气泡边框内侧的装饰盖成一整块矩形（胶水 2026-09-24 对比图）。
+                // SKBitmap 默认全透明 → 文字直接落在气泡自身的浅色中央上。
+                c = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
             }
             int colCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minW / (double)colW)) : 1;
             int rowCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minH / (double)colH)) : 1;

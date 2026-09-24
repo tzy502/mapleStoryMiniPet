@@ -346,7 +346,16 @@ public partial class PetWindow
                 {
                     bool v = !_configService.GetTopmost();
                     _configService.SetTopmost(v);
-                    Topmost = v;
+                    // 胶水 2026-09-24：置顶要对**所有**桌宠生效（主子都要），不只当前这只
+                    try
+                    {
+                        foreach (var pet in _petManager.Pets) { pet.Topmost = v; }
+                    }
+                    catch (Exception ex2)
+                    {
+                        Console.Error.WriteLine($"[PetWindow] Topmost(all pets): {ex2.Message}");
+                        Topmost = v;
+                    }
                     topmostItem.Header = (v ? "✓ " : "   ") + "📌 置顶";
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] TopmostToggle: {ex.Message}"); }
