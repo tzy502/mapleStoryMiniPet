@@ -197,7 +197,10 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MiniBarToggle: {ex.Message}"); }
             };
-            cm.Items.Add(_miniBarItem);
+            // 折叠成「🎵 音乐」子菜单（胶水 2026-09-24：合并成音乐；后续音乐项都放这里）
+            var musicMenu = new MenuItem { Header = "🎵 音乐" };
+            musicMenu.Items.Add(_miniBarItem);
+            cm.Items.Add(musicMenu);
 
             cm.Items.Add(new Separator());
 
