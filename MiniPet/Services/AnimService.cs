@@ -55,6 +55,14 @@ namespace MiniPet.Services
         private int _idleTimeoutMaxMs = 15000;
         private bool _randomIdleEnabled = true;
 
+        /// <summary>
+        /// 「一闪而过」动作黑名单（运行时自适应）：懒加载阶段条带未缓存、无法预先按时长过滤
+        /// （实测 GetCachedStrip 在抽取瞬间返回 -1，阈值过滤形同虚设），
+        /// 所以改为**第一次抽到并播完后**量出真实时长，太短的以后不再抽。
+        /// </summary>
+        private readonly HashSet<string> _shortIdleActions = new(StringComparer.Ordinal);
+        private const int MinIdleActionMs = 800;
+
         /// <summary>诊断日志（临时）：随机动作与帧推进写文件，避免 stdout 缓冲看不到。</summary>
         private static void LogAnim(string msg)
         {
@@ -264,7 +272,13 @@ namespace MiniPet.Services
                 {
                     if (_currentMode == PlayMode.OneShot)
                     {
-                        LogAnim($"动作完成={_currentAction} 帧数={strip.FrameCount} → 回 {(!string.IsNullOrEmpty(_pendingAction) ? _pendingAction : "stand")}");
+                        int _doneMs = 0;
+                        for (int fi = 0; fi < strip.FrameCount; fi++) { _doneMs += GetFrameDelay(strip, fi); }
+                        if (_doneMs > 0 && _doneMs < MinIdleActionMs)
+                        {
+                            _shortIdleActions.Add(_currentAction);
+                        }
+                        LogAnim($"动作完成={_currentAction} 帧数={strip.FrameCount} 时长={_doneMs}ms → 回 {(!string.IsNullOrEmpty(_pendingAction) ? _pendingAction : "stand")}{( _doneMs > 0 && _doneMs < MinIdleActionMs ? " [已拉黑]" : "")}");
                         EmitEvent(AnimEventType.ActionCompleted, _currentAction);
                         var onComplete = _onComplete;
                         _onComplete = null;
@@ -564,13 +578,13 @@ namespace MiniPet.Services
             // 池缓存不含「当前动作」过滤（动作随时变），取时排除。
             // 同时过滤**一闪而过**的短动作：实测 9834755 的 skill1/skillAfter1 只有 5 帧 ≈0.3s，
             // 抽到它们观感就是「没几帧就回 stand」（胶水 2026-09-24）。阈值 800ms。
-            const int MinIdleActionMs = 800;
             var candidates = new List<string>(pool.Count);
             foreach (var a in pool)
             {
                 if (a == _currentAction) { continue; }
+                if (_shortIdleActions.Contains(a)) { continue; }        // 已实测过太短
                 int totalMs = GetActionTotalMs(a);
-                if (totalMs >= 0 && totalMs < MinIdleActionMs) { continue; }
+                if (totalMs >= 0 && totalMs < MinIdleActionMs) { _shortIdleActions.Add(a); continue; }
                 candidates.Add(a);
             }
             if (candidates.Count == 0)
