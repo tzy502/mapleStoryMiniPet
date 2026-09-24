@@ -40,6 +40,11 @@ public partial class PetWindow
         var cm = new ContextMenu();
         try
         {
+            // ── 🧍 外观（折叠：切换人物 / 切换动画 / 😊 表情 / 左右转向 / 切换气泡）──
+            // 胶水 2026-09-24：右键菜单顶层太长，按内容折叠
+            var appearanceMenu = new MenuItem { Header = "🧍 外观" };
+            cm.Items.Add(appearanceMenu);
+
             // ── 切换人物 ──
             var charItem = new MenuItem { Header = "切换人物" };
 
@@ -143,15 +148,15 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SettingsWindow: {ex.Message}"); }
             };
             charItem.Items.Add(playerSub);
-            cm.Items.Add(charItem);
+            appearanceMenu.Items.Add(charItem);
 
             // ── 切换动画 ──
             var animItem = new MenuItem { Header = "切换动画", Name = "AnimationMenu" };
-            cm.Items.Add(animItem);
+            appearanceMenu.Items.Add(animItem);
 
             // ── 😊 表情（仅纸娃娃；Opening 动态重建，见 RefreshExpressionMenu）──
             _exprMenu = new MenuItem { Header = "😊 表情", Name = "ExpressionMenu" };
-            cm.Items.Add(_exprMenu);
+            appearanceMenu.Items.Add(_exprMenu);
 
             cm.Items.Add(new Separator());
 
@@ -167,7 +172,7 @@ public partial class PetWindow
                 try { ShowSettingsWindow(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonSettings: {ex.Message}"); }
             };
-            cm.Items.Add(balloonItem);
+            appearanceMenu.Items.Add(balloonItem);
 
             // ── 🎵 迷你控制条（音乐模块 V0.2.1）：开关勾选项，控制 B2 的 MusicMiniBarWindow 显隐；
             //    勾选态 = 配置 MiniBarEnabled（Opening 时经 RefreshMiniBarMenuItem 再同步一次），
@@ -327,7 +332,7 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CenterWindow: {ex.Message}"); }
             };
-            cm.Items.Add(centerItem);
+            petMenuItem.Items.Add(centerItem);   // 收进「🐾 桌宠」
 
             cm.Items.Add(new Separator());
 
@@ -360,7 +365,7 @@ public partial class PetWindow
                 try { FlipFacing(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FlipFacing: {ex.Message}"); }
             };
-            cm.Items.Add(flipItem);
+            appearanceMenu.Items.Add(flipItem);
 
             // ── 行走显示地图背景开关（胶水 2026-09-16：希望有个开关可以操作）──
             var mapBgItem = new MenuItem
@@ -379,7 +384,7 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MapBgToggle: {ex.Message}"); }
             };
-            cm.Items.Add(mapBgItem);
+            _bgMenu.Items.Add(mapBgItem);   // 收进「🎨 背景」
             cm.Items.Add(new Separator());
             cm.Items.Add(exitItem);
         }
