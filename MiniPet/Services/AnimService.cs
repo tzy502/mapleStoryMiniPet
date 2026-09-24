@@ -54,6 +54,12 @@ namespace MiniPet.Services
         private int _idleTimeoutMinMs = 8000;
         private int _idleTimeoutMaxMs = 15000;
         private bool _randomIdleEnabled = true;
+
+        /// <summary>诊断日志（临时）：随机动作与帧推进写文件，避免 stdout 缓冲看不到。</summary>
+        private static void LogAnim(string msg)
+        {
+            try { System.IO.File.AppendAllText("/tmp/mp-anim.log", $"{DateTime.Now:HH:mm:ss.fff} {msg}\n"); } catch { }
+        }
         private double _idleAccumulated;
         private double _currentIdleThreshold;
 
@@ -218,6 +224,17 @@ namespace MiniPet.Services
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
+                        try
+                        {
+                            var st = _spriteService.GetCachedStrip(_currentMobId, randomAction).Item1;
+                            int totalMs = 0;
+                            if (st != null)
+                            {
+                                for (int fi = 0; fi < st.FrameCount; fi++) { totalMs += GetFrameDelay(st, fi); }
+                            }
+                            LogAnim($"随机动作={randomAction} 帧数={st?.FrameCount ?? -1} 总时长={totalMs}ms 对象={_currentMobId}");
+                        }
+                        catch (Exception ex) { LogAnim($"随机动作日志失败: {ex.Message}"); }
                         // A10：随机空闲只选 Loop 类动作 → 直接 Loop 播放，不预置 pending
                         // （Loop 无 OneShot 完成回调，原预置 "stand" 会悬挂：下次 OneShot 完成时误回 stand）
                         // 胶水 2026-08-17：mob 池现含 say/regen/attack1 等 OneShot 展示动作——
@@ -247,6 +264,7 @@ namespace MiniPet.Services
                 {
                     if (_currentMode == PlayMode.OneShot)
                     {
+                        LogAnim($"动作完成={_currentAction} 帧数={strip.FrameCount} → 回 {(!string.IsNullOrEmpty(_pendingAction) ? _pendingAction : "stand")}");
                         EmitEvent(AnimEventType.ActionCompleted, _currentAction);
                         var onComplete = _onComplete;
                         _onComplete = null;
@@ -543,20 +561,45 @@ namespace MiniPet.Services
                 return null;
             }
 
-            // 池缓存不含「当前动作」过滤（动作随时变），取时排除
+            // 池缓存不含「当前动作」过滤（动作随时变），取时排除。
+            // 同时过滤**一闪而过**的短动作：实测 9834755 的 skill1/skillAfter1 只有 5 帧 ≈0.3s，
+            // 抽到它们观感就是「没几帧就回 stand」（胶水 2026-09-24）。阈值 800ms。
+            const int MinIdleActionMs = 800;
             var candidates = new List<string>(pool.Count);
             foreach (var a in pool)
             {
-                if (a != _currentAction)
-                {
-                    candidates.Add(a);
-                }
+                if (a == _currentAction) { continue; }
+                int totalMs = GetActionTotalMs(a);
+                if (totalMs >= 0 && totalMs < MinIdleActionMs) { continue; }
+                candidates.Add(a);
             }
             if (candidates.Count == 0)
             {
-                return null;
+                // 全被时长过滤掉（或池里只剩当前动作）→ 回退为不过滤，保证仍有随机动作
+                foreach (var a in pool)
+                {
+                    if (a != _currentAction) { candidates.Add(a); }
+                }
+                if (candidates.Count == 0) { return null; }
             }
             return candidates[Random.Shared.Next(candidates.Count)];
+        }
+
+        /// <summary>
+        /// 某动作一个完整循环的总时长（ms）。条带未缓存 → 返回 -1（调用方视为「不过滤」，
+        /// 避免懒加载阶段把所有动作都判成过短而随机池变空）。
+        /// </summary>
+        private int GetActionTotalMs(string action)
+        {
+            try
+            {
+                var st = _spriteService.GetCachedStrip(_currentMobId, action).Item1;
+                if (st == null) { return -1; }
+                int total = 0;
+                for (int i = 0; i < st.FrameCount; i++) { total += GetFrameDelay(st, i); }
+                return total;
+            }
+            catch { return -1; }
         }
 
         /// <summary>
