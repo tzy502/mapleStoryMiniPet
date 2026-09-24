@@ -18,6 +18,13 @@ namespace MiniPet.Services.Walk
         public const float Friction = 800f;
         public const float ClimbSpeed = 100f;
 
+        /// <summary>RopeNearby 的水平判定窗（WalkGraph 建图吸附口径必须与此一致，见 WalkGraph F1a）。</summary>
+        /// <summary>绳吸附窗口（2026-09-16 扩大）：63.4% 的绳端悬空超旧 ±15/±20 窗（F1a 收窄防死锁的代价），
+        /// 改为「够不到就跳抓」——起跳高度 77px 并入可达包络，窗口 y 向扩到 ±40 覆盖「站得上但要跳」的场景。</summary>
+        public const float RopeNearMaxX = 25f;
+        /// <summary>RopeNearby 的竖直判定窗。</summary>
+        public const float RopeNearMaxY = 40f;
+
         private readonly MapInfo _map;
         private readonly Dictionary<int, MapFoothold> _fhs;
         private readonly List<LadderRope> _ropes;
@@ -112,16 +119,26 @@ namespace MiniPet.Services.Walk
             return false;
         }
 
-        /// <summary>当前位置附近是否可上梯/绳（水平 ±15px 内、且 x 落在绳的 x 上）。</summary>
+        /// <summary>
+        /// 当前位置附近是否可上梯/绳（水平 ±15px 内、且 x 落在绳的 x 上）。
+        /// 多根绳同时命中时取 |Δx| 最小者（F2：多绳 x 重叠时不被列表序挡住目标绳）。
+        /// </summary>
         public LadderRope? RopeNearby()
         {
+            LadderRope? best = null;
+            float bestDx = float.MaxValue;
             foreach (var r in _ropes)
             {
-                if (Math.Abs(X - r.X) > 15f) { continue; }
-                if (Y < r.Top - 20 || Y > r.Bottom + 20) { continue; }
-                return r;
+                if (Math.Abs(X - r.X) > RopeNearMaxX) { continue; }
+                if (Y < r.Top - RopeNearMaxY || Y > r.Bottom + RopeNearMaxY) { continue; }
+                float dx = Math.Abs(X - r.X);
+                if (dx < bestDx)
+                {
+                    bestDx = dx;
+                    best = r;
+                }
             }
-            return null;
+            return best;
         }
 
         /// <summary>进入攀爬（对齐 sdlMS run_climb 的 x 范围 ±15 判定）。</summary>
@@ -137,16 +154,20 @@ namespace MiniPet.Services.Walk
             return true;
         }
 
-        /// <summary>攀爬一步：沿绳上下，到端头自动脱离并落到最近的地面段。</summary>
+        /// <summary>到达绳端头（WalkModeService 据此转物理下落，替代旧「瞬移吸附最近段」）。</summary>
+        public bool JustReachedEnd { get; private set; }
+
+        /// <summary>攀爬一步：沿绳上下，越出端头只钳位并标记（脱离的物理下落由服务层接管）。</summary>
         public void ClimbStep(float dt, int dirInput)
         {
             if (!OnRope) { return; }
             var rope = _ropes.FirstOrDefault(r => r.Id == RopeId);
             if (rope == null) { RopeId = 0; return; }
+            JustReachedEnd = false;
             ClimbDir = dirInput;
             Y += dirInput * ClimbSpeed * dt;
-            if (Y <= rope.Top) { Y = rope.Top; LeaveRope(); }
-            else if (Y >= rope.Bottom) { Y = rope.Bottom; LeaveRope(); }
+            if (Y <= rope.Top) { Y = rope.Top; JustReachedEnd = true; }
+            else if (Y >= rope.Bottom) { Y = rope.Bottom; JustReachedEnd = true; }
         }
 
         /// <summary>脱离绳子：落到 x 最近的地面段上。</summary>

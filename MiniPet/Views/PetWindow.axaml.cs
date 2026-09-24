@@ -51,6 +51,8 @@ public partial class PetWindow : Window
     private string _walkLastAction = string.Empty;
     // 行走相机（缓动跟随）：人物因此在视口内有位移，宠物窗口位置随之前后移动
     private float _walkCamX, _walkCamY;
+    /// <summary>当前行走地图（定位换算用 ClampCamera 需要 MapInfo 的 worldRect；OnWalkMapChanged 载图后赋值）。</summary>
+    private Models.MapInfo? _walkMapInfo;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
@@ -61,25 +63,54 @@ public partial class PetWindow : Window
     private int _petSwitchGen;
     /// <summary>切换素材 loading 的超时兜底计时器（后台 PreloadMob 卡住时复位 UI，见 SwitchToPet）。</summary>
     private DispatcherTimer? _petSwitchTimeout;
+    private MenuItem? _exprMenu;
     /// <summary>切换素材 loading 超时阈值（ms）。</summary>
     private const int PetSwitchTimeoutMs = 10000;
-    private static readonly string[] _randomLines = {
-        "今天天气真好~", "加油！", "记得喝水哦", "嘿嘿~", "我在看着你呢",
-        "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？",
-        "悄悄告诉你，我其实会飞哦~", "要不要一起去打怪？", "我想吃鲷鱼烧了…",
-        "你认真工作的样子真帅！", "再玩十分钟就去睡觉！", "我在这里陪着你呀",
-        "好想出去冒险啊！", "摸摸我的头好不好？", "今天也要元气满满哦！",
-        "嘘——别告诉别人我会说话", "累了就靠在我身上休息吧", "我们是最好的搭档！",
-        "你有没有好好吃饭呀？", "窗外的云看起来好软~", "猜猜我现在在想什么？",
-        "一天不见，想我了吗？", "给你一个么么哒~", "发呆的时候也在想你哦",
-        "要不要听我讲个笑话？", "好喜欢和你一起的时光", "肚子饿了，喂我吃点啥呗",
-        "你笑起来真好看！", "保持好心情，好运自然来~"
+    // 对齐 PLAN-表情功能.md §4.5「表情 × 气泡联动」：31 条随机台词升级为结构化数组，
+    // 每条台词配一个语义相配的表情 key（key 仅取自 PaperdollService.KnownExpressions，见 PLAN §2 清单）；
+    // ExpireMs = 该表情的播放时长（气泡 15s，表情 8000ms 先收回默认）。
+    // 配对取向：打招呼/开心→smile，俏皮→wink，庆祝/打气→cheers，撒娇/么么哒→love/chu，
+    //           自夸/悠哉→hum，闪亮夸人→glitter，憧憬/好运→shine，问句→qBlue，
+    //           单纯眨眼/「休息一下」→blink，想吃/肚子饿→troubled。
+    private static readonly (string Text, string Expr, int ExpireMs)[] _randomLines = {
+        ("今天天气真好~", "smile", 8000),
+        ("加油！", "cheers", 8000),
+        ("记得喝水哦", "smile", 8000),
+        ("嘿嘿~", "smile", 8000),
+        ("我在看着你呢", "blink", 8000),
+        ("累了就休息一下吧", "blink", 8000),
+        ("你今天也很努力呢", "smile", 8000),
+        ("要一起冒险吗？", "cheers", 8000),
+        ("悄悄告诉你，我其实会飞哦~", "wink", 8000),
+        ("要不要一起去打怪？", "cheers", 8000),
+        ("我想吃鲷鱼烧了…", "troubled", 8000),
+        ("你认真工作的样子真帅！", "glitter", 8000),
+        ("再玩十分钟就去睡觉！", "wink", 8000),
+        ("我在这里陪着你呀", "smile", 8000),
+        ("好想出去冒险啊！", "shine", 8000),
+        ("摸摸我的头好不好？", "chu", 8000),
+        ("今天也要元气满满哦！", "cheers", 8000),
+        ("嘘——别告诉别人我会说话", "wink", 8000),
+        ("累了就靠在我身上休息吧", "love", 8000),
+        ("我们是最好的搭档！", "cheers", 8000),
+        ("你有没有好好吃饭呀？", "qBlue", 8000),
+        ("窗外的云看起来好软~", "hum", 8000),
+        ("猜猜我现在在想什么？", "qBlue", 8000),
+        ("一天不见，想我了吗？", "love", 8000),
+        ("给你一个么么哒~", "love", 8000),
+        ("发呆的时候也在想你哦", "love", 8000),
+        ("要不要听我讲个笑话？", "hum", 8000),
+        ("好喜欢和你一起的时光", "love", 8000),
+        ("肚子饿了，喂我吃点啥呗", "troubled", 8000),
+        ("你笑起来真好看！", "glitter", 8000),
+        ("保持好心情，好运自然来~", "shine", 8000)
     };
     private readonly TextBlock _infoText;
     private ProgressBar? _loadingBar;
     private TextBlock? _loadingText;
     private Point _dragStart;
     private bool _isDragging;
+    private bool _followDiagLogged;   // 行走跟随广播诊断（只打一次）
     private bool _dragCandidate;      // 点击候选拖拽（位移超阈值才转正；点击不破坏 origin 补偿基准）
     private Point _pressPoint;        // 按下位置（候选拖拽判定用）
     private PixelPoint _windowStartPos;
@@ -131,6 +162,14 @@ public partial class PetWindow : Window
         _balloonService = balloonService;
         _paperdoll = paperdoll;
         _animService.RegisterFrameProvider(paperdoll); // 纸娃娃实时合成（ADR-0005）；Mob/NPC 走图条
+        // 对齐 PLAN-表情功能.md §4.3/§4.4：自动眨眼（默认开）/ 随机表情（默认关）开关在构造时从配置初始化
+        // （ConfigService.GetAutoBlink / GetRandomExpression，Agent A 已备）；菜单勾选写回走 ApplyExpressionSettings。
+        try
+        {
+            _paperdoll.AutoBlinkEnabled = _configService.GetAutoBlink();
+            _paperdoll.RandomExpressionEnabled = _configService.GetRandomExpression();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] InitExpressionSettings: {ex.Message}"); }
         // V0.1.3：宠物身份来自本窗口的实例配置（不再读全局单值字段——多只宠物各自身份独立）
         _currentEntityType = (cfg.MobId == PaperdollService.SentinelMobId
             || string.Equals(cfg.EntityType, "player", StringComparison.OrdinalIgnoreCase))
@@ -246,7 +285,7 @@ public partial class PetWindow : Window
         // 气泡窗口独立跟随固定锚点，动画切换位置不动）
         _balloonWindow = new BalloonWindow();
         ContextMenu = BuildContextMenu();
-        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMiniBarMenuItem(); RefreshPetMenu(); };
+        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshExpressionMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMiniBarMenuItem(); RefreshPetMenu(); };
 
         SetupDragEvents();
 
@@ -755,10 +794,14 @@ public partial class PetWindow : Window
             Console.WriteLine($"[PetWindow] TryShowRandomBalloon: id={balloonId}, data={(data != null ? "ok" : "null(种子中)")}");
             if (data == null) { return; } // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
-            Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
+            Console.WriteLine($"[PetWindow] BalloonShow: line={line.Text}, expr={line.Expr}");
+            // 对齐 PLAN-表情功能.md §4.5（表情 × 气泡联动）：弹气泡的**同时**播配对表情，
+            // 表情时长用本条自带的 ExpireMs（8000ms）——表情先收，气泡 15s 仍在，到期由 PaperdollService 自己回 default。
+            try { _paperdoll.PlayExpression(line.Expr, line.ExpireMs); }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonExpression({line.Expr}): {ex.Message}"); }
             // 胶水 2026-08-19：随机气泡显示 15s 后自动隐藏（原 6s；调度期望 1min/条，显示期占 ~25%）
             // V0.1.3：targetPetId = 本宠物 → 只在本窗口弹（多只各自随机说话，不互相顶掉）
-            await _balloonService.Show(line, data, durationMs: 15000, targetPetId: _petId);
+            await _balloonService.Show(line.Text, data, durationMs: 15000, targetPetId: _petId);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
         finally
@@ -783,6 +826,22 @@ public partial class PetWindow : Window
             _balloonTimer.Start();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ScheduleRandomBalloon: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 对齐 PLAN-表情功能.md §4.3：菜单勾选「自动眨眼 / 随机表情」时，同步到本宠的 PaperdollService 并落盘配置。
+    /// 接线点（PetWindow.Menu.cs 不归本文件）：RefreshExpressionMenu() 里两个开关的 Click 处理器。
+    /// </summary>
+    internal void ApplyExpressionSettings(bool autoBlink, bool randomExpression)
+    {
+        try
+        {
+            _paperdoll.AutoBlinkEnabled = autoBlink;
+            _paperdoll.RandomExpressionEnabled = randomExpression;
+            _configService.SetAutoBlink(autoBlink);
+            _configService.SetRandomExpression(randomExpression);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyExpressionSettings: {ex.Message}"); }
     }
 
     public async Task ShowBalloonNow(string text)
@@ -983,11 +1042,15 @@ public partial class PetWindow : Window
                 var point = e.GetCurrentPoint(this);
                 if (point.Properties.IsRightButtonPressed)
                 {
+                    // 行走模式右键完全失效（胶水 2026-09-15）：不弹菜单
+                    if (_walkMode is { IsActive: true }) { return; }
                     ContextMenu?.Open(this);
                     return;
                 }
                 // 点击≠拖拽（胶水 2026-08-15）：仅记录按下位置，位移超阈值才进拖拽。
                 // 否则「点击」也会 _isDragging=true + 释放同步 origin 基准 → stand↔move 切换补偿错位 → 角色跳位置。
+                // 行走模式左键**可拖**（胶水 2026-09-15 更正）：拖拽期间 TickWalkMode 跳过 Position 覆盖，
+                // 松手后宠物回到地图行走位置继续走。
                 _pressPoint = e.GetPosition(this);
                 _dragCandidate = true;
             }
@@ -1115,8 +1178,10 @@ public partial class PetWindow : Window
 
     /// <summary>
     /// 选曲目对应的地图（F18 §2）：反向索引是**懒建**的，首次播放时还没就绪 →
-    /// 主动 Kick 扫描并最多等 3 秒（一次性；建好后后续即时命中），
-    /// 避免「所有歌都走默认主城」（胶水 2026-09-14）。3 秒仍未就绪才返回 null 交给默认图回退。
+    /// 主动 Kick 扫描并立即返回 null 走默认图兜底；**等待放后台**（本方法经 WalkMusicBridge
+    /// 的 Dispatcher.UIThread.Post 在 UI 线程执行，旧实现的 Thread.Sleep 循环会冻结 UI）。
+    /// 索引建好后若仍在这首歌的行走中 → ReassignWalkMap 自动重开落到正确地图
+    /// （冷启动并行扫描 ~10s，覆盖「启动后立刻播放」的窗口；建好后后续即时命中）。
     /// </summary>
     private string? PickWalkMap(string trackKey)
     {
@@ -1126,14 +1191,8 @@ public partial class PetWindow : Window
             if (!string.IsNullOrEmpty(m)) { return m; }
             int slash = trackKey.IndexOf('/');
             _musicCatalog.KickTrackMapsForImg(slash > 0 ? trackKey[..slash] + ".img" : trackKey);
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < 3000)
-            {
-                System.Threading.Thread.Sleep(200);
-                m = _musicCatalog.GetFirstMapByReturnMap(trackKey);
-                if (!string.IsNullOrEmpty(m)) { return m; }
-            }
-            Console.Error.WriteLine($"[Walk] 反向索引 3s 未就绪，回退默认图：{trackKey}");
+            ScheduleDeferredWalkMap(trackKey);
+            Console.Error.WriteLine($"[Walk] 反向索引未就绪，暂走默认图，索引建好后自动切：{trackKey}");
             return null;
         }
         catch (Exception ex)
@@ -1141,6 +1200,44 @@ public partial class PetWindow : Window
             Console.Error.WriteLine($"[Walk] PickWalkMap: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// 后台探询反向索引就绪（最多 15s，冷启动扫描 ~10s），就绪后切回 UI 线程补切正确地图。
+    /// </summary>
+    private void ScheduleDeferredWalkMap(string trackKey)
+    {
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 15000)
+            {
+                await System.Threading.Tasks.Task.Delay(200);
+                string? found = null;
+                try { found = _musicCatalog.GetFirstMapByReturnMap(trackKey); }
+                catch { }
+                if (!string.IsNullOrEmpty(found))
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() => ReassignWalkMap(trackKey, found!));
+                    return;
+                }
+            }
+            Console.Error.WriteLine($"[Walk] 反向索引 15s 未就绪，放弃自动切图：{trackKey}");
+        });
+    }
+
+    /// <summary>仍在这首歌的行走中（且没走在正确地图上）→ Stop+Start 重开，让 Start 命中已就绪的索引。</summary>
+    private void ReassignWalkMap(string trackKey, string mapId)
+    {
+        WalkModeService? walk = _walkMode;
+        if (walk == null || !walk.IsActive) { return; }
+        if (!string.Equals(walk.CurrentTrackKey, trackKey, StringComparison.Ordinal)) { return; }
+        if (string.Equals(walk.CurrentMapId, mapId, StringComparison.Ordinal)) { return; }
+        Console.Error.WriteLine($"[Walk] 反向索引就绪，{trackKey} → 重开行走切到 {mapId}");
+        string cameFrom = walk.CurrentMapId;   // 记录来源图：新图若是死胡同，「原路返回」回这里
+        walk.Stop();
+        walk.SetCameFrom(cameFrom);
+        walk.Start(trackKey);
     }
 
     /// <summary>每帧驱动行走（挂在既有的 33ms 主定时器上）。</summary>
@@ -1160,24 +1257,42 @@ public partial class PetWindow : Window
             // 相机缓动跟随（不硬跟）：人物在视口中央附近有小幅位移，宠物看起来真的在地图上移动
             _walkCamX += (_walkMode.X - _walkCamX) * 0.06f;
             _walkCamY += (_walkMode.Y - _walkCamY) * 0.06f;
-            _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
-            // 人物朝向 = 行进方向。纸娃娃原始帧是**朝左**的（实测：向右走时脸朝反了），
+            _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);            // 人物朝向 = 行进方向。纸娃娃原始帧是**朝左**的（实测：向右走时脸朝反了），
             // 所以 Facing >= 0（向右）时才翻转。
             _spriteCanvas.FlipX = _walkMode.Facing >= 0;
-            // 窗口位置**直接绑定行走位置**：世界坐标 → 地图视口内屏幕点（脚底锚点精确对齐，不贴 fd 的旧算法整窗高度算错）
+            // 窗口位置**直接绑定行走位置**：世界坐标 → 地图视口内屏幕点（脚底锚点精确对齐）。
+            // ⚠️ 必须用「钳制后」的相机换算：MapViewportWindow.KickRender 会 ClampCamera（地图比视口小时
+            // 钳到地图中点，如 706020100），若用未钳制的缓动值 _walkCam 定位，小图上人物会系统性悬空/横偏。
+            if (_isDragging) { return; }   // 行走中拖拽（胶水 2026-09-15 更正：左键拖动需要）：拖拽期间窗口跟手，松手恢复地图定位
+            // 用户正在拖相机：暂停人物跟随（SetCamera 会覆盖用户拖动），并把缓动基准同步到松手位置
+            if (_mapViewportWindow.UserDraggingCamera)
+            {
+                var cam = _mapViewportWindow.CurrentCamera;
+                _walkCamX = cam.X;
+                _walkCamY = cam.Y;
+                _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+            }
+            else
+            {
+                _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+            }
             try
             {
                 var vp = _mapViewportWindow.Position;
                 double vw = _mapViewportWindow.Width, vh = _mapViewportWindow.Height;
-                double sx = (_walkMode.X - _walkCamX) + vw / 2.0;
-                double sy = (_walkMode.Y - _walkCamY) + vh / 2.0;
+                var (camX, camY) = MapService.ClampCamera(
+                    _walkMapInfo, _walkCamX, _walkCamY, 1f, (int)vw, (int)vh);
+                double sx = (_walkMode.X - camX) + vw / 2.0;
+                double sy = (_walkMode.Y - camY) + vh / 2.0;
                 var spriteTopLeft = _spriteCanvas.TranslatePoint(new Avalonia.Point(0, 0), this) ?? new Avalonia.Point(0, 0);
                 // ⚠️ 逻辑像素 → 物理像素必须乘 RenderScaling（Retina 2x）：项目其它地方（拖拽）也是这个口径，
                 // 少了这一步宠物脚底会整体偏一倍窗口高度（正是「脚不贴 fd」的原因）。
                 double rs = RenderScaling > 0 ? RenderScaling : 1.0;
+                // ⚠️ _lastOriginX/Y 存的已是「乘过 _scale」的值（OnTimerTick oxScaled 口径），这里**不能**再乘 _scale，
+                // 否则窗口缩放 ≠1 时脚底偏移 origin×scale×(scale-1)。
                 Position = new PixelPoint(
-                    vp.X + (int)Math.Round((sx - spriteTopLeft.X - _lastOriginX * _scale) * rs),
-                    vp.Y + (int)Math.Round((sy - spriteTopLeft.Y - _lastOriginY * _scale) * rs));
+                    vp.X + (int)Math.Round((sx - spriteTopLeft.X - _lastOriginX) * rs),
+                    vp.Y + (int)Math.Round((sy - spriteTopLeft.Y - _lastOriginY) * rs));
             }
             catch (Exception ex) { Console.Error.WriteLine($"[Walk] 位置绑定失败: {ex.Message}"); }
             // 注：这里**不能**每帧 RaisePet()——它的实现是 Activate()，会导致行走期间持续抢焦点
@@ -1193,9 +1308,34 @@ public partial class PetWindow : Window
                 }
                 catch { }
             }
+            // 行走跟随（胶水 2026-09-16）：音乐播放（主宠行走）时，纸娃娃子宠跟在主宠身后
+            //（相差几十 px 排队）、重复主宠动作与朝向——「多纸娃娃时子桌宠跟随主宠」指此时段。
+            if (_petManager != null)
+            {
+                int followSlot = 0; int skipped = 0;
+                foreach (var pet in _petManager.Pets)
+                {
+                    if (ReferenceEquals(pet, this)) { continue; }
+                    if (pet.IsSentinelActive() || !pet.IsPaperdollPet()) { skipped++; continue; }
+                    pet.FollowWalk(this, followSlot++);
+                }
+                if (!_followDiagLogged)
+                {
+                    _followDiagLogged = true;
+                    Console.Error.WriteLine($"[Walk] 跟随广播：Pets={_petManager.Pets.Count} 跟随={followSlot} 跳过={skipped}");
+                }
+            }
+
             string act = _walkMode.CurrentAction;
             if (!string.Equals(act, _walkLastAction, StringComparison.Ordinal))
             {
+                // 诊断「走一半变 stand」：动作每次变化记一条（含前后动作与位置，限 1s 采样抓不到 0.4s 闪现）
+                try
+                {
+                    System.IO.File.AppendAllText("/tmp/mp-walk.log",
+                        $"{DateTime.Now:HH:mm:ss.fff} ACT {_walkLastAction} → {act} at ({_walkMode.X:F0},{_walkMode.Y:F0}) phase={_walkMode.Phase} hop={_walkMode.CurrentHopIndex}/{_walkMode.PathLength}\n");
+                }
+                catch { }
                 _walkLastAction = act;
                 _animService.Play(act, PlayMode.Loop);
             }
@@ -1217,12 +1357,22 @@ public partial class PetWindow : Window
                     Console.Error.WriteLine($"[Walk] 地图加载失败: {mapId}");
                     return;
                 }
+                _walkMapInfo = mi;
                 _mapViewportWindow.SetMap(mi, _mapService);
+                // 用户拖完视口/点过视口 → 把宠物窗口提回最前（双 Topmost 顺序由激活决定，否则人物被背景盖住）
+                _mapViewportWindow.RaisedByUserInteraction += () => Dispatcher.UIThread.Post(RaisePet);
                 if (_walkMode != null)
                 {
                     _walkCamX = _walkMode.X;
                     _walkCamY = _walkMode.Y;
                     _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+                }
+                var showMapBg = _configService.LoadSettings().WalkShowMapBackground;
+                if (!showMapBg)
+                {
+                    // 开关关：不显示地图背景视口——人物在桌面/壁纸上行走（定位公式不受影响，视口保持隐藏）
+                    _ = WalkTransition.CrossFadeAsync(this, () => { }, WalkTransition.DefaultMs);
+                    return;
                 }
                 if (!_mapViewportWindow.IsVisible)
                 {
@@ -1243,7 +1393,10 @@ public partial class PetWindow : Window
                 }
                 _ = WalkTransition.CrossFadeAsync(_mapViewportWindow, () => { }, WalkTransition.DefaultMs);
                 // 行走期间只有主宠可见（其余 Hide，句柄 Dispose 时还原）
-                _walkVisibility ??= WalkPetVisibility.HideOthers(this, _petManager.Pets.Where(p => !ReferenceEquals(p, this)));
+                // 行走跟随（胶水 2026-09-16）：纸娃娃子宠不再隐藏——跟在主宠身后一起走（排队/重复动作）；
+                // mob/NPC 桌宠照旧隐藏
+                _walkVisibility ??= WalkPetVisibility.HideOthers(
+                    this, _petManager.Pets.Where(p => !ReferenceEquals(p, this) && !p.IsPaperdollPet()));
             }
             catch (Exception ex) { Console.Error.WriteLine($"[Walk] MapChanged: {ex.Message}"); }
         });
@@ -1272,6 +1425,14 @@ public partial class PetWindow : Window
     }
 
     private void OnTimerTick(object? sender, EventArgs e)
+    {
+        // M2 表情时钟：眨眼/随机表情（每宠各自实例，天然隔离）
+        _paperdoll.SuppressRandomExpression = _walkMode is { IsActive: true };
+        _paperdoll.TickExpressionClock();
+        OnTimerTickCore(sender, e);
+    }
+
+    private void OnTimerTickCore(object? sender, EventArgs e)
     {
         try
         {
@@ -1386,7 +1547,14 @@ public partial class PetWindow : Window
                 {
                     int dx = oxScaled - _lastOriginX;
                     int dy = oyScaled - _lastOriginY;
-                    if (dx != 0 || dy != 0)
+                    // 行走模式：TickWalkMode 每帧全量定位窗口（动作坐标 → Position），这里的**增量补偿**
+                    // 会和它打架（两套逻辑互相平移窗口）。只同步基准不动窗口，退出行走后恢复补偿。
+                    if (_walkMode is { IsActive: true })
+                    {
+                        _lastOriginX = oxScaled;
+                        _lastOriginY = oyScaled;
+                    }
+                    else if (dx != 0 || dy != 0)
                     {
                         // 贴顶（窗口顶=0）时垂直不补偿：保持角色顶贴屏顶（大素材动画切换 oy 变大不会把角色顶推出屏外）
                         int ny = Position.Y - dy;
@@ -1398,9 +1566,9 @@ public partial class PetWindow : Window
                         {
                             Position = new PixelPoint(Position.X - dx, ny);
                         }
+                        _lastOriginX = oxScaled;
+                        _lastOriginY = oyScaled;
                     }
-                    _lastOriginX = oxScaled;
-                    _lastOriginY = oyScaled;
                 }
 
                 // 气泡独立窗口位置：底 = 角色头顶（锚点基准固定 → 动画切换气泡不动）。
@@ -1794,6 +1962,57 @@ public partial class PetWindow : Window
     }
 
     private bool IsSentinelActive() => _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;
+
+    // ── 左右转向（胶水 2026-09-16：所有桌宠每个都可以独立转向；行走中由 Facing 驱动不受手动影响）──
+    private bool _manualFlipX;
+
+    /// <summary>翻转朝向（右键菜单「↔ 转向」；拖拽方向也会自动转向）。行走中由 Facing 接管。</summary>
+    public void FlipFacing()
+    {
+        _manualFlipX = !_manualFlipX;
+        ApplyManualFacing();
+    }
+
+    private void ApplyManualFacing()
+    {
+        if (_walkMode is { IsActive: true }) { return; }   // 行走朝向 = 行进方向
+        _spriteCanvas.FlipX = _manualFlipX;
+    }
+
+    /// <summary>是否纸娃娃桌宠（哨兵 mobId = __paperdoll__ 即纸娃娃；mob/NPC 不参与跟随队列）。</summary>
+    private bool IsPaperdollPet() => IsSentinelActive();
+
+    /// <summary>
+    /// 行走跟随（胶水 2026-09-16「多纸娃娃时子桌宠跟随主宠」指音乐播放时）：
+    /// 由**主宠**的 TickWalkMode 驱动——子纸娃娃窗口显示在主宠身后（slot+1 个身位），
+    /// 重复主宠动作与朝向。音乐停（行走退出）后恢复桌面独立摆放。
+    /// </summary>
+    public void FollowWalk(PetWindow primary, int slot)
+    {
+        if (_isDragging) { return; }
+        if (!IsVisible)
+        {
+            try { Show(); } catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FollowShow: {ex.Message}"); }
+        }
+        // FlipX=false = 原图朝左已翻为朝右 → 子宠排在主宠身后
+        bool faceRight = primary._spriteCanvas.FlipX;
+        int back = (slot + 1) * 60 * (faceRight ? 1 : -1);
+        var target = new PixelPoint(primary.Position.X + back, primary.Position.Y);
+        if (Position != target) { Position = target; }
+
+        // 朝向与动作重复主宠
+        _spriteCanvas.FlipX = primary._spriteCanvas.FlipX;
+        try
+        {
+            string? act = primary._walkMode?.CurrentAction;
+            if (!string.IsNullOrEmpty(act) && act != _animService.GetCurrentAction())
+            {
+                _animService.Play(act, PlayMode.Loop);   // 重复主宠动作（walk1/walk2/jump 同步）
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FollowWalk act: {ex.Message}"); }
+    }
+
 
     /// <summary>把记录里的类型归一化成 WZ 目录名（Mob/Npc）。</summary>
     private static string NormalizeEntityType(string? type)

@@ -18,8 +18,90 @@ namespace MiniPet.Services
         /// </summary>
         public const string IgnoredSilenceBgm = "Bgm00/Silence";
 
-        /// <summary>
-        /// returnMap 票数 → 无限之路「第一张地图」（实时算，不查表）：
+    /// <summary>
+    /// 「曲目 → 候选地图」排序口径（胶水 2026-09-15 规则 2 + 补充，F18 无限之路起始图/遍历序）：
+    /// 1. **有 town 的图优先**，组内 mapId 升序（Ordinal——存储为 9 位补零形态，字符序即数值序）；
+    /// 2. **town 合格校验**：town 图的 info/returnMap 指向图 BGM ≠ currentBgmKey → 该 town **不合格**，
+    ///    降级为普通候选（按 mapId 升序混入非 town 队列）。校验捷径：returnMap 指向图若在本候选集内，
+    ///    其 BGM 必然等于本曲目（候选集本身就是按 info/bgm == 本曲目扫出来的），免查询直接合格；
+    ///    否则经 returnMapBgmOf 委托查指向图（生产 = WZ 读 info/bgm，测试 = 字典桩）。
+    /// 3. 非 town 图按 mapId 升序。
+    /// 边界口径：currentBgmKey 空 → 无比较基准，town 全部保持优先；returnMap 缺失 / 指向图查不到
+    /// BGM → 视为「≠ 当前 BGM」→ 不合格降级（保守口径：宁可混排也不选错起点）。
+    /// items 允许重复 mapId（去重保留首条）；null/空 → 空列表。纯函数无 IO，供单测直接锁口径。
+    /// </summary>
+    /// <param name="items">曲目候选图条目（TryGetTrackMaps 收录形态，IsTown/ReturnMap 由扫描填充）。</param>
+    /// <param name="currentBgmKey">当前曲目 key（"Bgm00/FloralLife" 或 "Bgm00.img/FloralLife"，内部归一化）。</param>
+    /// <param name="returnMapBgmOf">mapId → 指向图归一化 BGM key（查不到为 null）；仅 town 且指向图不在候选集时调用。</param>
+    public static List<string> OrderTrackMaps(
+        IReadOnlyList<TrackMapRef>? items,
+        string? currentBgmKey,
+        Func<string, string?>? returnMapBgmOf)
+    {
+        var result = new List<string>();
+        if (items == null || items.Count == 0)
+        {
+            return result;
+        }
+        // 去重（同 mapId 视为同图，保留首条数据）
+        var candidateIds = new HashSet<string>(StringComparer.Ordinal);
+        var candidates = new List<TrackMapRef>();
+        foreach (var it in items)
+        {
+            if (it == null || string.IsNullOrEmpty(it.MapId) || !candidateIds.Add(it.MapId))
+            {
+                continue;
+            }
+            candidates.Add(it);
+        }
+        string? current = NormalizeTrackKey(currentBgmKey);
+        var towns = new List<string>();
+        var others = new List<string>();
+        foreach (var c in candidates)
+        {
+            if (c.IsTown && IsTownQualifiedForTrack(c, current, candidateIds, returnMapBgmOf))
+            {
+                towns.Add(c.MapId);
+            }
+            else
+            {
+                others.Add(c.MapId);
+            }
+        }
+        towns.Sort(StringComparer.Ordinal);
+        others.Sort(StringComparer.Ordinal);
+        result.AddRange(towns);
+        result.AddRange(others);
+        return result;
+    }
+
+    /// <summary>
+    /// town 合格校验（规则 2 补充）：returnMap 指向图的 BGM == 当前曲目才算合格。
+    /// - currentBgmKey 空 → 无从校验，视为合格（调用方没给比较基准，不动 town 优先级）；
+    /// - returnMap 指向图在候选集内 → 其 BGM 必为当前曲目，免查询直接合格；
+    /// - 其余经 returnMapBgmOf 查指向图（null 委托 / returnMap 缺失 / 查不到 / 值不等 → 不合格）。
+    /// </summary>
+    private static bool IsTownQualifiedForTrack(
+        TrackMapRef town, string? currentBgmKey, HashSet<string> candidateIds, Func<string, string?>? returnMapBgmOf)
+    {
+        if (string.IsNullOrEmpty(currentBgmKey))
+        {
+            return true;
+        }
+        if (!string.IsNullOrEmpty(town.ReturnMap) && candidateIds.Contains(town.ReturnMap!))
+        {
+            return true;
+        }
+        if (returnMapBgmOf == null || string.IsNullOrEmpty(town.ReturnMap))
+        {
+            return false;
+        }
+        string? bgm = returnMapBgmOf(town.ReturnMap!);
+        return !string.IsNullOrEmpty(bgm) && string.Equals(bgm, currentBgmKey, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// returnMap 票数 → 无限之路「第一张地图」（实时算，不查表）：
         /// 取票数最多者；并列取 mapId 小者（Ordinal）保证结果确定。无票 / null → null。
         /// </summary>
         public static string? FirstMapByReturnMap(IReadOnlyDictionary<string, int>? votes)
@@ -47,6 +129,50 @@ namespace MiniPet.Services
         {
             return !string.IsNullOrWhiteSpace(bgm)
                 && bgm.Trim().Equals(IgnoredSilenceBgm, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 归一化 BGM 分类名（"Bgm00.img" / "Bgm00" 统一为无 .img 形态，与地图 info/bgm、
+        /// WalkPathPlanner.TrackKeyOf 同口径）。空白 / 剥后缀后为空 → null。
+        /// </summary>
+        public static string? NormalizeImgCategory(string? category)
+        {
+            if (string.IsNullOrWhiteSpace(category))
+            {
+                return null;
+            }
+            var s = category.Trim();
+            if (s.EndsWith(".img", StringComparison.OrdinalIgnoreCase))
+            {
+                s = s[..^4];
+            }
+            return s.Length == 0 ? null : s;
+        }
+
+        /// <summary>
+        /// 归一化「曲目↔地图」反向索引的 trackKey："Bgm00.img/FloralLife" 与 "Bgm00/FloralLife"
+        /// 统一为无 .img 形态（2026-09-15 定：存储 key 一律无 .img——此前存储带 .img、查询不带，
+        /// 两边永远对不上，扫描即使完成也 100% miss，是「播放全兜底默认城镇」的第一根因）。
+        /// 无斜杠 / 空段 / 空白 → null。
+        /// </summary>
+        public static string? NormalizeTrackKey(string? trackKey)
+        {
+            if (string.IsNullOrWhiteSpace(trackKey))
+            {
+                return null;
+            }
+            var s = trackKey.Trim();
+            int slash = s.IndexOf('/');
+            if (slash <= 0 || slash >= s.Length - 1)
+            {
+                return null;
+            }
+            string? img = NormalizeImgCategory(s[..slash]);
+            if (img == null)
+            {
+                return null;
+            }
+            return img + "/" + s[(slash + 1)..].Trim();
         }
 
         /// <summary>

@@ -149,6 +149,10 @@ public partial class PetWindow
             var animItem = new MenuItem { Header = "切换动画", Name = "AnimationMenu" };
             cm.Items.Add(animItem);
 
+            // ── 😊 表情（仅纸娃娃；Opening 动态重建，见 RefreshExpressionMenu）──
+            _exprMenu = new MenuItem { Header = "😊 表情", Name = "ExpressionMenu" };
+            cm.Items.Add(_exprMenu);
+
             cm.Items.Add(new Separator());
 
             // ── 背景（合并子菜单，Opening 时动态重建：开关 + 模式单选 + 交互 + 最近×4 + 调整地图）──
@@ -344,6 +348,34 @@ public partial class PetWindow
                     Environment.Exit(1);
                 }
             };
+            // ── 左右转向（胶水 2026-09-16：所有桌宠每个都可以独立转向）──
+            var flipItem = new MenuItem { Header = "↔ 转向" };
+            flipItem.Click += (_, _) =>
+            {
+                try { FlipFacing(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FlipFacing: {ex.Message}"); }
+            };
+            cm.Items.Add(flipItem);
+
+            // ── 行走显示地图背景开关（胶水 2026-09-16：希望有个开关可以操作）──
+            var mapBgItem = new MenuItem
+            {
+                Header = "🗺️ 行走显示地图背景",
+                IsChecked = _configService.LoadSettings().WalkShowMapBackground,
+                ToggleType = Avalonia.Controls.MenuItemToggleType.CheckBox,
+            };
+            mapBgItem.Click += (_, _) =>
+            {
+                try
+                {
+                    bool newVal = !_configService.LoadSettings().WalkShowMapBackground;
+                    _configService.UpdateSettings(st => st.WalkShowMapBackground = newVal);
+                    mapBgItem.IsChecked = newVal;
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MapBgToggle: {ex.Message}"); }
+            };
+            cm.Items.Add(mapBgItem);
+            cm.Items.Add(new Separator());
             cm.Items.Add(exitItem);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BuildMenu: {ex.Message}"); }
@@ -616,6 +648,81 @@ public partial class PetWindow
             win.Show();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowInfoPopup: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 表情子菜单（V0.2.x M1，见 docs/ai/PLAN-表情功能.md §4.3）：
+    /// 仅纸娃娃哨兵模式显示；按 KnownExpressions 列中文名 + key；点击只换脸图层，不打断 body 动作。
+    /// 尾部：恢复默认 + 自动眨眼/随机表情开关（M2）。
+    /// </summary>
+    private void RefreshExpressionMenu()
+    {
+        try
+        {
+            if (_exprMenu == null) { return; }
+            _exprMenu.Items.Clear();
+            var isSentinel = _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;
+            _exprMenu.IsVisible = isSentinel;
+            if (!isSentinel) { return; }
+
+            // 开关以**本地配置**为准：每次打开菜单同步一次（只读赋值，不触发落盘）
+            try
+            {
+                _paperdoll.AutoBlinkEnabled = _configService.GetAutoBlink();
+                _paperdoll.RandomExpressionEnabled = _configService.GetRandomExpression();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 读取表情开关: {ex.Message}"); }
+
+            foreach (var (key, cn, _) in PaperdollService.KnownExpressions)
+            {
+                if (string.Equals(key, PaperdollService.ExpressionDefault, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var item = new MenuItem { Header = $"{cn} ({key})" };
+                string captured = key;
+                item.Click += (_, _) =>
+                {
+                    try { _paperdoll.PlayExpression(captured, 3000); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PlayExpression({captured}): {ex.Message}"); }
+                };
+                _exprMenu.Items.Add(item);
+            }
+
+            _exprMenu.Items.Add(new Separator());
+            var reset = new MenuItem { Header = "恢复默认" };
+            reset.Click += (_, _) =>
+            {
+                try { _paperdoll.CancelExpression(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CancelExpression: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(reset);
+
+            _exprMenu.Items.Add(new Separator());
+            // 勾选用文本前缀（Avalonia 12.1 无 MenuItemToggleType；文本标记最稳且视觉清晰）
+            var blink = new MenuItem
+            {
+                Header = (_paperdoll.AutoBlinkEnabled ? "✓ " : "   ") + "自动眨眼",
+            };
+            blink.Click += (_, _) =>
+            {
+                try { ApplyExpressionSettings(!_paperdoll.AutoBlinkEnabled, _paperdoll.RandomExpressionEnabled); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AutoBlink: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(blink);
+
+            var rnd = new MenuItem
+            {
+                Header = (_paperdoll.RandomExpressionEnabled ? "✓ " : "   ") + "随机表情",
+            };
+            rnd.Click += (_, _) =>
+            {
+                try { ApplyExpressionSettings(_paperdoll.AutoBlinkEnabled, !_paperdoll.RandomExpressionEnabled); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomExpression: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(rnd);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshExpressionMenu: {ex.Message}"); }
     }
 
     private void RefreshAnimationMenu()

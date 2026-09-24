@@ -93,6 +93,99 @@ public class WalkPlannerTests
     }
 
     [Fact]
+    public void HasNoNextPortal_FalseWhenSomeNeighborMapSharesBgm()
+    {
+        // 104000000 实景口径：入口门目标 bgm 不同 → 不算候选；只要有一个邻居与当前曲目同 bgm 就不算 noNext
+        var map = new MapInfo();
+        map.Portals.Add(new MapPortal { Id = 0, Tm = "104000001", X = 0, Y = 0 });
+        map.Portals.Add(new MapPortal { Id = 2, Tm = "104010000", X = 100, Y = 0 });
+        var bgmOf = new Dictionary<string, string>
+        {
+            ["104000001"] = "Bgm02/AboveTheTreetops",
+            ["104010000"] = "Bgm00/FloralLife",
+        };
+        string Lookup(string id) => bgmOf.TryGetValue(id, out var v) ? v : "";
+
+        Assert.False(WalkPathPlanner.HasNoNextPortal(map, 0, "Bgm00/FloralLife", Lookup));
+        var hit = WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup);
+        Assert.NotNull(hit);
+        Assert.Equal(2, hit!.Id);
+    }
+
+    [Fact]
+    public void GreedyVisits_PrefersUnvisitedMap_AllVisitedMeansNoNext()
+    {
+        // 胶水 2026-09-15：贪心遍历——优先去本次行走**没去过的图**；全部去过 → 无门可走（退图链路）
+        var map = new MapInfo { Id = "100000000" };
+        map.Portals.Add(new MapPortal { Id = 1, Tm = "100000200", X = 100, Y = 0 });  // 匹配，已访问
+        map.Portals.Add(new MapPortal { Id = 2, Tm = "100000003", X = 200, Y = 0 });  // 匹配，未访问
+        string Lookup(string id) => "Bgm00/FloralLife";
+
+        var visited = new HashSet<string> { "100000000", "100000200" };
+
+        // 未访问的 100000003 优先于存储顺序更靠前的 100000200
+        var hit = WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup, visited);
+        Assert.NotNull(hit);
+        Assert.Equal("100000003", hit!.Tm);
+
+        // 全部去过 → 返回 null（触发退图回初始地图），且 HasNoNextPortal 同口径
+        visited.Add("100000003");
+        Assert.Null(WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup, visited));
+        Assert.True(WalkPathPlanner.HasNoNextPortal(map, 0, "Bgm00/FloralLife", Lookup, visited));
+
+        // 不传 visited = 老行为（存储顺序第一个匹配门），保证兼容
+        var legacy = WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup);
+        Assert.NotNull(legacy);
+        Assert.Equal("100000200", legacy!.Tm);
+    }
+
+    [Fact]
+    public void GreedyVisits_FarthestUnvisitedFirst()
+    {
+        // 胶水 2026-09-15：多个未访问图 → 取**离当前 x 最远**的门（从远到近覆盖）
+        var map = new MapInfo { Id = "100000000" };
+        map.Portals.Add(new MapPortal { Id = 1, Tm = "100000200", X = 100, Y = 0 });  // 未访问，近
+        map.Portals.Add(new MapPortal { Id = 2, Tm = "100000003", X = 200, Y = 0 });  // 未访问，远
+        map.Portals.Add(new MapPortal { Id = 3, Tm = "100000001", X = 150, Y = 0 });  // 未访问，中
+        string Lookup(string id) => "Bgm00/FloralLife";
+
+        var visited = new HashSet<string> { "100000000" };
+
+        // 人物在 x=0：最远的是 x=200
+        var hit = WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup, visited, 0f);
+        Assert.NotNull(hit);
+        Assert.Equal("100000003", hit!.Tm);
+
+        // 人物走到 x=190 后：最远的变成 x=100（距离 90 > 200-190=10 > 150-190=40）
+        hit = WalkPathPlanner.ChooseNextPortal(map, 0, "Bgm00/FloralLife", Lookup, visited, 190f);
+        Assert.NotNull(hit);
+        Assert.Equal("100000200", hit!.Tm);
+    }
+
+    [Fact]
+    public void SameMapPortals_AreNotExits()    {
+        // 100000203 爬塔图实景：up01~up07/h001/h002 全部 tm=自己（跳层门），只有 out00 通向别的图。
+        // 同图门 BGM 必然匹配（同一张图），若不算出路会让人物永远困在塔里（同图不切挡住切图）。
+        var map = new MapInfo { Id = "100000203" };
+        map.Portals.Add(new MapPortal { Id = 10, Tm = "100000203", X = 17, Y = 274 });   // 跳层门（自己）
+        map.Portals.Add(new MapPortal { Id = 11, Tm = "100000203", X = 9, Y = 63 });     // 跳层门
+        map.Portals.Add(new MapPortal { Id = 18, Tm = "100000200", X = 596, Y = 333 });  // 真正的出口
+
+        string Lookup(string id) => "Bgm00/FloralLife";
+
+        // 入口 = 门 10（从上一张图 Tn 匹配进来）→ 跳层门 11 被过滤，唯一候选是出口 18
+        var hit = WalkPathPlanner.ChooseNextPortal(map, 10, "Bgm00/FloralLife", Lookup);
+        Assert.NotNull(hit);
+        Assert.Equal(18, hit!.Id);
+        Assert.False(WalkPathPlanner.HasNoNextPortal(map, 10, "Bgm00/FloralLife", Lookup));
+
+        // 全部都是同图门（把出口也改成自己）→ 等价死胡同
+        map.Portals[^1] = new MapPortal { Id = 18, Tm = "100000203", X = 596, Y = 333 };
+        Assert.True(WalkPathPlanner.HasNoNextPortal(map, 10, "Bgm00/FloralLife", Lookup));
+        Assert.Null(WalkPathPlanner.ChooseNextPortal(map, 10, "Bgm00/FloralLife", Lookup));
+    }
+
+    [Fact]
     public void TrackKeyOf_NormalizesImgSuffixAndIgnoresSilence()
     {
         Assert.Equal("Bgm58/The Beginnig of The Adventure", WalkPathPlanner.TrackKeyOf("Bgm58/The Beginnig of The Adventure"));

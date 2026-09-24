@@ -4,3 +4,4 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("MiniPet.Tests")]
+[assembly: InternalsVisibleTo("f18probe")]

@@ -237,6 +237,32 @@ namespace MiniPet.Services
         /// </summary>
         public void UpdateSettings(Action<PetSettings> mutate) => Update(mutate);
 
+        // ───────────────────── 表情开关持久化（M2，PLAN-表情功能.md §4.3）─────────────────────
+        // PetSettings 是 class（非 record，无 with 语义）：读写都经 LoadSettings / UpdateSettings 整对象事务，
+        // 不新增拷贝构造；SaveSettingsKeepingPets 按属性反射合并，新字段自动纳入合并（无需改动）。
+
+        /// <summary>
+        /// 读取「自动眨眼」开关（默认 true）。走 LoadSettings 的内存缓存，不额外读盘。
+        /// </summary>
+        public bool GetAutoBlink() => LoadSettings().AutoBlink;
+
+        /// <summary>
+        /// 写入「自动眨眼」开关并落盘（原子事务：锁内 读→改→写；非 UI 线程派发到 UI 线程，语义同
+        /// <see cref="Update"/>）。
+        /// </summary>
+        public void SetAutoBlink(bool enabled) => UpdateSettings(s => s.AutoBlink = enabled);
+
+        /// <summary>
+        /// 读取「随机表情」开关（默认 false）。走 LoadSettings 的内存缓存，不额外读盘。
+        /// </summary>
+        public bool GetRandomExpression() => LoadSettings().RandomExpression;
+
+        /// <summary>
+        /// 写入「随机表情」开关并落盘（原子事务：锁内 读→改→写；非 UI 线程派发到 UI 线程，语义同
+        /// <see cref="Update"/>）。
+        /// </summary>
+        public void SetRandomExpression(bool enabled) => UpdateSettings(s => s.RandomExpression = enabled);
+
         /// <summary>
         /// 原子更新指定宠物的实例配置；返回更新后的实例（找不到该 id 返回 null）。
         /// 主宠的实体 / 外观 / 缩放变化会同步写回旧单值字段（兼容旧读法）。

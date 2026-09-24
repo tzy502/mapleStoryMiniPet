@@ -69,6 +69,8 @@ namespace MiniPet.Models
         public int CropW { get; set; }
         public int CropH { get; set; }
         public List<MapHistoryEntry> MapHistory { get; set; } = new List<MapHistoryEntry>();
+        /// <summary>行走模式显示地图背景（胶水 2026-09-16：加开关可操作；关 = 只有人物在桌面走，无地图窗口）。默认开。</summary>
+        public bool WalkShowMapBackground { get; set; } = true;
         public string BalloonId { get; set; } = string.Empty;
         public List<string> BalloonHistory { get; set; } = new List<string>();
         public string DefaultAnim { get; set; } = string.Empty;
@@ -87,6 +89,22 @@ namespace MiniPet.Models
         public bool MapShowLife { get; set; } = true;
         public bool MapShowPortal { get; set; } = true;
         public bool MapShowFoothold { get; set; }
+
+        // ── 表情开关（V0.2.x M2，见 docs/ai/PLAN-表情功能.md §4.3 / §4.4）──
+
+        /// <summary>
+        /// 自动眨眼（默认开）：待机时每 3~6s 随机播一次 blink（行走/攀爬中仍眨眼）。
+        /// 对应右键菜单「表情 → 自动眨眼」勾选项，经 ConfigService.SetAutoBlink 落盘；
+        /// 旧配置无该字段时反序列化保留此默认值 true。
+        /// </summary>
+        public bool AutoBlink { get; set; } = true;
+
+        /// <summary>
+        /// 随机表情（默认关）：待机时每 20~45s 从友好表情池随机播一个（行走/拖拽/Agent Run 中抑制）。
+        /// 对应右键菜单「表情 → 随机表情」勾选项，经 ConfigService.SetRandomExpression 落盘。
+        /// </summary>
+        public bool RandomExpression { get; set; }
+
         // 纸娃娃当前搭配（CurrentMobId == "__paperdoll__" 时启动恢复）
         public CharacterAppearance? CurrentPaperdoll { get; set; }
         // 纸娃娃预设（搭配存档：预设名 → 外观）

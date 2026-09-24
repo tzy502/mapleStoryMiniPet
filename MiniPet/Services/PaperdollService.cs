@@ -44,6 +44,103 @@ public class PaperdollService : IEntityFrameProvider
     // 表情驱动（预留 gateway：未来 Hermes/Claude/Codex 按 agent 状态注入）。
     public IExpressionDriver? ExpressionDriver { get; set; }
 
+    // ═══════════════════════════════════════════
+    // 表情（V0.2.x M1）：手动/自动表情状态
+    //   PaperdollService 是 per-pet Transient（App.axaml.cs）→ 状态天然多宠隔离
+    // ═══════════════════════════════════════════
+
+    /// <summary>当前手动/自动播放中的表情（default = 无）。volatile：Tick 线程写、渲染线程读。</summary>
+    private volatile string _manualExpression = ExpressionDefault;
+    /// <summary>播放截止时刻（durationMs ≤ 0 时为 DateTime.MaxValue = 常驻）。</summary>
+    private DateTime _manualExpireUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// WZ 实测的 25 个表情（default + 24，见 docs/ai/PLAN-表情功能.md §2）。
+    /// Friendly = 可进「随机表情」池；负面表情只能从菜单手动播。
+    /// </summary>
+    public static readonly (string Key, string Cn, bool Friendly)[] KnownExpressions =
+    {
+        ("default", "默认", false), ("smile", "微笑", true), ("wink", "俏皮眨眼", true),
+        ("cheers", "欢呼", true), ("love", "爱心", true), ("glitter", "闪亮", true),
+        ("hum", "得意哼歌", true), ("chu", "亲亲", true), ("oops", "哎呀", true),
+        ("blink", "眨眼", false), ("hit", "受击", false), ("troubled", "烦恼", false),
+        ("cry", "哭", false), ("angry", "生气", false), ("bewildered", "慌张", false),
+        ("stunned", "发晕", false), ("vomit", "呕吐", false), ("pain", "痛苦", false),
+        ("despair", "绝望", false), ("shine", "荣光", true), ("blaze", "怒火", false),
+        ("bowing", "鞠躬道歉", false), ("hot", "热死了", false), ("dam", "郁闷", false),
+        ("qBlue", "疑问蓝脸", false),
+    };
+
+    /// <summary>
+    /// 播放表情，durationMs 后自动回默认（≤0 = 常驻直到 <see cref="CancelExpression"/>）。
+    /// 表情只换**脸图层内容**，不打断 body 动作（不进 AnimService 状态机）。
+    /// 帧源缓存 key 已含 expression（CollectPiecesForFrame），换表情零额外失效成本。
+    /// </summary>
+    public void PlayExpression(string expr, int durationMs = 3000)
+    {
+        _manualExpression = string.IsNullOrEmpty(expr) ? ExpressionDefault : expr;
+        _manualExpireUtc = durationMs > 0 ? DateTime.UtcNow.AddMilliseconds(durationMs) : DateTime.MaxValue;
+    }
+
+    /// <summary>立即回默认表情。</summary>
+    public void CancelExpression()
+    {
+        _manualExpression = ExpressionDefault;
+        _manualExpireUtc = DateTime.MinValue;
+    }
+
+    /// <summary>当前生效的表情（诊断/测试用）。</summary>
+    public string CurrentExpression => ResolveExpression();
+
+    /// <summary>手动表情是否在生效中。</summary>
+    public bool IsExpressionActive =>
+        !string.Equals(_manualExpression, ExpressionDefault, StringComparison.Ordinal)
+        && DateTime.UtcNow < _manualExpireUtc;
+
+    // ── M2 自动表情时钟（眨眼 / 随机表情）──
+    private DateTime _nextBlinkUtc = DateTime.MinValue;
+    private DateTime _nextRandomUtc = DateTime.MinValue;
+    private readonly Random _exprRng = new();
+
+    /// <summary>自动眨眼（待机每 3~6s 眨一次，≈180ms）。菜单可关。</summary>
+    public bool AutoBlinkEnabled { get; set; } = true;
+    /// <summary>随机表情（待机每 20~45s 播一个友好表情，3s）。菜单可开，默认关。</summary>
+    public bool RandomExpressionEnabled { get; set; }
+    /// <summary>抑制随机表情（行走/攀爬、拖拽、Agent 忙碌时由外部置位；眨眼不受影响）。</summary>
+    public bool SuppressRandomExpression { get; set; }
+
+    /// <summary>
+    /// 表情时钟：由外部每帧驱动（PetWindow 33ms 定时器）。
+    /// 手动表情播放期间不打扰；眨眼与随机表情各自独立计时。
+    /// </summary>
+    public void TickExpressionClock()
+    {
+        try
+        {
+            if (IsExpressionActive)
+            {
+                return;
+            }
+            var now = DateTime.UtcNow;
+            if (AutoBlinkEnabled && now >= _nextBlinkUtc)
+            {
+                _nextBlinkUtc = now.AddMilliseconds(_exprRng.Next(3000, 6000));
+                PlayExpression(ExpressionBlink, 180);
+                return;
+            }
+            if (RandomExpressionEnabled && !SuppressRandomExpression && now >= _nextRandomUtc)
+            {
+                _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
+                var pool = KnownExpressions.Where(e => e.Friendly).ToArray();
+                if (pool.Length > 0)
+                {
+                    PlayExpression(pool[_exprRng.Next(pool.Length)].Key, 3000);
+                }
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Paperdoll] TickExpressionClock: {ex.Message}"); }
+    }
+
     /// <summary>面向（true=朝左，水平翻转渲染；默认朝右）。</summary>
     public bool Flip { get; set; }
 
@@ -129,6 +226,7 @@ public class PaperdollService : IEntityFrameProvider
     /// <summary>设置当前外观（主窗口渲染目标）。切换外观清空依赖外观的缓存。</summary>
     public void SetAppearance(CharacterAppearance appearance)
     {
+        CancelExpression();   // 换外观回到默认表情（避免旧外观的表情残留）
         _current = appearance;
         _currentHash = HashAppearance(appearance);
         _zmapCache = null;
@@ -2226,6 +2324,12 @@ public class PaperdollService : IEntityFrameProvider
 
     private string ResolveExpression()
     {
+        // 手动/自动表情优先（未过期）→ 否则交回 agent 驱动（IExpressionDriver，未来 Hermes 按状态注入）
+        string manual = _manualExpression;
+        if (!string.Equals(manual, ExpressionDefault, StringComparison.Ordinal) && DateTime.UtcNow < _manualExpireUtc)
+        {
+            return manual;
+        }
         try { return ExpressionDriver?.GetExpression() ?? ExpressionDefault; }
         catch { return ExpressionDefault; }
     }

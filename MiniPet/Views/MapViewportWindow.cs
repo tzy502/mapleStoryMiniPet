@@ -62,6 +62,9 @@ public class MapViewportWindow : Window
         if (w >= 320 && h >= 200) { Width = w; Height = h; }
     }
 
+    /// <summary>用户交互（拖动/点击）结束后触发——宿主把宠物窗口提回最前。</summary>
+    public event Action? RaisedByUserInteraction;
+
     public MapViewportWindow()
     {
         Title = "MiniPet-MapViewport";
@@ -250,6 +253,19 @@ public class MapViewportWindow : Window
         });
     }
 
+    /// <summary>
+    /// 行走模式相机开关（F18）：false = 忽略左键拖相机/右键移窗/滚轮缩放。
+    /// 胶水 2026-09-15 二次反馈：**左键拖相机要能用**（拖动时暂停人物跟随，松手后相机缓动追回人物），
+    /// 因此默认 true；TickWalkMode 拖动期间读 UserDraggingCamera 暂停 SetCamera。
+    /// </summary>
+    public bool MouseControlEnabled { get; set; } = true;
+
+    /// <summary>用户正在左键拖相机（行走模式下拖动期间人物跟随暂停，松手后缓动追回）。</summary>
+    public bool UserDraggingCamera => _dragging;
+
+    /// <summary>当前渲染相机（拖动结束后 TickWalkMode 从这里接续缓动）。</summary>
+    public (float X, float Y) CurrentCamera => (_camX, _camY);
+
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         var point = e.GetCurrentPoint(this);
@@ -299,6 +315,8 @@ public class MapViewportWindow : Window
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        // 交互结束把宠物提回：双 Topmost 窗口（背景/宠物）顺序由激活决定，点过视口后宠物会被盖住
+        RaisedByUserInteraction?.Invoke();
         // #4 右键拖动窗口结束
         if (_winDragging)
         {

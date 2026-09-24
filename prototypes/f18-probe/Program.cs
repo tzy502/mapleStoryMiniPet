@@ -5,6 +5,7 @@ using System.IO;
 using SkiaSharp;
 using MiniPet.Models;
 using MiniPet.Services;
+using MiniPet.Services.Walk;
 using WzComparerR2.WzLib;
 
 /// <summary>
@@ -27,14 +28,44 @@ static class F18Probe
 
         if (args.Length == 0)
         {
-            Console.WriteLine("用法: --full <mapId...> | --bgm [topN]");
+            Console.WriteLine("用法: --full <mapId...> | --bgm [topN] | --auditall [limit] [degree]");
             return;
         }
         if (args[0] == "--full") { Full(args.Skip(1).ToArray()); return; }
+        if (args[0] == "--fdoverlay") { FdOverlay(args.Length > 1 ? args[1] : "706020100"); return; }
+        if (args[0] == "--portals")
+        {
+            // --portals <mapId> [trackKey]：列出全部门 + 目标图 BGM；给 trackKey 时标注哪个门会被 ChooseNextPortal 选中
+            var cache = new CacheManager();
+            var mapService = new MapService(Wz, cache);
+            var map = mapService.LoadMap(args[1]);
+            string? track = args.Length > 2 ? args[2] : null;
+            foreach (var p in map!.Portals)
+            {
+                string padded = p.Tm.Length == 7 && p.HasTarget ? p.Tm : p.Tm.PadLeft(9, '0');
+                string bgm = p.HasTarget
+                    ? Wz.GetStringProperty($"{MapService.GetMapWzPath(p.Tm)}/info/bgm") ?? ""
+                    : "";
+                string? key = MiniPet.Services.Walk.WalkPathPlanner.TrackKeyOf(bgm);
+                bool hit = track != null && string.Equals(key, track, StringComparison.OrdinalIgnoreCase);
+                Console.WriteLine($"[portal] id={p.Id} ({p.X},{p.Y}) {p.PName} → {p.Tm}{(p.HasTarget ? "" : " (无目标)")} key={key ?? "?"}{(hit ? "   ← BGM 匹配" : "")}");
+            }
+            return;
+        }
         if (args[0] == "--bgm") { Bgm(args.Length > 1 && int.TryParse(args[1], out var n) ? n : 15); return; }
+        if (args[0] == "--auditall")
+        {
+            // --auditall [limit] [degree]：全部 BGM 候选图批量静态审计 → /tmp/audit-all.csv
+            int limit = args.Length > 1 && int.TryParse(args[1], out var lim) ? lim : 0;
+            int degree = args.Length > 2 && int.TryParse(args[2], out var deg) ? deg : 4;
+            AuditAll.Run(Wz, limit, degree);
+            return;
+        }
         if (args[0] == "--bands") { BandsDiag.Run(Wz, OutDir, args.Skip(1).ToArray()); return; }
         if (args[0] == "--maps") { Maps(args.Skip(1).ToArray()); return; }
         if (args[0] == "--tree") { Tree(args.Length > 1 ? args[1] : "Map/Obj", args.Length > 2 ? int.Parse(args[2]) : 2); return; }
+        if (args[0] == "--face") { Face(args.Length > 1 ? args[1] : "Character/Face/00020000.img"); return; }
+        if (args[0] == "--faceacc") { FaceAcc(args.Length > 1 ? args[1] : null); return; }
         if (args[0] == "--find") { Find(args.Length > 1 ? args[1] : "Map/Obj", args.Length > 2 ? args[2] : "arrow"); return; }
         if (args[0] == "--objlist") { ObjList(args.Skip(1).ToArray()); return; }
         if (args[0] == "--int")
@@ -43,8 +74,102 @@ static class F18Probe
             Console.WriteLine($"{args[1]} = {v}");
             return;
         }
+        if (args[0] == "--route")
+        {
+            // --route <from> <to>：BFS 门图（portal.Tm 有效且非 999999999/自环），输出图序列路线
+            var cache = new CacheManager();
+            var mapService = new MapService(Wz, cache);
+            string from = args[1], to = args[2];
+            var prev = new Dictionary<string, string?> { [from] = null };
+            var queue = new Queue<string>(new[] { from });
+            int visited = 0;
+            while (queue.Count > 0 && !prev.ContainsKey(to))
+            {
+                var cur = queue.Dequeue();
+                visited++;
+                if (visited > 3000) { break; }
+                var mi = mapService.LoadMap(cur);
+                if (mi == null) { continue; }
+                foreach (var p in mi.Portals)
+                {
+                    if (!p.HasTarget || string.Equals(p.Tm, cur, StringComparison.Ordinal) || p.Tm == "999999999") { continue; }
+                    if (prev.ContainsKey(p.Tm)) { continue; }
+                    prev[p.Tm] = cur;
+                    if (p.Tm == to) { break; }
+                    queue.Enqueue(p.Tm);
+                }
+            }
+            if (!prev.ContainsKey(to))
+            {
+                Console.WriteLine($"[route] {from} → {to} 不可达（扫描 {visited} 图）");
+                return;
+            }
+            var path = new List<string>();
+            for (var m = to; m != null; m = prev.ContainsKey(m) ? prev[m] : null) { path.Insert(0, m); }
+            Console.WriteLine($"[route] {from} → {to}：{string.Join(" → ", path)}（扫描 {visited} 图）");
+            return;
+        }
+        if (args[0] == "--reach")
+        {
+            var cache = new CacheManager();
+            var mapService = new MapService(Wz, cache);
+            var map = mapService.LoadMap(args[1]);
+            int sfh = args.Length > 2 ? int.Parse(args[2]) : 1;
+            var reach = WalkGraph.Reachable(map, sfh);
+            Console.WriteLine($"[reach] {args[1]} 从 fh#{sfh} 可达 {reach.Count} 段");
+            foreach (var f in map!.Footholds.OrderBy(f => f.X1))
+            {
+                Console.WriteLine($"[reach] {(reach.Contains(f.Id) ? "IN " : "OUT")} fh#{f.Id} ({f.X1},{f.Y1})-({f.X2},{f.Y2})");
+            }
+            return;
+        }
+        if (args[0] == "--str")
+        {
+            var sv = Wz.GetStringProperty(args[1]) ?? "(null)";
+            Console.WriteLine($"{args[1]} = {sv}");
+            return;
+        }
+        if (args[0] == "--fhs")
+        {
+            // --fhs <mapId> <yMin> <yMax>：列出 y 在范围内的 foothold 段
+            var cache = new CacheManager();
+            var mapService = new MapService(Wz, cache);
+            var map = mapService.LoadMap(args[1]);
+            int yMin = args.Length > 2 ? int.Parse(args[2]) : -100000;
+            int yMax = args.Length > 3 ? int.Parse(args[3]) : 100000;
+            foreach (var f in map!.Footholds.OrderBy(f => f.Y1).ThenBy(f => f.X1))
+            {
+                int yMid = (f.Y1 + f.Y2) / 2;
+                if (yMid < yMin || yMid > yMax) { continue; }
+                Console.WriteLine($"[fhs] id={f.Id} ({f.X1},{f.Y1})-({f.X2},{f.Y2}) prev={f.Prev} next={f.Next}");
+            }
+            return;
+        }
         if (args[0] == "--doll") { DollDiag.Run(Wz, OutDir); return; }
+        if (args[0] == "--actions")
+        {
+            var cache = new CacheManager();
+            var sprite = new SpriteService(cache);
+            var pd = new PaperdollService(Wz, cache, sprite);
+            pd.SetAppearance(new CharacterAppearance { Gender = 0, BodyId = 2000, Hair = new ItemInfo { Id = "30000" }, Face = new ItemInfo { Id = "20000" } });
+            var acts = pd.GetAvailableActions();
+            Console.WriteLine($"[actions] body 2000 可用动作({acts.Count}): {string.Join(", ", acts)}");
+            foreach (var a in new[] { "stand1", "stand2", "walk1", "walk2", "jump", "ladder", "rope" })
+            {
+                Console.WriteLine($"[actions] HasAction({a}) = {pd.HasAction(a)}  frames={pd.GetFrameCount(a)}");
+            }
+            Console.WriteLine($"[actions] ResolveAction(walk2) → {pd.ResolveAction("walk2")}");
+            Console.WriteLine($"[actions] ResolveAction(jump)  → {pd.ResolveAction("jump")}");
+            return;
+        }
+        if (args[0] == "--expr") { ExprDiag.Run(Wz, OutDir); return; }
         if (args[0] == "--bgmdiag") { BgmDiag.Run(Wz, args.Length > 1 ? args[1] : "Bgm10/Timeless"); return; }
+        if (args[0] == "--bgmscan")
+        {
+            int degree = args.Length > 1 && int.TryParse(args[1], out var d) ? d : Math.Min(4, Math.Max(1, Environment.ProcessorCount - 2));
+            ScanDiag.Run(Wz, degree);
+            return;
+        }
         if (args[0] == "--objraw")
         {
             string mid = args.Length > 1 ? args[1] : "100000200";
@@ -72,9 +197,57 @@ static class F18Probe
         if (args[0] == "--chains") { ChainDiag.Run(Wz, args.Length > 1 ? args[1] : "101000000"); return; }
         if (args[0] == "--walkmode")
         {
+            // 可选尾部 --speed N：仿真倍速（每 tick dt=N/30 仿真秒，Tick 内部仍按 1/60 拆子步）
+            double speed = 1.0;
+            for (int a = 1; a < args.Length - 1; a++)
+            {
+                if (args[a] == "--speed" && double.TryParse(args[a + 1], out var sp)) { speed = sp; }
+            }
             WalkModeProbe.Run(Wz, args.Length > 1 ? args[1] : "Bgm00/FloralLife",
                               args.Length > 2 && int.TryParse(args[2], out var sec) ? sec : 20,
-                              args.Length > 3 ? args[3] : "101000000");
+                              args.Length > 3 ? args[3] : "101000000", speed);
+            return;
+        }
+        if (args[0] == "--walkmode-batch")
+        {
+            // --walkmode-batch <listFile> <outDir> [seconds] [speed]
+            var listFile = args.Length > 1 ? args[1] : "";
+            var outDir = args.Length > 2 ? args[2] : "out/walkbatch";
+            var seconds = args.Length > 3 && int.TryParse(args[3], out var s2) ? s2 : 90;
+            var speed = args.Length > 4 && double.TryParse(args[4], out var sp2) ? sp2 : 10.0;
+            if (listFile.Length == 0) { Console.WriteLine("用法: --walkmode-batch <listFile> <outDir> [seconds] [speed]"); return; }
+            WalkModeProbe.BatchRun(Wz, listFile, outDir, seconds, speed);
+            return;
+        }
+        if (args[0] == "--cover-batch")
+        {
+            // --cover-batch <listFile> <outCsv> [seconds] [speed] [label]：每图路径覆盖率（见 CoverBatch.cs）
+            var listFile = args.Length > 1 ? args[1] : "";
+            var outCsv = args.Length > 2 ? args[2] : "out/cover.csv";
+            var seconds = args.Length > 3 && int.TryParse(args[3], out var s4) ? s4 : 90;
+            var speed = args.Length > 4 && double.TryParse(args[4], out var sp4) ? sp4 : 10.0;
+            var label = args.Length > 5 ? args[5] : "";
+            if (listFile.Length == 0) { Console.WriteLine("用法: --cover-batch <listFile> <outCsv> [seconds] [speed] [label]"); return; }
+            CoverBatch.Run(Wz, listFile, outCsv, seconds, speed, label);
+            return;
+        }
+        if (args[0] == "--listmaps")
+        {
+            // --listmaps <outFile>：全量地图 id（Map/Map/*/*.img，排序后每行一个），覆盖率批量清单用
+            var outFile = args.Length > 1 ? args[1] : Path.Combine(OutDir, "mapids.txt");
+            var mapRoot = Wz.FindNodeByPath("Map/Map");
+            if (mapRoot == null) { Console.WriteLine("[listmaps] 找不到 Map/Map"); return; }
+            var ids = new List<string>();
+            foreach (var sub in mapRoot.Nodes)
+            {
+                foreach (var img in sub.Nodes)
+                {
+                    if (img.Text.EndsWith(".img")) { ids.Add(img.Text.Substring(0, img.Text.Length - 4)); }
+                }
+            }
+            ids.Sort(StringComparer.Ordinal);
+            File.WriteAllLines(outFile, ids);
+            Console.WriteLine($"[listmaps] {ids.Count} 张图 → {outFile}");
             return;
         }
         if (args[0] == "--walk")
@@ -112,6 +285,34 @@ static class F18Probe
             SavePng(bmp, f);
             Console.WriteLine($"  → full_{id}.png ({bmp.Width}x{bmp.Height}) world=[{mi.MinX},{mi.MinY}]~[{mi.MaxX},{mi.MaxY}]");
         }
+    }
+
+    /// <summary>--fdoverlay &lt;mapId&gt;：整图渲染 + 红线画出全部 foothold + 黄点画出传送门，验证「人物吸附的 fd 是否在视觉地面上」。</summary>
+    static void FdOverlay(string mapId)
+    {
+        var svc = new MapService(Wz, new CacheManager());
+        var mi = svc.LoadMap(mapId);
+        if (mi == null) { Console.WriteLine($"  {mapId} 加载失败"); return; }
+        int w = mi.MaxX - mi.MinX, h = mi.MaxY - mi.MinY;
+        var (cx, cy) = MapService.GetMapCenter(mi);
+        using var bmp = svc.RenderViewport(mi, cx, cy, 1f, 0, w, h);
+        if (bmp == null) { Console.WriteLine("  渲染失败"); return; }
+        // RenderViewport 的视口中心 = (cx,cy) → 世界 → 像素：px = wx - (cx - w/2), py = wy - (cy - h/2)
+        float ox = cx - w / 2f, oy = cy - h / 2f;
+        using var cv = new SKCanvas(bmp);
+        using var line = new SKPaint { Color = SKColors.Red, StrokeWidth = 2, Style = SKPaintStyle.Stroke, IsAntialias = true };
+        using var dot = new SKPaint { Color = SKColors.Yellow, IsAntialias = true };
+        foreach (var f in mi.Footholds)
+        {
+            cv.DrawLine(f.X1 - ox, f.Y1 - oy, f.X2 - ox, f.Y2 - oy, line);
+        }
+        foreach (var p in mi.Portals)
+        {
+            cv.DrawCircle(p.X - ox, p.Y - oy, 5, dot);
+        }
+        string f0 = Path.Combine(OutDir, $"fdoverlay_{mapId}.png");
+        SavePng(bmp, f0);
+        Console.WriteLine($"  → fdoverlay_{mapId}.png ({bmp.Width}x{bmp.Height}) 原点=({ox:F0},{oy:F0})，fd {mi.Footholds.Count} 段 / 门 {mi.Portals.Count} 个");
     }
 
     // ---------- BGM 反查 ----------
@@ -320,6 +521,127 @@ static class F18Probe
             foreach (var kv in agg.OrderByDescending(k => k.Value.cnt))
             {
                 Console.WriteLine($"   x{kv.Value.cnt,-3} z={kv.Value.z,-3} {kv.Value.w}x{kv.Value.h,-4} {kv.Key}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// --face &lt;faceImgPath&gt;：表情功能调研诊断（一次性 dump 全部表情节点）：
+    /// 每个表情 → 结构（数字帧/直接 piece）/帧数/每帧 delay/每帧部件名；末尾汇总表情清单。
+    /// </summary>
+    static void Face(string path)
+    {
+        var n = Wz.FindNodeByPath(path);
+        if (n == null) { Console.WriteLine($"{path} 不存在"); return; }
+        Console.WriteLine($"== {path} 表情结构 ==");
+        var summary = new List<string>();
+        foreach (var expr in n.Nodes)
+        {
+            if (expr.Text == "info") { continue; }
+            int numericFrames = 0;
+            foreach (var c in expr.Nodes) { if (int.TryParse(c.Text, out _)) numericFrames++; }
+            if (numericFrames > 0)
+            {
+                var delays = new List<int>();
+                var pieces = new List<string>();
+                for (int f = 0; f < numericFrames; f++)
+                {
+                    var fn = expr.Nodes.First(c => c.Text == f.ToString());
+                    int delay = fn.Nodes.Where(c => c.Text == "delay").Select(c => c.GetValue<int>()).FirstOrDefault();
+                    delays.Add(delay);
+                    pieces.Add(string.Join(",", fn.Nodes.Where(p => int.TryParse(p.Text, out _) == false && p.Text != "delay" && p.Text != "move").Select(p => p.Text)));
+                }
+                Console.WriteLine($"{expr.Text}: 数字帧 x{numericFrames}  delay=[{string.Join(",", delays)}]ms  pieces=[{string.Join(" | ", pieces)}]");
+                summary.Add($"{expr.Text}({numericFrames}帧)");
+            }
+            else
+            {
+                var names = expr.Nodes.Where(p => p.Text != "delay" && p.Text != "move" && p.Text != "info").Select(p => p.Text).ToList();
+                int delay = expr.Nodes.Where(c => c.Text == "delay").Select(c => c.GetValue<int>()).FirstOrDefault();
+                Console.WriteLine($"{expr.Text}: 直接piece x{names.Count}  delay={delay}ms  pieces=[{string.Join(",", names)}]");
+                summary.Add($"{expr.Text}(静态)");
+            }
+        }
+        Console.WriteLine($"== 清单（{summary.Count} 个表情节点）==");
+        Console.WriteLine(string.Join(", ", summary));
+        var faceDir = Wz.FindNodeByPath("Character/Face");
+        if (faceDir != null)
+        {
+            int faceImgs = faceDir.Nodes.Count(c => c.Text.EndsWith(".img") && c.Text.StartsWith("0002"));
+            Console.WriteLine($"== Character/Face 脸型 img 总数: {faceImgs} ==");
+        }
+    }
+
+    /// <summary>
+    /// --faceacc [itemId]：101 面饰表情联动诊断。无参时扫描 Accessory 目录 0101xxxx 前缀的 img，
+    /// 统计「表情结构 / 动作结构 / 其他」占比，并取首个表情结构样本 dump；有参时 dump 指定面饰。
+    /// </summary>
+    static void FaceAcc(string? itemId)
+    {
+        var accDir = Wz.FindNodeByPath("Character/Accessory");
+        if (accDir == null) { Console.WriteLine("Character/Accessory 不存在"); return; }
+        if (!string.IsNullOrEmpty(itemId))
+        {
+            DumpAcc($"Character/Accessory/{itemId.PadLeft(11, '0')}.img");
+            return;
+        }
+        int exprStruct = 0, actionStruct = 0, other = 0;
+        string? sample = null;
+        var allExprNames = new HashSet<string>();
+        int scanned = 0;
+        foreach (var child in accDir.Nodes)
+        {
+            var name = child.Text.Replace(".img", "");
+            if (name.Length != 8 || !name.StartsWith("0101") || !int.TryParse(name, out _)) { continue; }
+            scanned++;
+            var img = child.GetValue<WzComparerR2.WzLib.Wz_Image>();
+            var inner = img?.Node;
+            if (inner == null) { continue; }
+            bool hasAction = false, hasExpr = false;
+            var exprs = new List<string>();
+            foreach (var top in inner.Nodes)
+            {
+                if (top.Text == "info" || top.Text == "default") { continue; }
+                bool numeric = top.Nodes.Any(c => int.TryParse(c.Text, out _));
+                if (new[] { "stand1", "stand2", "walk1", "walk2" }.Contains(top.Text)) { hasAction = true; }
+                else if (numeric || top.Text == "blink" || top.Text == "smile" || top.Text == "angry") { hasExpr = true; exprs.Add(top.Text); }
+            }
+            foreach (var e in exprs) { allExprNames.Add(e); }
+            if (hasExpr) { exprStruct++; sample ??= child.Text; }
+            else if (hasAction) { actionStruct++; }
+            else { other++; }
+        }
+        Console.WriteLine($"== 101 面饰扫描：{scanned} 个 img，表情结构 {exprStruct} / 动作结构 {actionStruct} / 其他 {other} ==");
+        Console.WriteLine($"表情节点名并集: {string.Join(",", allExprNames.OrderBy(x => x))}");
+        if (sample != null) { DumpAcc($"Character/Accessory/{sample}"); }
+    }
+
+    static void DumpAcc(string path)
+    {
+        var n = Wz.FindNodeByPath(path);
+        if (n == null) { Console.WriteLine($"{path} 不存在"); return; }
+        Console.WriteLine($"== {path} ==");
+        foreach (var top in n.Nodes)
+        {
+            if (top.Text == "info")
+            {
+                var nm = top.Nodes.FirstOrDefault(c => c.Text == "name")?.GetValueEx<string>(null);
+                Console.WriteLine($"info: name={nm}");
+                continue;
+            }
+            bool numeric = top.Nodes.Any(c => int.TryParse(c.Text, out _));
+            if (numeric)
+            {
+                var frames = top.Nodes.Where(c => int.TryParse(c.Text, out _)).Count();
+                var frame0 = top.Nodes.First(c => int.TryParse(c.Text, out _));
+                var pieces = string.Join(",", frame0.Nodes.Where(p => p.Text != "delay" && p.Text != "move").Select(p => p.Text));
+                int delay = frame0.Nodes.Where(c => c.Text == "delay").Select(c => c.GetValue<int>()).FirstOrDefault();
+                Console.WriteLine($"{top.Text}: 数字帧 x{frames} delay(帧0)={delay}ms pieces(帧0)=[{pieces}]");
+            }
+            else
+            {
+                var pieces = string.Join(",", top.Nodes.Select(p => p.Text));
+                Console.WriteLine($"{top.Text}: 非数字帧 children=[{pieces}]");
             }
         }
     }

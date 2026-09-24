@@ -111,10 +111,15 @@ public static class WalkTransition
             }
 
             double start = window.Opacity;
+            // macOS 合成树下 Window.Opacity 动画观感弱（胶水 2026-09-16「切换不自然 淡入淡出需要」）：
+            // 同步作用于内容根（Panel），窗口+内容双层透明度变化在 mac 上肉眼可见。
+            var content = window.Content as Avalonia.Controls.Panel;
+            double startC = content?.Opacity ?? 1.0;
             double diff = target - start;
             if (ms <= 0 || Math.Abs(diff) < Epsilon)
             {
                 window.Opacity = target;
+                if (content != null) { content.Opacity = target; }
                 return;
             }
 
@@ -123,7 +128,11 @@ public static class WalkTransition
             {
                 if (ct.IsCancellationRequested) { return; }
                 double t = Math.Min(1.0, sw.Elapsed.TotalMilliseconds / ms);
-                try { window.Opacity = start + diff * t; }
+                try
+                {
+                    window.Opacity = start + diff * t;
+                    if (content != null) { content.Opacity = startC + (target - startC) * t; }
+                }
                 catch (Exception ex)
                 {
                     // 窗口正在关闭/已销毁：保持当前值退出，不冒泡

@@ -329,6 +329,8 @@ namespace MiniPet.Services
                 var stand = ResolveActionForProvider("stand");
                 if (_currentAction != stand)
                 {
+                    // 诊断「走一半变 stand」：正常 walk1/walk2/jump 都有帧，触发即说明动作解析出了问题
+                    Console.Error.WriteLine($"[Anim] 动作无帧回退 stand: {_currentAction}");
                     _currentAction = stand;
                     _currentFrameIndex = 0;
                     _accumulatedDelay = 0;
@@ -571,18 +573,21 @@ namespace MiniPet.Services
             // 首选族匹配展示池；族匹配为空（武器类型未知/映射未覆盖本 WZ）→ 用兜底池（武器有帧即展示）
             var effectiveDisplay = displayPool.Count > 0 ? displayPool : displayAltPool;
 
-            // 合并候选（排除当前动作；两池无交集：Loop 池只含循环动作，展示池只含非循环武器动作）
+            // 合并候选（排除当前动作；两池无交集：Loop 池只含循环动作，展示池只含非循环武器动作）。
+            // 胶水 2026-09-15：stand1/stand2/walk1/walk2 等**基础动作一律不参与空闲随机切换**
+            // （待机就安定站在基准站姿上，切换只留给展示类动作）——不管当前是不是 stand 族，
+            // stand* 候选直接剔除；walk*/fly*/jump* 在 IsLoopAction 已排除。
             var candidates = new List<string>(loopPool.Count + effectiveDisplay.Count);
             foreach (var a in loopPool)
             {
-                if (a != _currentAction)
+                if (a != _currentAction && !IsStandFamily(a))
                 {
                     candidates.Add(a);
                 }
             }
             foreach (var a in effectiveDisplay)
             {
-                if (a != _currentAction)
+                if (a != _currentAction && !IsStandFamily(a))
                 {
                     candidates.Add(a);
                 }
@@ -592,23 +597,7 @@ namespace MiniPet.Services
                 return (null, PlayMode.Loop);
             }
 
-            // V0.1.3（胶水反馈「stand 12 的切换不要那么频繁」）：stand1/stand2 视觉几乎一致，
-            // 当前已在 stand 族时不再切到另一个 stand 变体——优先挑非 stand 动作；若候选里只剩
-            // stand 变体，则本轮不切（返回 null），避免原地"抽搐"。
             var pool = candidates;
-            if (IsStandFamily(_currentAction))
-            {
-                var nonStand = new List<string>();
-                foreach (var a in candidates)
-                {
-                    if (!IsStandFamily(a)) { nonStand.Add(a); }
-                }
-                if (nonStand.Count == 0)
-                {
-                    return (null, PlayMode.Loop);
-                }
-                pool = nonStand;
-            }
 
             var chosen = pool[Random.Shared.Next(pool.Count)];
             var mode = effectiveDisplay.Contains(chosen) ? PlayMode.OneShot : PlayMode.Loop;

@@ -186,6 +186,15 @@ public partial class MapService
             if (_wz.FindNodeByPath($"{mapRoot}/ladderRope") != null)
                 mi.Ropes = ParseLadderRopes($"{mapRoot}/ladderRope");
 
+            // 垂直 foothold（x1==x2）= 墙（sdlMS：无 k 不可站不可爬）。
+            // 2026-09-16 撤销「垂直段转梯」：把墙转成梯会让人物面对墙用爬而不是跳（胶水实测），
+            // 且空中撞墙检测形同虚设。高台连通改由 WalkGraph「跨高度链邻段归 Jump」承担（物理跳上去）。
+            if (mi.Footholds != null && mi.Footholds.Count > 0)
+            {
+                mi.Ropes ??= new List<LadderRope>();
+                mi.Ropes.RemoveAll(r => r.Id >= 100000);   // 清理旧版转换残留（如有）
+            }
+
             // VR 视口边界（CalculateBounds 使用；缺失时回退到坐标极值）
             mi.VRLeft = _wz.GetIntProperty($"{mapRoot}/info/VRLeft");
             mi.VRTop = _wz.GetIntProperty($"{mapRoot}/info/VRTop");
