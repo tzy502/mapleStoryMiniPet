@@ -162,6 +162,29 @@ static class F18Probe
             Console.WriteLine($"[actions] ResolveAction(jump)  → {pd.ResolveAction("jump")}");
             return;
         }
+        if (args[0] == "--balloon")
+        {
+            string bid = args.Length > 1 ? args[1] : "520";
+            var cache = new CacheManager();
+            var tiles = Wz.ExtractBalloonTiles(bid);
+            int clr = Wz.GetBalloonClr(bid);
+            Console.WriteLine($"[balloon] id={bid} tiles={(tiles == null ? "null" : $"ok clr={clr}")}");
+            if (tiles != null)
+            {
+                Console.WriteLine($"[balloon] NW={tiles.NW.Length} N={tiles.N.Length} NE={tiles.NE.Length} W={tiles.W.Length} C={tiles.C.Length} E={tiles.E.Length} SW={tiles.SW.Length} S={tiles.S.Length} SE={tiles.SE.Length} Arrow={tiles.Arrow.Length} Head={tiles.Head.Length}");
+            }
+            if (tiles == null) { Console.WriteLine("[balloon] → 无素材（ExtractBalloonTiles 返回 null）"); return; }
+            var svc = new BalloonService(cache, Wz);
+            var png = svc.RenderBalloon("你好！我是 MiniPet 桌宠", new MiniPet.Models.BalloonData { Id = bid, Tiles = tiles, Clr = clr });
+            Console.WriteLine($"[balloon] RenderBalloon → {(png == null ? "null" : png.Length + " bytes")}");
+            if (png != null && png.Length > 0)
+            {
+                var f = System.IO.Path.Combine(OutDir, $"balloon_{bid}.png");
+                System.IO.File.WriteAllBytes(f, png);
+                Console.WriteLine($"  → balloon_{bid}.png");
+            }
+            return;
+        }
         if (args[0] == "--expr") { ExprDiag.Run(Wz, OutDir); return; }
         if (args[0] == "--bgmdiag") { BgmDiag.Run(Wz, args.Length > 1 ? args[1] : "Bgm10/Timeless"); return; }
         if (args[0] == "--bgmscan")

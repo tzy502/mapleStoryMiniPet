@@ -121,26 +121,54 @@ namespace MiniPet.Services
             var arrow = decoded.Arrow;
             var head = decoded.Head;
 
-            if (nw == null || n == null || ne == null ||
-                w == null || c == null || e == null ||
-                sw == null || s == null || se == null)
-                return null;
+            // ⚠️ 不同气泡样式的瓦片组合天生不同（WZ 实测：id=1 无 NW/NE/SW/SE，id=520 **无中央 C**）——
+            // 原实现要求九宫格齐全，导致这些样式**永远渲染失败**（设置中心预览空白，胶水 2026-09-24 报）。
+            // 现在：缺失瓦片用 1×1 透明占位（画了也看不见），布局尺寸用「有数据的同类瓦片」兜底。
+            static SKBitmap Blank1() => new SKBitmap(1, 1);
+            nw ??= Blank1();
+            n ??= Blank1();
+            ne ??= Blank1();
+            w ??= Blank1();
+            e ??= Blank1();
+            sw ??= Blank1();
+            s ??= Blank1();
+            se ??= Blank1();
+            c ??= Blank1();
+            if (w.Width <= 0 || w.Height <= 0) { w = Blank1(); }
+            if (e.Width <= 0 || e.Height <= 0) { e = Blank1(); }
+            if (n.Width <= 0 || n.Height <= 0) { n = Blank1(); }
+            if (s.Width <= 0 || s.Height <= 0) { s = Blank1(); }
+            if (nw.Width <= 0 || nw.Height <= 0) { nw = Blank1(); }
+            if (ne.Width <= 0 || ne.Height <= 0) { ne = Blank1(); }
+            if (sw.Width <= 0 || sw.Height <= 0) { sw = Blank1(); }
+            if (se.Width <= 0 || se.Height <= 0) { se = Blank1(); }
 
-            if (nw.Width <= 0 || nw.Height <= 0 || c.Width <= 0 || c.Height <= 0) return null;
-
-            int colW = c.Width;
-            int colH = c.Height;
+            // 中央瓦片缺失/退化时：列宽高用左右/上下边兜底（保证还能排版出文字）
+            int colW = c.Width > 1 ? c.Width : Math.Max(12, w.Width > 1 ? w.Width : n.Height);
+            int colH = c.Height > 1 ? c.Height : Math.Max(12, n.Height > 1 ? n.Height : 16);
+            if (c.Width <= 1 || c.Height <= 1)
+            {
+                c = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));   // 透明中央
+            }
 
             // 文字颜色：WZ 的 clr 是「从白色减去的 RGB 补值」（MapleSalon2 getWzClrColor：
             // color = 0x1000000 + clr，clr 常为负数如 -1 = 白、-0x10000 = 红）；clr=0 同 MapleSalon2 视为白。
             // ⚠️ 2026-08-08 曾重写丢失 Color → SKPaint 默认黑色文字（用户报黑字）
             int clr = balloonData.Clr;
-            uint rgb = clr == 0 ? 0xFFFFFFu : (uint)((0x1000000 + clr) & 0xFFFFFF);
-            byte cr = (byte)(rgb >> 16);
-            byte cg = (byte)(rgb >> 8);
-            byte cb = (byte)rgb;
-            // 文字默认不透明（WZ clr 无 alpha 通道）
-            var textColor = new SKColor(cr, cg, cb, 0xFF);
+            // ⚠️ clr = -1 / 0 经 `0x1000000 + clr` 解析出来是**纯白**，而气泡底多是浅色
+            //（实测 id=233 粉黄底、id=520 浅青底）→ 白字几乎不可见（胶水 2026-09-24 报预览失败，
+            //  实际是「渲染成功但文字看不见」）。这两个值属默认占位，按游戏观感用深色；
+            // 只有显式指定了颜色的（如 -0x10000 = 红）才用 WZ 色。
+            SKColor textColor;
+            if (clr == 0 || clr == -1)
+            {
+                textColor = new SKColor(0x22, 0x22, 0x22, 0xFF);
+            }
+            else
+            {
+                uint rgb = (uint)((0x1000000 + clr) & 0xFFFFFF);
+                textColor = new SKColor((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb, 0xFF);
+            }
 
             // 文字断行（中文逐字符，对齐 MapleSalon2：wordWrapWidth=90, lineHeight=16, SimSun/MingLiU 系）
             // 加粗仅「思考中…」（Review 状态气泡）使用（胶水 2026-08-15：只针对思考加粗）
@@ -159,8 +187,23 @@ namespace MiniPet.Services
 
             int minW = Math.Max(80, wrapW);
             int minH = Math.Max(40, lines.Count * (int)lineHeight);
-            int colCount = Math.Max(1, (int)Math.Ceiling(minW / (double)colW));
-            int rowCount = Math.Max(1, (int)Math.Ceiling(minH / (double)colH));
+            // 无中央瓦片的样式（如 520）：平铺会产生重复的边块 → 强制 1×1
+            bool tiledCenter = tiles.C.Length > 1;
+            if (!tiledCenter)
+            {
+                // 中央块按「文字所需尺寸」生成**白底**块：否则气泡太窄会把文字截断，
+                // 且中央透明会让文字悬空（520 实测）。白底 + 深色字 = 可读。
+                colW = Math.Max(colW, Math.Max(80, wrapW));
+                colH = Math.Max(colH, Math.Max(20, lines.Count * (int)lineHeight + 10));
+                var blank = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
+                using (var bcv = new SKCanvas(blank))
+                {
+                    bcv.Clear(new SKColor(0xFF, 0xFF, 0xFF, 0xFF));
+                }
+                c = blank;
+            }
+            int colCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minW / (double)colW)) : 1;
+            int rowCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minH / (double)colH)) : 1;
 
             // origin-aware 拼装（MapleSalon2）：topOffset = max(nw.oy, n.oy)；leftOffset = nw.ox
             int topOffset = Math.Max(tiles.NWOrigin.Y, tiles.NOrigin.Y);
