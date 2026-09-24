@@ -162,6 +162,16 @@ static class F18Probe
             Console.WriteLine($"[actions] ResolveAction(jump)  → {pd.ResolveAction("jump")}");
             return;
         }
+        if (args[0] == "--mobactions")
+        {
+            string aid = args.Length > 1 ? args[1] : "9834755";
+            string aty = args.Length > 2 ? args[2] : "Mob";
+            var list = Wz.GetActionList(aid, aty);
+            Console.WriteLine($"[actions] {aty}/{aid} → {list.Count} 个: {string.Join(", ", list)}");
+            var cached = Wz.GetActionList(aid);
+            Console.WriteLine($"[actions] 默认重载 → {cached.Count} 个");
+            return;
+        }
         if (args[0] == "--balloon")
         {
             string bid = args.Length > 1 ? args[1] : "520";

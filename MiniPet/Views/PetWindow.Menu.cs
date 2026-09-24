@@ -786,15 +786,21 @@ public partial class PetWindow
         {
             if (ContextMenu == null) { return; }
 
+            // ⚠️ 必须**递归**查找：菜单折叠后「切换动画」位于「🧍 外观」子菜单内，只遍历顶层会找不到
+            // → animationMenu 为 null → 直接 return → 动画菜单永远空、人物只能停在 stand
+            //（胶水 2026-09-24 报「动画没有了 / 动画加载也没成功 / 人物默认 stand」）。
             MenuItem? animationMenu = null;
-            foreach (var entry in ContextMenu.Items)
+            void FindMenu(IEnumerable<object?> items)
             {
-                if (entry is MenuItem { Name: "AnimationMenu" } menu)
+                foreach (var entry in items)
                 {
-                    animationMenu = menu;
-                    break;
+                    if (animationMenu != null) { return; }
+                    if (entry is not MenuItem mi) { continue; }
+                    if (mi.Name == "AnimationMenu") { animationMenu = mi; return; }
+                    FindMenu(mi.Items);
                 }
             }
+            FindMenu(ContextMenu.Items);
             if (animationMenu == null) { return; }
 
             animationMenu.Items.Clear();
