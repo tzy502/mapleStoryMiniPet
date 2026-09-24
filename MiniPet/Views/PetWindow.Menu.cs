@@ -196,7 +196,10 @@ public partial class PetWindow
 
             cm.Items.Add(new Separator());
 
-            // ── Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态） ──
+            // ── 🤖 AI（折叠：Hermes 终端 / 对话 / DSH 对话 / DSH 状态，胶水 2026-09-24 要求收起）──
+            var aiMenu = new MenuItem { Header = "🤖 AI" };
+
+            // Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态）
             var terminalItem = new MenuItem { Header = "Hermes 终端" };
             var launchItem = new MenuItem { Header = "🚀 启动 hermes" };
             launchItem.Click += (_, _) =>
@@ -212,7 +215,7 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AgentStatus: {ex.Message}"); }
             };
             terminalItem.Items.Add(statusItem);
-            cm.Items.Add(terminalItem);
+            aiMenu.Items.Add(terminalItem);
 
             // ── Hermes 对话（迷你聊天对话框，PLAN §3；单例，已开则 Activate/聚焦） ──
             var chatItem = new MenuItem { Header = "💬 对话" };
@@ -221,7 +224,7 @@ public partial class PetWindow
                 try { HermesChatWindow.OpenOrActivate(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] HermesChat: {ex.Message}"); }
             };
-            cm.Items.Add(chatItem);
+            aiMenu.Items.Add(chatItem);
 
             // ── DSH 对话（DeepSeek Harness 桥接，feat/dsh-bridge；单例，已开则 Activate/聚焦）──
             // 对话链路独立于「观察开关」：未装配（DshEnabled 关）时点击自动装配 DshAdapter
@@ -237,7 +240,7 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshChat: {ex.Message}"); }
             };
-            cm.Items.Add(dshChatItem);
+            aiMenu.Items.Add(dshChatItem);
 
             // ── DSH 状态（监控是默认行为：默认开启时桌宠反映 DSH 干活状态；弹窗只读显示连接 + 反映态，不装配 adapter）──
             var dshStatusItem = new MenuItem { Header = "📊 DSH 状态" };
@@ -246,7 +249,9 @@ public partial class PetWindow
                 try { ShowDshStatusPopup(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshStatus: {ex.Message}"); }
             };
-            cm.Items.Add(dshStatusItem);
+            aiMenu.Items.Add(dshStatusItem);
+
+            cm.Items.Add(aiMenu);   // 折叠成一个「🤖 AI」子菜单（顶层不再铺开）
 
             // ── V0.1.3 多桌宠：添加 / 移除 / 设为主宠 ──
             var petMenuItem = new MenuItem { Header = "🐾 桌宠" };
@@ -683,7 +688,12 @@ public partial class PetWindow
                 string captured = key;
                 item.Click += (_, _) =>
                 {
-                    try { _paperdoll.PlayExpression(captured, 3000); }
+                    try
+                    {
+                        // 眨眼是 3 帧快动画（≈180ms），给 3s 会「循环眨眼好几秒」（验收 §7-2）；其余表情 3s
+                        int ms = string.Equals(captured, PaperdollService.ExpressionBlink, StringComparison.Ordinal) ? 200 : 3000;
+                        _paperdoll.PlayExpression(captured, ms);
+                    }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PlayExpression({captured}): {ex.Message}"); }
                 };
                 _exprMenu.Items.Add(item);

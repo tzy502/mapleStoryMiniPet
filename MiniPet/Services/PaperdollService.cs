@@ -58,17 +58,19 @@ public class PaperdollService : IEntityFrameProvider
     /// WZ 实测的 25 个表情（default + 24，见 docs/ai/PLAN-表情功能.md §2）。
     /// Friendly = 可进「随机表情」池；负面表情只能从菜单手动播。
     /// </summary>
+    /// 顺序照抄 MapleSalon2 `const/emotions.ts:31` 的 CharacterExpressionsOrder（qBlue 是 GMS 特有，附在末尾）。
+    /// Friendly = 进「随机表情」池（PLAN §4.4：只放友好表情，shine 不在池内）。
     public static readonly (string Key, string Cn, bool Friendly)[] KnownExpressions =
     {
-        ("default", "默认", false), ("smile", "微笑", true), ("wink", "俏皮眨眼", true),
-        ("cheers", "欢呼", true), ("love", "爱心", true), ("glitter", "闪亮", true),
-        ("hum", "得意哼歌", true), ("chu", "亲亲", true), ("oops", "哎呀", true),
-        ("blink", "眨眼", false), ("hit", "受击", false), ("troubled", "烦恼", false),
-        ("cry", "哭", false), ("angry", "生气", false), ("bewildered", "慌张", false),
-        ("stunned", "发晕", false), ("vomit", "呕吐", false), ("pain", "痛苦", false),
-        ("despair", "绝望", false), ("shine", "荣光", true), ("blaze", "怒火", false),
-        ("bowing", "鞠躬道歉", false), ("hot", "热死了", false), ("dam", "郁闷", false),
-        ("qBlue", "疑问蓝脸", false),
+        ("blink", "眨眼", false), ("hit", "受击", false), ("smile", "微笑", true),
+        ("troubled", "烦恼", false), ("cry", "哭", false), ("angry", "生气", false),
+        ("bewildered", "慌张", false), ("stunned", "发晕", false), ("vomit", "呕吐", false),
+        ("oops", "哎呀", true), ("cheers", "欢呼", true), ("chu", "亲亲", true),
+        ("wink", "眨眼（俏皮）", true), ("pain", "痛苦", false), ("glitter", "闪亮", true),
+        ("despair", "绝望", false), ("love", "爱心", true), ("shine", "闪耀", false),
+        ("blaze", "怒火", false), ("hum", "哼歌", true), ("bowing", "鞠躬", false),
+        ("hot", "热", false), ("dam", "郁闷", false), ("default", "默认", false),
+        ("qBlue", "蓝色问号", false),
     };
 
     /// <summary>
@@ -128,13 +130,21 @@ public class PaperdollService : IEntityFrameProvider
                 PlayExpression(ExpressionBlink, 180);
                 return;
             }
-            if (RandomExpressionEnabled && !SuppressRandomExpression && now >= _nextRandomUtc)
+            if (RandomExpressionEnabled && !SuppressRandomExpression)
             {
-                _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
-                var pool = KnownExpressions.Where(e => e.Friendly).ToArray();
-                if (pool.Length > 0)
+                if (_nextRandomUtc == DateTime.MinValue)
                 {
-                    PlayExpression(pool[_exprRng.Next(pool.Length)].Key, 3000);
+                    // 首次开启也要等 20~45s（不能 immediate 播一个，验收 §4 指出过）
+                    _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
+                }
+                else if (now >= _nextRandomUtc)
+                {
+                    _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
+                    var pool = KnownExpressions.Where(e => e.Friendly).ToArray();
+                    if (pool.Length > 0)
+                    {
+                        PlayExpression(pool[_exprRng.Next(pool.Length)].Key, 3000);
+                    }
                 }
             }
         }

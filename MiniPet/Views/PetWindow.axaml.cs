@@ -797,7 +797,10 @@ public partial class PetWindow : Window
             Console.WriteLine($"[PetWindow] BalloonShow: line={line.Text}, expr={line.Expr}");
             // 对齐 PLAN-表情功能.md §4.5（表情 × 气泡联动）：弹气泡的**同时**播配对表情，
             // 表情时长用本条自带的 ExpireMs（8000ms）——表情先收，气泡 15s 仍在，到期由 PaperdollService 自己回 default。
-            try { _paperdoll.PlayExpression(line.Expr, line.ExpireMs); }
+            // 眨眼是 3 帧快动画（≈180ms）：配对的 blink 一律用 300ms，否则会「连续眨眼 8 秒」（验收 §7-2）
+            int exprMs = string.Equals(line.Expr, PaperdollService.ExpressionBlink, StringComparison.Ordinal)
+                ? 300 : line.ExpireMs;
+            try { _paperdoll.PlayExpression(line.Expr, exprMs); }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonExpression({line.Expr}): {ex.Message}"); }
             // 胶水 2026-08-19：随机气泡显示 15s 后自动隐藏（原 6s；调度期望 1min/条，显示期占 ~25%）
             // V0.1.3：targetPetId = 本宠物 → 只在本窗口弹（多只各自随机说话，不互相顶掉）
@@ -1427,7 +1430,9 @@ public partial class PetWindow : Window
     private void OnTimerTick(object? sender, EventArgs e)
     {
         // M2 表情时钟：眨眼/随机表情（每宠各自实例，天然隔离）
-        _paperdoll.SuppressRandomExpression = _walkMode is { IsActive: true };
+        // 抑制随机表情：行走/攀爬、拖拽中、Agent 忙碌（验收 §4：只接行走不够）
+        _paperdoll.SuppressRandomExpression =
+            (_walkMode is { IsActive: true }) || _isDragging || _agentReflect != AgentState.Idle;
         _paperdoll.TickExpressionClock();
         OnTimerTickCore(sender, e);
     }
