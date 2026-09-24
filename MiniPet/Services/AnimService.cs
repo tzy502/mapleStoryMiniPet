@@ -61,7 +61,7 @@ namespace MiniPet.Services
         /// 所以改为**第一次抽到并播完后**量出真实时长，太短的以后不再抽。
         /// </summary>
         private readonly HashSet<string> _shortIdleActions = new(StringComparer.Ordinal);
-        private const int MinIdleActionMs = 800;
+        private const int MinIdleActionMs = 500;   // 只拉黑真正的「一闪而过」（实测 300ms 的 skill1/skillAfter1）；0.6~0.7s 的保留
 
         /// <summary>诊断日志（临时）：随机动作与帧推进写文件，避免 stdout 缓冲看不到。</summary>
         private static void LogAnim(string msg)
