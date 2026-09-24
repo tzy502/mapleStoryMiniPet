@@ -164,6 +164,12 @@ public class PaperdollService : IEntityFrameProvider
     // 缓存（ConcurrentDictionary：后台预热/离线构建与 UI 帧合成并发安全，防抖动/竞态）
     private readonly ConcurrentDictionary<string, List<(string Category, string Root)>> _rootCache = new();
     private readonly ConcurrentDictionary<string, Bounds> _boundsCache = new();
+    /// <summary>
+    /// 「基础锚点」（胶水 2026-09-24：纸娃娃按基础来）——固定取**基础动作 stand1 第 0 帧**的 body 锚点，
+    /// 所有动作/所有帧共用它作为画布原点。原来每帧各用自己的 body 锚点，导致 union 画布里的「锚点」
+    /// 其实不是一个固定点 → 动作间/帧间角色会整体漂移（sdlMS 骨骼系统没这个问题）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (int X, int Y)> _baseAnchorCache = new();
     private readonly ConcurrentDictionary<string, List<PieceSource>> _frameSourcesCache = new();
     private readonly ConcurrentDictionary<string, PieceMeta> _metaCache = new();
     private readonly ConcurrentDictionary<string, SKBitmap> _bmpCache = new();
@@ -498,10 +504,11 @@ public class PaperdollService : IEntityFrameProvider
             var mv = GetFrameMove(hash, a, action, frame);
             if (mv != null) { mvX = mv.X; mvY = mv.Y; }
 
-            // 画布原点 = body 锚点（照抄 MapleSalon2 updateCharacterPivotByBodyPiece：bodyFrame.pivot = bodyFrame.ancher）
-            var bodyP = locked.FirstOrDefault(p => p.Category == "body");
-            int bx = bodyP?.AnchorX ?? 0;
-            int by = bodyP?.AnchorY ?? 0;
+            // 画布原点 = **基础锚点**（stand1/0 的 body 锚点，胶水 2026-09-24「纸娃娃按基础来」）：
+            // 所有动作/帧共用同一点，动作切换时锚点在画布中的相对位置只随画布范围变化、不随帧漂移。
+            var (baseBx2, baseBy2) = GetBaseBodyAnchor(hash, a);
+            int bx = baseBx2;
+            int by = baseBy2;
 
             var bmp = new SKBitmap(bounds.W, bounds.H, SKColorType.Bgra8888, SKAlphaType.Premul);
             using var canvas = new SKCanvas(bmp);
@@ -2036,7 +2043,34 @@ public class PaperdollService : IEntityFrameProvider
         return list;
     }
 
-    /// <summary>该 action 全部帧的联合包围盒（union bounds，缓存）。</summary>
+    /// <summary>
+    /// 基础锚点：固定用基础动作（stand1）第 0 帧的 body 锚点；stand1 不可用时退回 stand2 → 当前动作第 0 帧。
+    /// 只做一次部件收集+锚点解算，不触碰 bounds（无递归）。
+    /// </summary>
+    private (int X, int Y) GetBaseBodyAnchor(string hash, CharacterAppearance a)
+    {
+        if (_baseAnchorCache.TryGetValue(hash, out var cached)) { return cached; }
+        (int X, int Y) result = (0, 0);
+        foreach (var act in new[] { ExpressionDefault == null ? "stand1" : "stand1", "stand2", "stand" })
+        {
+            try
+            {
+                var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, act, 0, ExpressionDefault));
+                ResolveAnchors(pieces);
+                var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
+                if (bodyP != null)
+                {
+                    result = (bodyP.AnchorX, bodyP.AnchorY);
+                    break;
+                }
+            }
+            catch { }
+        }
+        _baseAnchorCache[hash] = result;
+        return result;
+    }
+
+    /// <summary>该 action 全部帧的联合包围盒（union bounds，缓存）。
     private Bounds GetBounds(string hash, CharacterAppearance a, string action)
     {
         // 2026-08-16：去掉整体外层 WithWzLock——原整体持锁会让后台 Warmup（穿戴新外观首次
@@ -2052,14 +2086,14 @@ public class PaperdollService : IEntityFrameProvider
         string actualAction = ResolveLogicalAction(a, action);
         int frameCount = GetActionFrameCount(BodyRoot(a), actualAction);
         int minX = 0, minY = 0, maxX = 0, maxY = 0;
+        // 基础锚点（stand1/0 的 body 锚点）——所有帧共用，保证 union 里锚点是**固定一点**
+        var (baseBx, baseBy) = GetBaseBodyAnchor(hash, a);
         for (int f = 0; f < frameCount; f++)
         {
             var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
             ResolveAnchors(pieces);
-            // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
-            var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
-            int bx = bodyP?.AnchorX ?? 0;
-            int by = bodyP?.AnchorY ?? 0;
+            int bx = baseBx;
+            int by = baseBy;
             // 该帧 move（bounds 需容纳位移）
             int fmvX = 0, fmvY = 0;
             var fmv = GetFrameMove(hash, a, action, f);
