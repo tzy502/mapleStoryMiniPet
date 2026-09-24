@@ -370,10 +370,10 @@ public partial class PetWindow
             };
             appearanceMenu.Items.Add(flipItem);
 
-            // ── 行走显示地图背景开关（胶水 2026-09-16：希望有个开关可以操作）──
+            // ── 播放音乐时加载地图（原「行走显示地图背景」；胶水 2026-09-24：移到🎵音乐下并改文案）──
             var mapBgItem = new MenuItem
             {
-                Header = "🗺️ 行走显示地图背景",
+                Header = "🗺️ 播放音乐时加载地图",
                 IsChecked = _configService.LoadSettings().WalkShowMapBackground,
                 ToggleType = Avalonia.Controls.MenuItemToggleType.CheckBox,
             };
@@ -387,7 +387,7 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MapBgToggle: {ex.Message}"); }
             };
-            _bgMenu.Items.Add(mapBgItem);   // 收进「🎨 背景」
+            musicMenu.Items.Add(mapBgItem);   // 收进「🎵 音乐」
             cm.Items.Add(new Separator());
             cm.Items.Add(exitItem);
         }
