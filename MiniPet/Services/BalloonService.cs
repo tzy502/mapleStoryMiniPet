@@ -195,9 +195,24 @@ namespace MiniPet.Services
                 // 且中央透明会让文字悬空（520 实测）。白底 + 深色字 = 可读。
                 colW = Math.Max(colW, Math.Max(80, wrapW));
                 colH = Math.Max(colH, Math.Max(20, lines.Count * (int)lineHeight + 10));
-                // 只撑尺寸，**不填白块**：填白会把气泡边框内侧的装饰盖成一整块矩形（胶水 2026-09-24 对比图）。
-                // SKBitmap 默认全透明 → 文字直接落在气泡自身的浅色中央上。
-                c = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
+                // 无中央瓦片的样式（WZ 实测：520 只有 nw/n/ne/w/e/sw/s/se，没有 c）：
+                // 9-slice 的标准兜底 = 用**上边瓦片的中间像素色**铺出中央底色（纯色，不会有重复装饰图案）。
+                // 之前填白块会把边框内侧装饰盖成矩形（胶水对比图）；纯透明则完全不像气泡（胶水 2026-09-24）。
+                SKColor centerColor = new SKColor(0xF2, 0xF2, 0xF5, 0xFF);
+                try
+                {
+                    if (n.Width > 0 && n.Height > 0)
+                    {
+                        centerColor = n.GetPixel(n.Width / 2, n.Height / 2);
+                    }
+                }
+                catch { }
+                var centerBmp = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
+                using (var ccv = new SKCanvas(centerBmp))
+                {
+                    ccv.Clear(centerColor);
+                }
+                c = centerBmp;
             }
             int colCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minW / (double)colW)) : 1;
             int rowCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minH / (double)colH)) : 1;
