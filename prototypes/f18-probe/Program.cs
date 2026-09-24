@@ -175,7 +175,8 @@ static class F18Probe
             }
             if (tiles == null) { Console.WriteLine("[balloon] → 无素材（ExtractBalloonTiles 返回 null）"); return; }
             var svc = new BalloonService(cache, Wz);
-            var png = svc.RenderBalloon("你好！我是 MiniPet 桌宠", new MiniPet.Models.BalloonData { Id = bid, Tiles = tiles, Clr = clr });
+            string btext = args.Length > 2 ? args[2] : "你好！我是 MiniPet 桌宠";
+            var png = svc.RenderBalloon(btext, new MiniPet.Models.BalloonData { Id = bid, Tiles = tiles, Clr = clr });
             Console.WriteLine($"[balloon] RenderBalloon → {(png == null ? "null" : png.Length + " bytes")}");
             if (png != null && png.Length > 0)
             {

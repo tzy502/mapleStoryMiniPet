@@ -697,9 +697,23 @@ public partial class PetWindow
         {
             if (_exprMenu == null) { return; }
             _exprMenu.Items.Clear();
+            // 表情菜单**始终显示**（胶水 2026-09-24：怪物/NPC 模式下整项消失，看着像"内容没了"）——
+            // 非纸娃娃模式给出说明项，而不是隐藏整项。
             var isSentinel = _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;
-            _exprMenu.IsVisible = isSentinel;
-            if (!isSentinel) { return; }
+            _exprMenu.IsVisible = true;
+            if (!isSentinel)
+            {
+                var tip = new MenuItem { Header = "（仅纸娃娃支持表情）", IsEnabled = false };
+                _exprMenu.Items.Add(tip);
+                var back = new MenuItem { Header = "切到纸娃娃" };
+                back.Click += (_, _) =>
+                {
+                    try { SwitchToPaperdoll(); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 切纸娃娃: {ex.Message}"); }
+                };
+                _exprMenu.Items.Add(back);
+                return;
+            }
 
             // 开关以**本地配置**为准：每次打开菜单同步一次（只读赋值，不触发落盘）
             try
