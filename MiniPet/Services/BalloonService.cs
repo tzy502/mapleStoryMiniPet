@@ -189,33 +189,26 @@ namespace MiniPet.Services
             int minH = Math.Max(40, lines.Count * (int)lineHeight);
             // 无中央瓦片的样式（如 520）：平铺会产生重复的边块 → 强制 1×1
             bool tiledCenter = tiles.C.Length > 1;
+            bool skipCenter = !tiledCenter;
             if (!tiledCenter)
             {
                 // 中央块按「文字所需尺寸」生成**白底**块：否则气泡太窄会把文字截断，
                 // 且中央透明会让文字悬空（520 实测）。白底 + 深色字 = 可读。
-                colW = Math.Max(colW, Math.Max(80, wrapW));
-                colH = Math.Max(colH, Math.Max(20, lines.Count * (int)lineHeight + 10));
-                // 无中央瓦片的样式（WZ 实测：520 只有 nw/n/ne/w/e/sw/s/se，没有 c）：
-                // 9-slice 的标准兜底 = 用**上边瓦片的中间像素色**铺出中央底色（纯色，不会有重复装饰图案）。
-                // 之前填白块会把边框内侧装饰盖成矩形（胶水对比图）；纯透明则完全不像气泡（胶水 2026-09-24）。
-                SKColor centerColor = new SKColor(0xF2, 0xF2, 0xF5, 0xFF);
-                try
-                {
-                    if (n.Width > 0 && n.Height > 0)
-                    {
-                        centerColor = n.GetPixel(n.Width / 2, n.Height / 2);
-                    }
-                }
-                catch { }
-                var centerBmp = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));
-                using (var ccv = new SKCanvas(centerBmp))
-                {
-                    ccv.Clear(centerColor);
-                }
-                c = centerBmp;
+                // 无 c 瓦片时——**完全按参考实现**：MapleSalon2 的 assets[4] 会退化成 Texture.EMPTY（1×1 透明），
+                // 于是 colWidth/colHeight = 1，addCenterTile 用 1px 网格平铺 EMPTY = **中央透明**（不填任何颜色）。
+                // （之前我填白块 / 填上边中点色都是自作聪明，反而和参考不一样；胶水 2026-09-24 两次对比图纠正。）
+                // 520 这类样式的 WZ 里根本没有 c（数据不完整）。严格照参考公式会退化：
+                // colWidth = EMPTY.width = 1 → colCount = 90 → top 行铺 90 个 n 瓦片 → 气泡超宽成 1316px
+                //（参考实现同样如此）→ 说明 MapleSalon2 也没法正常显示它们、更不可能是胶水截图那个气泡。
+                // 这里按「文字所需尺寸」当中央，colCount=rowCount=1，保证仍是一个尺寸正常的气泡。
+                colW = Math.Max(80, wrapW);
+                colH = Math.Max(20, lines.Count * (int)lineHeight + 10);
             }
-            int colCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minW / (double)colW)) : 1;
-            int rowCount = tiledCenter ? Math.Max(1, (int)Math.Ceiling(minH / (double)colH)) : 1;
+            // 参考实现只有**一套公式**（chatBalloonBackground.ts：ceil(minWidth/colWidth)，
+            // 无 c 时 colWidth 退化成 EMPTY 的 1）——之前给它加「无 c 就强制 1」的分支是错的，
+            // 会把中央区域算成 1×1 → 画布塌缩、文字溢出（胶水 2026-09-24 报）。
+            int colCount = Math.Max(1, (int)Math.Ceiling(minW / (double)colW));
+            int rowCount = Math.Max(1, (int)Math.Ceiling(minH / (double)colH));
 
             // origin-aware 拼装（MapleSalon2）：topOffset = max(nw.oy, n.oy)；leftOffset = nw.ox
             int topOffset = Math.Max(tiles.NWOrigin.Y, tiles.NOrigin.Y);
@@ -257,13 +250,26 @@ namespace MiniPet.Services
             // ⚠️ 参考实现用的是 **TilingSprite 平铺**（chatBalloonBackground.ts addCenterTile:
             //    `TilingSprite.from(assets[4])` + `setSize(w,h)`）——即按 colWidth×colHeight 网格**重复** c 瓦片，
             // 不是把一块 c 拉伸铺满（拉伸会把图案拉长，与游戏观感不同，胶水 2026-09-24 指出）。
-            for (int ty = 0; ty < rowCount; ty++)
+            if (skipCenter)
             {
-                for (int tx = 0; tx < colCount; tx++)
+                // 无 c：中央不画内容（参考语义 = Texture.EMPTY 平铺 = 透明），但**必须占位**——
+                // 否则 union 画布只按边框算尺寸，文字会溢出气泡（实测塌成 70×66）。
+                // 用实际尺寸的透明 bitmap 占位（1×1 不参与 bounds 计算）。
+                int cw = Math.Max(1, colW * colCount);
+                int ch = Math.Max(1, colH * rowCount);
+                var placeholder = new SKBitmap(cw, ch);
+                rects.Add((placeholder, leftOffset2, centerTop, leftOffset2 + cw, centerTop + ch, false));
+            }
+            else
+            {
+                for (int ty = 0; ty < rowCount; ty++)
                 {
-                    float cx0 = leftOffset2 + tx * colW;
-                    float cy0 = centerTop + ty * colH;
-                    rects.Add((c, cx0, cy0, cx0 + colW, cy0 + colH, false));
+                    for (int tx = 0; tx < colCount; tx++)
+                    {
+                        float cx0 = leftOffset2 + tx * colW;
+                        float cy0 = centerTop + ty * colH;
+                        rects.Add((c, cx0, cy0, cx0 + colW, cy0 + colH, false));
+                    }
                 }
             }
 

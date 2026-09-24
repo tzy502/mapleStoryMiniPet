@@ -181,7 +181,21 @@ static class F18Probe
             {
                 var f = System.IO.Path.Combine(OutDir, $"balloon_{bid}.png");
                 System.IO.File.WriteAllBytes(f, png);
-                Console.WriteLine($"  → balloon_{bid}.png");
+                // 另存一张合成到白底的（参考实现的预览背景是浅色，透明中央看起来才是"浅色底"）
+                using var bmp = SkiaSharp.SKBitmap.Decode(png);
+                if (bmp != null)
+                {
+                    using var onWhite = new SkiaSharp.SKBitmap(bmp.Width, bmp.Height);
+                    using (var cv = new SkiaSharp.SKCanvas(onWhite))
+                    {
+                        cv.Clear(SkiaSharp.SKColors.White);
+                        cv.DrawBitmap(bmp, 0, 0);
+                    }
+                    using var img2 = SkiaSharp.SKImage.FromBitmap(onWhite);
+                    using var d2 = img2.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+                    System.IO.File.WriteAllBytes(System.IO.Path.Combine(OutDir, $"balloon_{bid}_white.png"), d2.ToArray());
+                }
+                Console.WriteLine($"  → balloon_{bid}.png (+_white)");
             }
             return;
         }
