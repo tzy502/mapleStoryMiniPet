@@ -555,3 +555,173 @@ prototypes/map-slice/                AGENTS.md  CONTEXT.md  .tmp/
 - **跳跃高度分析（胶水问「跳抓 vs 普通跳谁高」）**：sdlMS 起跳速度统一 -555、重力 2000 → **跳高固定 77px，与移动无关**。跳抓的本质优势是**空中横移**（斜飞过绳边抓取），不是高度。
 - **移动跳抓落地**：抓取触发窗从「站在绳 x±25」放宽到 **±(25 + 125×0.5s≈87px)**——行走路过绳旁（不必站定）即自动起跳，vx 朝绳、空中每子步对齐（x±25 且 y ∈ 绳身）即 EnterRope。
 - 验证：build 0 错误，433 全绿；蚂蚁洞 Climbing 22→**31**（移动跳抓生效）；SleepyWood 树图由 Warp 传送承担上下覆盖（绳为非必经，合理）。
+
+### 7.27 气泡「炸了」排查 + 随机气泡开关（2026-09-16，未提交）
+
+- **随机气泡发言开关已落地**（胶水「右键设置里自选」）：
+  - 「💬 随机气泡发言」勾选项 → 移到**「切换气泡」下**（胶水指定位置），`PetSettings.RandomBalloonEnabled`（默认 true）持久化
+  - 三重防御：定时器停 + 气泡收起 + `TryShowRandomBalloon` 入口拦截；构造时按配置应用
+  - 「😊 随机表情」开关此前已存在（_exprMenu + RandomExpression 配置），本轮清理了我误加的重复接线
+- **气泡「炸了」（白框）排查结论**：
+  - 缓存瓦片**不是损坏文件**（520 号气泡 11 张瓦片全部为合法 32×32 PNG，今日 16:31 新种子）——已按授权清理 `~/Library/Caches/MiniPet/v1/balloons/`（下次运行自动重新提取）
+  - 白框气泡出现在**随机气泡已关闭**状态 → 非 TryShowRandomBalloon 路径；候选路径：`ShowBalloonNow(text)`（外部调用）或 `EffectLayerService` 状态气泡（:218）
+  - 白框内容「…x0」疑似文本渲染缺失/合成异常——**下一轮**：① 复现时抓 `RenderBalloon` 的输入（balloonId/text）与合成输出；② 排查 9-slice 合成的文本绘制层（字体/glyph 缺失会渲染空白）；③ 确认哪条 Show 路径弹的白框
+- GUI 当前由胶水自行启停；未 commit。
+
+### 7.28 椅子渲染参考实现（MapleSalon2 chair 模块精读，2026-09-16）
+
+参考代码：`/Users/a502/IdeaProjects/maplestory-wiki-backend/MapleSalon2/src/renderer/chair/`（chair.ts 1096 行 + chairGroupUtil.ts）。
+
+**椅子渲染本质（web 正确行为）**：
+1. **WZ 椅子数据 = `Item/Install/0301xx.img/{chairId}`**（getChairPath：Install 目录 8 位补零；非 Item/Special）。数据核心在 **info 节点**，含每个「座位组」的参数：
+   - `position {x,y}` = **人物坐在道具上的偏移坐标**（人物摆放依据——正是胶水指出「人物坐的地方不对」的数据源）
+   - `action`（默认 sit，可被 info.sitAction 覆盖，'hide'→sit）
+   - `expression`（info.sitEmotion/face）
+   - `removeBody`/`hideBody` = 变身椅隐藏人物身体（变身椅 3015632 大概率走这里）
+   - `tamingMobId` = 坐骑型椅子（有则强制 sit）
+   - `info.group` = 多座位分组（多人椅）；`lvChairInfo`/`customChair` = 其他型
+   - `z` = 人物与椅子的层级
+2. 椅子图形 = `{path}/0/{z 图层}` + `effect[0-9]?` 特效层（effectReg）
+3. **渲染组合**：椅子图层（z 排序）+ 人物 Character 以 gd.action（sit）渲染、position 偏移、expression（sitEmotion）、hideBody 时人物隐藏
+4. **cash 椅子 id ≥ 5204000 → Cash 目录**；其余 Install
+
+**MiniPet 实现任务（下一轮，对齐 web 逐字段）**：
+1. 修 WzService：`Item/Install/0301xx.img` 分片加载（当前 Item/Special 路径本来就错——正确目录是 **Install**）
+2. PaperdollService 椅子管线对齐 chairGroupUtil：position/action/expression/hideBody/z/flip 逐字段
+3. 3015632 预览 = 花田特效层 + 人物按 info.position 坐姿（sit）摆放
+4. 移除 TamingMob 错误回退（沙漏来源）
+
+### 7.29 椅子（变身椅）渲染修复 R-chair2（2026-10-10，未提交）
+
+**WZ 考证（f18-probe --chairdiag/--chairrender/--chairscan，全部实测）**：
+- **任务给的 3015632 在本 WZ ≠ 花田椅**：`Item/Install/030156.img/03015632` = **「和雪孩子一起」雪屋椅**
+  （info 仅 sitAction=stand1 + price 等；effect 10 帧 251×217 雪屋+雪孩+篝火场景图）。
+  web（KMS 数据）3015632 = 花田魔法椅——**同 id 不同道具**（国服本地化 id 漂移）。
+- **本 WZ 的花田椅 = `3019632「变出花田的魔法椅子」`**（`Item/Install/03019.img/03019632`）：
+  - info：**无 sitAction（→默认 sit）**、`bodyRelMove=(47,−2)`、`sitEmotion=14`、`removeEffect=1`、
+    `invisibleWeapon=1`、`invisibleCape=1`、collabo/noPrism/tradeBlock；**无 position 字段、无 removeBody、无 tamingMob**
+    （任务描述的 info.position 在 MapleSalon2 wz.ts 中不存在，人物摆放实际依据 = bodyRelMove）
+  - effect 12 帧（delay=210，origin≈(117,179)，帧级 z=0、节点级 **z=−1**、**pos=3**）+ effect2 1 帧（花横条，z=2 置顶）
+  - effect 帧图 = **整幅场景（花田+花瓣+特效自带的持杖坐姿女孩）**——web 观感的主角主要来自这层
+- 全表扫描（3114 把椅子）：bodyRelMove 49%、removeEffect 48%、invisibleWeapon 45%、tamingMob 34%、
+  removeBody 206 把、sitAction 552、sitEmotion 187、group 66、lvChairInfo 24、customChair 350
+- **分片真相**：Install 数据在 `Install_000.wz` 顶层（03010…03019 / 030150…030159 / 0302 / 0304…0399.img），**无 0301.img**；
+  3015xxx 按 id/100 分组（030156.img），3019632 按 id/1000（03019.img），3020+ 按 id/10000（0302.img）。
+  ChairRoot 运行时探测早已命中（7.19 的修复），「0301.img 加载不到」不是渲染错误根因。
+- **「带翅膀的金色沙漏」未在本 WZ 任何花田相关椅子数据中出现**（名字含 花田/沙漏 的椅子 effect 全部导出核对）；
+  疑为对 effect 场景图中「持杖女孩+金色法杖」的低分辨率误读或旧版渲染记忆。TamingMob 错误回退不存在
+  （`info/tamingMob` 探测只用于 pos==1 的 −30/−50 偏移选择）。
+- 探针曾见 ExtractPng 首调失败：**探针直读分片文件段污染 WzComparerR2 静态状态**（DefaultImgCheckDisabled 等）
+  的伪象——重排探针顺序后消失，主工程不受影响（GetBmp 也不缓存 null）。
+
+**渲染修复（MiniPet/Services/PaperdollService.cs，R-chair2）**：
+1. `ChairDataSnapshot` 缓存（bodyRelMove/sitEmotion/sitAction/removeBody/removeEffect 一次读取，热帧零锁）
+2. **effect 锚定偏移**（新纯函数 `ComputeChairEffectOffset`，对齐 ChairEffectPart×sitCharacter 相对关系）：
+   有 bm 且无 sitAction 且 pos<2 → 锚 navel 不动（effect 与人物 web 中一起平移）；pos==1 保留 −50；
+   其余（pos≥2 或有 sitAction）→ 锚 = navel − bm（3019632：**(−47,+2)**，人物坐进 WZ 指定坐标）；
+   无 bm pos==1 保持现状（tamingMob 且 id<3011000 → −30）；removeBody → +30（web 人物容器 y−30 的等效）
+3. **sitEmotion**：数字索引按 MapleSalon2 CharacterExpressionsOrder 查表（`ResolveChairSitEmotion`，14→glitter），
+   CollectPiecesForFrame 开头覆盖 expression（缓存 key 同步），脸型走 glitter 表情
+4. **removeBody（变身椅，206 把）**：人物部件全隐藏只留椅子层（对齐 gd.hideBody→isHideBody）
+5. **removeEffect**：装备特效全隐（对齐 ChairTab useCharacterEffectVisible）；invisibleWeapon/invisibleCape
+   web 端 getter 无消费者——不实现
+6. **素材浏览器椅子 icon**（MaterialBrowserWindow.Logic.ChairIconRoot）：原恒用 0301.img（本 WZ 无）→
+   icon 全失败；改按 id 分组（3015xxx→id/100，3020+→id/10000，其余→id/1000），与 ChairRoot 首选一致
+
+**验证（真实运行）**：
+- 3019632：人物 sit 坐姿**右移 47px 坐进花田**（修复前压在特效人物下方）+ **glitter 星星眼**（修复前默认脸）
+  + removeEffect 生效；out/chairrender_3019632_sit_0_3x.png
+- 3015812（变身椅）：人物隐藏只留花丛场景；3010205（普通椅 bm=(0,−14) pos=0）：与修复前逐像素同尺寸零回归；
+  3015632（雪屋椅无 bm）：渲染尺寸/origin 与修复前完全一致
+- build：MiniPet 0 错误；test：**445 全绿**（433 基线 + 9 R-chair2 + 3 icon 分组新断言）
+- 探针：--chairdiag（数据树 dump+effect 导出）、--chairrender（PaperdollService 真渲染复现）、
+  --chairscan（3114 椅 info 字段全表统计）
+
+### 7.30 椅子层抖动修复 + 验证方法记录（2026-09-16，未提交）
+
+- **抖动根因链**：①椅子/特效层合成锚 = body 当前帧 navel（呼吸 3 帧 navel 变 ±8px）→ 锚定层循环抖动；②冻结字典 key 用 PiecePath（含 effect 帧号）→ effect 动画帧间路径不同 → 冻结 miss。
+- **修复**：①合成时 chair/effect 部件**位置冻结+减数配对**（FinalX/Y 与 body 锚 bx/by 首次合成时整体缓存，后续帧恒定恢复——`_chairFrozenPos` 四元组）；②frozen key 改 **ZIndex**（每层稳定，PiecePath 跨动画帧会 miss）。
+- **验证方法教训**：effect 是 15 帧动画（雪花/篝火），像素 diff 无法区分「正常动画」与「椅子层位移」——静态 PNG 对比法失效，**需实机观察**（或对 chair 基础层单独渲染对比——探针 out/ 下有分层输出 `chairrender_3019764_sit_0.png`（chair 层）与 `_3x.png`（含 effect））。
+- 验证：build 0 错误，**445 passed / 0 failed**。
+
+### 7.31 「sceneObj 固定基准」实验回退（2026-09-16，未提交）
+
+- 胶水实测「花田被改出问题」→ **回退合成循环的 sceneObj 固定基准锚实验**（fx/fy/frame0 锚 + frozen 三元组画位），恢复原合成（全部部件统一 bx/by + mv）。
+- 保留：`_chairFrozenPos` 字典与 GetBodyFrameAnchor helper（不再被合成消费，供下轮参考）；跳抓/绳窗口/Warp/退图顺序等其余修复不受影响。
+- 445 全绿保持。呼吸抖动问题的正确修法需先精读 MapleSalon2 的坐标分层语义（effect position 与 body navel 的关系），下轮专门做。
+
+### 7.32 位置冻结实验回退（2026-09-16，胶水实测「还在抖动」）
+
+- **回退**：`_chairFrozenPos` 位置冻结实验（FinalX 恢复为帧 0 值但减数 bx 随呼吸帧变 → 不匹配组合 = 抖动根源）。恢复原始合成（FinalX 链式每帧 + bx 每帧 → 椅子跟 body 呼吸一致摆，自然）。
+- 验证：build 0 错误、445 全绿、蚂蚁洞 300↔301 互穿+爬绳 330 帧、105010300 全图渲染正常（探针 --full）。
+- GUI 已重启（胶水实测）。
+
+### 7.33 枫树山丘 10000 渲染失败复现（2026-09-16，未修）
+
+- **胶水实测**：背景设置页选「枫树山丘 [10000]」→ 黑屏 +「⚠️ 地图渲染失败」。
+- **探针复现**：`--full 10000` → 渲染成功但输出**纯黑单色图**（800×1050，颜色数=1）；`--thumb 10000` → **LoadMap OK 但 Footholds=0 段**、CompositeMapThumbnail 返回 1159B（近空）。
+- **根因方向**：10000 是 **5 位短 id**——`GetMapWzPath` 按首字符选分片（'1'→Map1），加载「成功」但内容不完整（段0）。5 位短 id 的分片定位/加载处理需专项修（历史遗留，非本轮引入——附带发现工具：`--thumb <mapId>` 复刻设置页渲染路径、`--reach/--navel` 诊断命令已入探针）。
+- 注意：10000 与行走遍历无关（行走图集为 9 位 id），此为背景设置页功能缺陷。
+
+### 7.34 枫树山丘 10000 根因定位（2026-09-16，未修）
+
+- **String 表实锤**：`--findmap` 按 id/name 扫 String/Map.img → **「枫树山丘 = 10000」（5 位短 id）**，另有 110000 同名。
+- **加载缺陷复现**：`--thumb 10000` → LoadMap「成功」但 **Footholds=0**、CompositeMapThumbnail 输出 1159B 近空 → 设置页黑屏+「地图渲染失败」。
+- **根因方向**：`GetMapWzPath` 按首字符选分片（'1'→Map1）且按散 img 探测——**5 位短 id 的 img 打包在 Map0.wz 等分片 wz 内**（非散文件），当前加载路径探测不到 → 返回空壳 map。
+- **修法（下轮）**：LoadMapCore 对 9 位补零路径 miss 时，回退尝试「短 id 原样」与「其他分片 wz 包内」的 img 节点解压（走 GetExtractedImgNode 同口径）；或预建「短 id → 实际分片」探测。附带：探针新增 `--findmap <关键词>`（按名称找图）、`--reach`、`--navel`、`--thumb`、`--route` 诊断命令。
+
+### 7.35 椅子特效动画不流畅修复（2026-09-16，未提交）
+
+- **根因**：`effectFrame = Math.Min(frame, effectFrames-1)`——椅子特效帧号直接**绑 body 动画帧号**：
+  - body stand1 3 帧 × ~100ms = 300ms/圈，effect 12 帧（WZ delay 110ms/帧 ≈1.3s/圈）→ **播放加速 4 倍**、帧间跳变不均 = 不流畅
+  - 坐姿（sit 单帧）时 frame 恒 0 → 特效完全静止
+- **修复**：椅子特效**独立 delay 时钟**（`AdvanceChairEffectClock`）——effect 帧按 WZ 自带 delay 推进（`{eff}/{frame}/delay`，缺省 110ms 对齐 MapleSalon2/WzComparerR2），循环播放；切椅子/特效层重置时钟；带 delay 缓存（`_chairEffectDelayCache`）。
+- 验证：build 0 错误，**445 passed / 0 failed**。
+
+### 7.36 椅子特效 delay 三修（2026-09-16，未提交）
+
+- **WZ 实测**：花田椅 3019632 effect 12 帧每帧 delay=210ms（明确配置，非缺省）。
+- **三连修**：
+  1. 独立 delay 时钟 v1：`_chairEffectClockUtc = now` **漏加 delay** → 每 33ms UI 帧都推进 = 闪烁；
+  2. 预览/主窗口共享 PaperdollService 时钟被双重推进 → 快进乱跳；
+  3. 无状态分片改 `DateTime.UtcNow.Ticks`（Windows 精度 ~15.6ms）→ 帧切换时机跳变 = 卡顿。
+- **最终版**：无状态时间分片 + 高精度时钟 `Environment.TickCount64 % total`（幂等、无时钟竞争、无精度跳变）；缺失帧自动跳过。
+- 验证：build 0 错误，445 passed / 0 failed。
+
+### 7.37 椅子特效动画「卡顿不播放」真根因：sources 缓存冻结时间片（2026-10-14，未提交）
+
+- **现象**：3019632 花田椅坐下后特效不动/偶尔跳帧（§7.35/7.36 的 delay 时钟修了时序，但没修到病根）。
+- **实证**：新探针 `--chairanim <itemId> [action] [frame]`——同一 (action, frame) 350ms 间隔连续渲染 8 次
+  （3019632 单帧 delay=210ms，2.8s 跨 ~13 个时间片）：**修前 8 帧 PNG md5 全同 = 冻结实锤**。
+- **根因**：`CollectPiecesForFrame` 的 sources 缓存 key = `hash|action|frame|expression` **无时间维度**，
+  而椅子特效帧号是 §7.36 改的「无状态时间分片」——首帧算好存进缓存后，后续全部命中旧时间片：
+  - sit 单帧动作（key 恒定）→ 特效**永久静止**；
+  - stand1 三帧循环 → 只在 body 换帧/表情变化时 key 变 → 特效**随机跳变**（卡顿感）。
+- **对照参考实现**：MapleSalon2 `BaseAnimatablePart` 挂 pixi Ticker 连续推进（每帧 delay 独立、位置每帧
+  重算 −origin），渲染列表从不按动作帧缓存；minipet-esp32 服务端 `Math.Min(frame,…)` 的帧号由外部
+  调用方持续递增——两者特效播放都与缓存无关。MiniPet 时序逻辑已对齐，缺的只是让缓存感知时间。
+- **修复**（MiniPet/Services/PaperdollService.cs）：
+  1. `CollectPiecesForFrame`：带椅子时把各特效层当前时间片帧号编进缓存 key（`|cf0.3.7`）；
+     帧号本调用内一次计算（`ComputeCurrentChairFrames`）并传参 `AddChairPieces` → key 与部件路径同源不漂移；
+     无多帧层的椅子 key 保持原样（不引入时间维度）。热路径零 WZ 锁（帧数/delay 全走缓存）。
+  2. `GetBounds` 改 `sampleAllChairFrames: true`（key 后缀 `|cfall`）：椅子特效 **union 全部帧**——
+     3019632 各帧 241x173~207、origin y 160~194 均不等，按单帧采样其他帧会裁边/画布随时间抖。
+  3. `WarmupFor`：带椅子时追加预热 `sit` 动作 + chair 类部件位图预解码（All 模式顺带预解码全部
+     特效帧，切椅子首帧不触发 12 帧冷解码持锁）。
+- **验证**：build 0 错误；**445 passed / 0 failed**；`--chairanim 3019632 stand1 0` 修后 8 帧 8 个相位
+  （花瓣逐帧飘动、人物位置稳定无层抖，out/chairanim_3019632_*.png）。
+- **遗留提示**：离线条（BuildOfflineStrips）仍烘焙当前时间片（离线兜底为静态图，可接受）；
+  装备节点级特效（AddEquipEffectPieces）传原始帧号，坐姿时同样冻结——本轮不动，下轮如需再对齐。
+
+### 7.38 椅子动画缓存修复验证 + 摄像机排查 + 历史菜单中文缺失修复（2026-10-14，未提交）
+
+- **§7.37 实机验证**：胶水确认椅子动画恢复（此前「没看到区别」是旧进程未重启——运行中进程不热加载新二进制，改完必须重启 app）。
+- **摄像机「无法关闭/大小不生效」排查**：三层验证（Avalonia 12.1 最小复现 app：Hide/resize 正常；真实 app 钩子自动驱动 开→缩放→关：原生窗口状态经 CGWindowList 外部确认全部生效；入口/事件链审查无缺陷），用户配置 mapId=10000 + mapMode=2 + 600×450 下全程零异常——**未发现代码缺陷**，胶水重启后自愈（疑似旧进程/旧二进制状态）。排查用临时钩子与 [BgDiag] 日志已全部移除。
+- **历史菜单中文缺失修复**（截图：历史项显示 `10000 [10000]`）：
+  - **根因**：settings.json mapHistory 存量坏数据——`Name` 字段存成了 id 本身（10000/1000000），展示链路「Name 非空即用」→ 中文永远不查。WZ 数据本身完好（`String/Map.img/maple/10000` = 彩虹岛：枫树山丘，短 id **不补零** key，探针 --namediag 实测）。
+  - **修复**：
+    1. `MapCatalogService.GetMapName` 短 id 双查：miss 时试 `PadLeft(9)` 与 `TrimStart('0')`（key 格式随 WZ 版本差异）；
+    2. 新纯函数 `MapCatalogService.ResolveDisplayName(id, storedName, lookup)`：存量名有效（非空、≠id、非 map_ 哨兵）→ 用存量；否则查缓存；全失败回退 `storedName ?? id`（WzService 转发）；
+    3. 应用 5 处：右键菜单历史项 / 设置历史列表 / 设置历史点击 / BgApplySelection / **ApplyMapSelection 写历史前重解析**（坏数据不再自我延续）。
+  - **验证**：--namediag 端到端（短 id/9 位补零/坏存量名 三形态全部返回中文名）；build 0 错误；**450 passed / 0 failed**（新增 MapDisplayNameTests 5 断言）。
+- 探针新增：`--namediag`（地图名考证）。

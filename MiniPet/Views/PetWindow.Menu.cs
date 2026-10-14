@@ -172,6 +172,25 @@ public partial class PetWindow
                 try { ShowSettingsWindow(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonSettings: {ex.Message}"); }
             };
+            // ── 💬 随机气泡发言开关（胶水 2026-09-16：放在「切换气泡」下）──
+            var balloonToggle = new MenuItem
+            {
+                Header = "💬 随机气泡发言",
+                IsChecked = _configService.LoadSettings().RandomBalloonEnabled,
+                ToggleType = Avalonia.Controls.MenuItemToggleType.CheckBox,
+            };
+            balloonToggle.Click += (_, _) =>
+            {
+                try
+                {
+                    bool newVal = !_configService.LoadSettings().RandomBalloonEnabled;
+                    _configService.UpdateSettings(st => st.RandomBalloonEnabled = newVal);
+                    balloonToggle.IsChecked = newVal;
+                    ApplyRandomBalloonEnabled(newVal);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonToggle: {ex.Message}"); }
+            };
+            appearanceMenu.Items.Add(balloonToggle);
             appearanceMenu.Items.Add(balloonItem);
 
             // ── 🎵 迷你控制条（音乐模块 V0.2.1）：开关勾选项，控制 B2 的 MusicMiniBarWindow 显隐；
@@ -393,6 +412,7 @@ public partial class PetWindow
             };
             appearanceMenu.Items.Add(flipItem);
 
+
             // ── 播放音乐时加载地图（原「行走显示地图背景」；胶水 2026-09-24：移到🎵音乐下并改文案）──
             var mapBgItem = new MenuItem
             {
@@ -411,6 +431,7 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MapBgToggle: {ex.Message}"); }
             };
             musicMenu.Items.Add(mapBgItem);   // 收进「🎵 音乐」
+
             cm.Items.Add(new Separator());
             cm.Items.Add(exitItem);
         }
@@ -935,8 +956,10 @@ public partial class PetWindow
                 foreach (var entry in recents)
                 {
                     var captured = entry;
-                    var name = !string.IsNullOrEmpty(entry.Name) ? entry.Name
-                        : (_wzService.IsLoaded ? _wzService.GetMapName(entry.Id) : entry.Id);
+                    // 存量名 == id / map_ 哨兵 → 重新查缓存（修「历史菜单中文缺失」，如 10000/1000000）
+                    var name = _wzService.IsLoaded
+                        ? _wzService.ResolveDisplayName(entry.Id, entry.Name)
+                        : (!string.IsNullOrEmpty(entry.Name) ? entry.Name : entry.Id);
                     var item = new MenuItem { Header = $"🗺️ {name} [{entry.Id}]" };
                     item.Click += (_, _) => ApplyMapSelection(new MapSelection(captured.Id, name, captured.CropX, captured.CropY, captured.CropW, captured.CropH));
                     _bgMenu.Items.Add(item);

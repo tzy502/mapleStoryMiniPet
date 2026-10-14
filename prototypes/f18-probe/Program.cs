@@ -109,6 +109,72 @@ static class F18Probe
             Console.WriteLine($"[route] {from} → {to}：{string.Join(" → ", path)}（扫描 {visited} 图）");
             return;
         }
+        if (args[0] == "--thumb")
+        {
+            // --thumb <mapId>：复刻设置页 BgRenderPreview 的渲染路径（LoadMap + CompositeMapThumbnail）
+            var cache = new CacheManager();
+            var mapService = new MapService(Wz, cache);
+            try
+            {
+                var map = mapService.LoadMap(args[1]);
+                Console.WriteLine($"[thumb] LoadMap: {(map != null ? $"OK 段{map.Footholds.Count} back={map?.Backs?.Count ?? 0}" : "null")}");
+                var png = map != null ? mapService.CompositeMapThumbnail(map, 800, 600) : null;
+                Console.WriteLine($"[thumb] CompositeMapThumbnail: {(png != null ? $"OK {png.Length}B" : "null ← 渲染失败复现")}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[thumb] 异常: {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
+            return;
+        }
+        if (args[0] == "--findmap")
+        {
+            // --findmap <关键词>：按名称找地图 id（经 MapCatalogService）
+            var cache = new CacheManager();
+            var catalog = new MapCatalogService(Wz, cache);
+            var found = catalog.FindMapsByName(args[1]);
+            foreach (var (id, name) in found.Take(10))
+            {
+                Console.WriteLine($"[findmap] {id} : {name}");
+            }
+            Console.WriteLine($"[findmap] 共 {found.Count} 张");
+            return;
+        }
+        if (args[0] == "--imgprobe")
+        {
+            // --imgprobe <mapId>：按不同补零/分片组合探测 img 节点（GetExtractedImgNode 同口径）
+            var cache = new CacheManager();
+            var mapSvc = new MapService(Wz, cache);
+            var mapId = args[1];
+            var candidates = new[]
+            {
+                $"Map/Map/Map{mapId[0]}/{mapId}.img",
+                $"Map/Map/Map{mapId[0]}/{mapId.PadLeft(9, '0')}.img",
+                $"Map/Map/Map{mapId.PadLeft(9, '0')[0]}/{mapId.PadLeft(9, '0')}.img",
+            };
+            foreach (var path in candidates.Distinct())
+            {
+                var node = Wz.FindNodeByPath(path);
+                var img = node?.GetValue<Wz_Image>();
+                bool ok = img != null && img.TryExtract();
+                Console.WriteLine($"[imgprobe] {path} → 节点={node != null} 解压={ok}");
+            }
+            return;
+        }
+        if (args[0] == "--navel")
+        {
+            // --navel <bodyImg> <action>：读各帧 map.navel（WzService 同口径）
+            var wz2 = Wz;
+            var action = args[2];
+            for (int fr = 0; fr < 5; fr++)
+            {
+                var nx = wz2.FindNodeByPath($"Character/{args[1]}/{action}/{fr}/map/navel")?.GetValueEx<WzComparerR2.WzLib.Wz_Vector>(null);
+                if (nx == null) { Console.WriteLine($"frame {fr}: (无)"); continue; }
+                Console.WriteLine($"frame {fr}: navel=({nx.X},{nx.Y})");
+            }
+            return;
+        }
         if (args[0] == "--reach")
         {
             var cache = new CacheManager();
@@ -208,6 +274,18 @@ static class F18Probe
                 }
                 Console.WriteLine($"  → balloon_{bid}.png (+_white)");
             }
+            return;
+        }
+        if (args[0] == "--chairdiag") { ChairDiag.Run(Wz, OutDir, args.Length > 1 ? args[1] : "3015632"); return; }
+        if (args[0] == "--chairrender") { ChairRenderDiag.Run(Wz, OutDir, args.Length > 1 ? args[1] : "3015632"); return; }
+        if (args[0] == "--chairscan") { ChairScanDiag.Run(Wz, OutDir); return; }
+        if (args[0] == "--namediag") { NameDiag.Run(Wz, OutDir); return; }
+        if (args[0] == "--chairanim")
+        {
+            ChairAnimDiag.Run(Wz, OutDir,
+                args.Length > 1 ? args[1] : "3019632",
+                args.Length > 2 ? args[2] : "stand1",
+                args.Length > 3 && int.TryParse(args[3], out var cf) ? cf : 0);
             return;
         }
         if (args[0] == "--expr") { ExprDiag.Run(Wz, OutDir); return; }

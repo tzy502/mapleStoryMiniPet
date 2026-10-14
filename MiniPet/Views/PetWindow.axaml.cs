@@ -705,6 +705,16 @@ public partial class PetWindow : Window
             // 随机气泡（2026-08-15 恢复）：仅 Agent 空闲（Idle）时触发，随机 3~8s 间隔；
             // Agent 执行任务时（Run/Review/Wave 等）状态气泡优先，不打扰。
             _balloonTimer.Tick += (_, _) => TryShowRandomBalloon();
+            // 随机气泡持久化开关（胶水 2026-09-16）：构造时应用
+            try
+            {
+                if (!_configService.LoadSettings().RandomBalloonEnabled)
+                {
+                    _balloonTimer.Stop();
+                    Console.Error.WriteLine("[PetWindow] 随机气泡发言：已按配置关闭");
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 读开关配置: {ex.Message}"); }
             _balloonTimer.Start();
             ScheduleRandomBalloon();
 
@@ -773,6 +783,8 @@ public partial class PetWindow : Window
 
     private async void TryShowRandomBalloon()
     {
+        // 随机气泡发言开关（胶水 2026-09-16）：关 = 不弹（定时器可能被托盘恢复等路径重启）
+        if (!_configService.LoadSettings().RandomBalloonEnabled) { return; }
         try
         {
             // Agent 非空闲（干活中）：状态气泡优先，不发随机气泡。
@@ -2003,6 +2015,21 @@ public partial class PetWindow : Window
 
     /// <summary>是否纸娃娃桌宠（哨兵 mobId = __paperdoll__ 即纸娃娃；mob/NPC 不参与跟随队列）。</summary>
     private bool IsPaperdollPet() => IsSentinelActive();
+
+    /// <summary>应用随机气泡发言开关：关 = 停随机气泡定时器并收起气泡；开 = 重启调度。</summary>
+    public void ApplyRandomBalloonEnabled(bool enabled)
+    {
+        if (enabled)
+        {
+            if (_balloonTimer != null && !_balloonTimer.IsEnabled) { _balloonTimer.Start(); }
+            ScheduleRandomBalloon();
+        }
+        else
+        {
+            _balloonTimer?.Stop();
+            try { _balloonWindow.HideBalloonWindow(); } catch { }
+        }
+    }
 
     /// <summary>
     /// 行走跟随（胶水 2026-09-16「多纸娃娃时子桌宠跟随主宠」指音乐播放时）：

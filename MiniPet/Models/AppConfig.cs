@@ -71,6 +71,8 @@ namespace MiniPet.Models
         public List<MapHistoryEntry> MapHistory { get; set; } = new List<MapHistoryEntry>();
         /// <summary>行走模式显示地图背景（胶水 2026-09-16：加开关可操作；关 = 只有人物在桌面走，无地图窗口）。默认开。</summary>
         public bool WalkShowMapBackground { get; set; } = true;
+        /// <summary>随机气泡发言开关（Agent 空闲时的随机聊天气泡）。默认开（现状行为）。</summary>
+        public bool RandomBalloonEnabled { get; set; } = true;
 
         /// <summary>窗口置顶（默认开）。关掉后桌宠会被其它窗口盖住。</summary>
         public bool Topmost { get; set; } = true;

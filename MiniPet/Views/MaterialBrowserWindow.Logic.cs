@@ -536,7 +536,8 @@ public partial class MaterialBrowserWindow
         }
     }
 
-    /// <summary>分类 → WZ img 根路径（icon 提取用；纸娃娃部件按 8 位补零，椅子在 Install/0301.img 下）。纯函数，可单测。</summary>
+    /// <summary>分类 → WZ img 根路径（icon 提取用；纸娃娃部件按 8 位补零）。纯函数，可单测。
+    /// 椅子分组见 ChairIconRoot。</summary>
     internal static string? CategoryWzRoot(string category, string id)
     {
         return category switch
@@ -554,9 +555,27 @@ public partial class MaterialBrowserWindow
             "披风" => $"Character/Cape/{id.PadLeft(8, '0')}.img",
             "面饰" or "眼饰" or "耳环" => $"Character/Accessory/{id.PadLeft(8, '0')}.img",
             "坐骑" => $"Character/TamingMob/{id.PadLeft(8, '0')}.img",
-            "椅子" => $"Item/Install/0301.img/{id.PadLeft(8, '0')}",
+            "椅子" => ChairIconRoot(id),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// 椅子 id → Item/Install 分组 img 路径（R-chair2，2026-10-10 修：原恒用 0301.img，但本 WZ
+    /// （Install_000.wz 分片）无 0301.img → 素材浏览器椅子 icon 全部提取失败（列表有名字无图）。
+    /// probe 实测分组：3010xxx-3014xxx 与 3016xxx-3019xxx 按 id/1000（03010.img…03019.img）、
+    /// 3015xxx 按 id/100（030150.img…030159.img）、3020000+ 按 id/10000（0302.img）——
+    /// 与 PaperdollService.ChairRoot 候选序的首选一致。</summary>
+    internal static string ChairIconRoot(string id)
+    {
+        if (!int.TryParse(id, out var n) || n <= 0)
+        {
+            return $"Item/Install/0301.img/{id.PadLeft(8, '0')}";
+        }
+        string node = n.ToString("D8");
+        string img = (n >= 3015000 && n < 3016000) ? $"{n / 100:D6}"
+            : (n >= 3020000 ? $"{n / 10000:D4}" : $"{n / 1000:D5}");
+        return $"Item/Install/{img}.img/{node}";
     }
 
     /// <summary>

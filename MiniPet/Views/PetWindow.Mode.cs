@@ -296,7 +296,9 @@ _configService.Update(st =>
                 st.MapMode = 1; // 应用地图 = 静态模式
                 st.CropX = sel.CropX; st.CropY = sel.CropY; st.CropW = sel.CropW; st.CropH = sel.CropH;
                 st.MapHistory.RemoveAll(x => x.Id == sel.Id);
-                st.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = sel.Name, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
+                // 写历史前重解析名字（存量坏数据 sel.Name==id 会被洗成 WZ 中文名，修「历史菜单中文缺失」）
+                var resolvedName = _wzService.ResolveDisplayName(sel.Id, sel.Name);
+                st.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = resolvedName, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
                 if (st.MapHistory.Count > 10) { st.MapHistory = st.MapHistory.Take(10).ToList(); }
             });
             // 场景联动（F17，设计 §11.10）：地图切换成功后通知音乐服务（fire-and-forget 后台任务，

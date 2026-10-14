@@ -589,8 +589,11 @@ public partial class MapService
 
     public static string GetMapWzPath(string mapId)
     {
-        var prefix = !string.IsNullOrEmpty(mapId) ? mapId[0] : '0';
-        return $"Map/Map/Map{prefix}/{mapId}.img";
+        // 胶水 2026-09-16「往 1 前面补 0 让长度一样」：短 id（如枫树山丘 10000）补 0 到 9 位
+        // → 000010000，分片按补零后的首字符选（'0'→Map0）。原样首字符会把短 id 错选到 Map1（段0 → 黑屏/渲染失败）。
+        var padded = !string.IsNullOrEmpty(mapId) ? mapId.PadLeft(9, '0') : "000000000";
+        var prefix = padded[0];
+        return $"Map/Map/Map{prefix}/{padded}.img";
     }
 
     /// <summary>

@@ -579,7 +579,10 @@ public partial class SettingsWindow
         _bgHistoryList.ItemTemplate = new FuncDataTemplate<MapHistoryEntry>((data, _) =>
         {
             if (data == null) return new StackPanel();
-            var name = !string.IsNullOrEmpty(data.Name) ? data.Name : data.Id;
+            // 存量名 == id / map_ 哨兵 → 重新查缓存（修「历史列表中文缺失」）
+            var name = _wzService.IsLoaded
+                ? _wzService.ResolveDisplayName(data.Id, data.Name)
+                : (!string.IsNullOrEmpty(data.Name) ? data.Name : data.Id);
             var cropTxt = (data.CropW > 0 && data.CropH > 0) ? $"{data.CropW}×{data.CropH}" : "整图";
             return new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2),
                 Children = {
@@ -595,7 +598,10 @@ public partial class SettingsWindow
     {
         try
         {
-            var name = !string.IsNullOrEmpty(e.Name) ? e.Name : (_wzService.IsLoaded ? _wzService.GetMapName(e.Id) : e.Id);
+            // 存量名 == id / map_ 哨兵 → 重新查缓存（修「历史项中文缺失」）
+            var name = _wzService.IsLoaded
+                ? _wzService.ResolveDisplayName(e.Id, e.Name)
+                : (!string.IsNullOrEmpty(e.Name) ? e.Name : e.Id);
             var sel = new MapSelection(e.Id, name, e.CropX, e.CropY, e.CropW, e.CropH);
             _selectedMapId = e.Id;
             if (_mapNameLabel != null) _mapNameLabel.Text = $"{name}  [{e.Id}]";
@@ -1002,7 +1008,8 @@ public partial class SettingsWindow
             cw = vw; ch = vh;
         }
         var entry = _bgAllMaps.FirstOrDefault(m => m.Id == _selectedMapId);
-        var name = entry?.Name ?? _selectedMapId;
+        // 存量名无效（空/==id/map_ 哨兵）→ 重新查缓存；全失败回退 id（不再把裸 id 当「好名字」写进历史）
+        var name = _wzService.ResolveDisplayName(_selectedMapId, entry?.Name);
         _pendingMapSelection = new MapSelection(_selectedMapId, name, cx, cy, cw, ch);
         OnBackgroundMapApplied?.Invoke(_pendingMapSelection);
         if (_statusBarText != null) _statusBarText.Text = "已应用到主窗口";

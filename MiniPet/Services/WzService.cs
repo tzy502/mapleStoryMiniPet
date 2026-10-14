@@ -1043,8 +1043,10 @@ namespace MiniPet.Services
 
         public string GetMapWzPath(string mapId)
         {
-            var prefix = !string.IsNullOrEmpty(mapId) ? mapId[0] : '0';
-            return $"Map/Map/Map{prefix}/{mapId}.img";
+            // 胶水 2026-09-16「往 1 前面补 0 让长度一样」：短 id 补 0 到 9 位再选分片（同 MapService 口径）
+            var padded = !string.IsNullOrEmpty(mapId) ? mapId.PadLeft(9, '0') : "000000000";
+            var prefix = padded[0];
+            return $"Map/Map/Map{prefix}/{padded}.img";
         }
 
         // 信息源路径（origin/delay/动作结构全在 {type}/{id}.img；_Canvas 只是 PNG 仓库，经 outlink 跳转）
@@ -1324,6 +1326,9 @@ namespace MiniPet.Services
 
         /// <summary>取地图显示名（转发 MapCatalogService，未命中回退 map_{id}）。</summary>
         public string GetMapName(string mapId) => _mapCatalog.GetMapName(mapId);
+
+        /// <summary>地图显示名解析（存量名 == id / map_ 哨兵视为无效，重新查缓存——修历史菜单中文缺失）。</summary>
+        public string ResolveDisplayName(string mapId, string? storedName) => _mapCatalog.ResolveDisplayName(mapId, storedName);
 
         /// <summary>
         /// 后台构建地图目录缓存（转发 MapCatalogService，单飞 + 版本化）：LoadWz 成功后触发。
