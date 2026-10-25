@@ -4,7 +4,7 @@
 
 数据直接读取本地 WZ 客户端文件，**完全离线可用**。MIT 协议开源。
 
-> **V0.1.0** — 首个对外发布版本（2026-10）：多桌宠 / 音乐播放 / 桌面行走 / 椅子坐骑 / 地图背景，Win + Mac 发布包均为**无 AI 纯净版**
+> **V0.1.0** — 首个对外发布版本（2026-10）：多桌宠 / 音乐播放 / 桌面行走 / 椅子坐骑 / 地图背景
 
 ## 📥 下载
 
@@ -16,7 +16,7 @@
 | macOS Apple Silicon | `MiniPet-<版本>-macos-arm64.zip` | 解压得 `MiniPet.app`，首次运行**右键 → 打开** |
 | macOS Intel | `MiniPet-<版本>-macos-x64.zip` | 同上 |
 
-发布包均为**纯净版（NO_AI 编译）**：不含任何 AI 功能、无网络连接、无文件监控；也不含任何游戏数据——首次启动需在设置页配置你自己的冒险岛 WZ 客户端目录（见下方「首次配置」）。
+发布包不含游戏数据——首次启动需在设置页配置你自己的冒险岛 WZ 客户端目录（见下方「首次配置」）。
 
 ## ✨ 功能简介
 
@@ -46,14 +46,10 @@
 - 怪物 / NPC / 纸娃娃部件全量浏览（分类树：👾 素材组 + 🧍 纸娃娃组）
 - 中文名检索、分页跳转、穿身上实时预览、应用到主窗口
 
-### 🤖 Agent 观察（仅源码构建）
-- 订阅 DSH / Hermes / Claude Code / Codex 实时状态，桌宠以气泡/动作反映 agent 干活过程
-- **官方发布包均为纯净版（`-p:MiniPetNoAi=true` 编译），不含任何 AI 功能**，纯桌宠即开即用；需要 Agent 观察请自行从源码构建（默认构建即含）
-
 ## 🚀 快速开始
 
 ### 环境要求
-- 使用发布包：无需安装任何运行时（self-contained，含 .NET）
+- 使用发布包：无需安装任何运行时
 - 从源码构建：.NET 9 SDK
 - 冒险岛客户端 WZ 数据目录（`Character.wz` / `Mob.wz` / `Map.wz` 等拆包文件，**发布包不含游戏数据**）
 
@@ -76,13 +72,12 @@ dotnet run --project MiniPet/MiniPet.csproj
 
 地图缓存到本地（macOS `~/Library/Caches/MiniPet`，Windows `%LOCALAPPDATA%\MiniPet\cache`），二次加载秒开。
 
-### 发布包（纯净版，Win / Mac 通用说明）
+### 发布包说明
 
-- 全部官方发布包以 `-p:MiniPetNoAi=true` 纯净版编译：**无 AI 功能、无网络连接、无文件监控**
 - **配置与日志与程序同目录**（`settings.json` / `wz-config.json` / `MiniPet.log`）——整个文件夹拷走即带走配置
-- 桌宠不进任务栏（Windows）/ 默认显示 Dock 图标（macOS，桌宠右键菜单「🚢 Dock 图标」可切回隐藏）；托盘（状态栏）Slime 图标常驻；设置中心正常显示
+- 桌宠不进任务栏（Windows）；macOS Dock 默认显示图标（桌宠右键菜单「🚢 Dock 图标」可切回隐藏）；托盘（状态栏）Slime 图标常驻
 - Windows：解压后运行 `MiniPet.exe`（SmartScreen 提示「仍要运行」即可）
-- macOS：解压得 `MiniPet.app`，首次运行**右键 → 打开**（无开发者证书，Gatekeeper 需手动放行一次）
+- macOS：解压得 `MiniPet.app`，首次运行**右键 → 打开**
 - 首次启动未配置 WZ 自动打开设置页引导
 
 ## 💡 操作提示
