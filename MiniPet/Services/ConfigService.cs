@@ -246,6 +246,12 @@ namespace MiniPet.Services
         /// </summary>
         public bool GetTopmost() => LoadSettings().Topmost;
         public void SetTopmost(bool enabled) => UpdateSettings(s => s.Topmost = enabled);
+
+        /// <summary>读取「macOS Dock 图标可见」开关（默认 true，V0.1.0 对外发布口径）。</summary>
+        public bool GetShowDockIcon() => LoadSettings().ShowDockIcon;
+
+        /// <summary>写入「macOS Dock 图标可见」开关并落盘（语义同 SetTopmost）。</summary>
+        public void SetShowDockIcon(bool enabled) => UpdateSettings(s => s.ShowDockIcon = enabled);
         public bool GetAutoBlink() => LoadSettings().AutoBlink;
 
         /// <summary>

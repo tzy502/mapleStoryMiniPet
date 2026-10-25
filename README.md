@@ -80,7 +80,7 @@ dotnet run --project MiniPet/MiniPet.csproj
 
 - 全部官方发布包以 `-p:MiniPetNoAi=true` 纯净版编译：**无 AI 功能、无网络连接、无文件监控**
 - **配置与日志与程序同目录**（`settings.json` / `wz-config.json` / `MiniPet.log`）——整个文件夹拷走即带走配置
-- 桌宠不进任务栏 / Dock，托盘（状态栏）图标常驻；设置中心正常显示
+- 桌宠不进任务栏（Windows）/ 默认显示 Dock 图标（macOS，桌宠右键菜单「🚢 Dock 图标」可切回隐藏）；托盘（状态栏）Slime 图标常驻；设置中心正常显示
 - Windows：解压后运行 `MiniPet.exe`（SmartScreen 提示「仍要运行」即可）
 - macOS：解压得 `MiniPet.app`，首次运行**右键 → 打开**（无开发者证书，Gatekeeper 需手动放行一次）
 - 首次启动未配置 WZ 自动打开设置页引导

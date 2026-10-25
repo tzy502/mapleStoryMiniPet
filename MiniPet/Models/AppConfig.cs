@@ -74,6 +74,10 @@ namespace MiniPet.Models
         /// <summary>随机气泡发言开关（Agent 空闲时的随机聊天气泡）。默认开（现状行为）。</summary>
         public bool RandomBalloonEnabled { get; set; } = true;
 
+        /// <summary>macOS 程序坞（Dock）图标可见（V0.1.0 对外发布默认开——Dock 显示应用图标可右键退出；
+        /// 关 = 旧版行为：不进 Dock/Cmd-Tab，仅状态栏托盘）。运行时可在桌宠右键菜单切换。Windows 无此概念不受影响。</summary>
+        public bool ShowDockIcon { get; set; } = true;
+
         /// <summary>窗口置顶（默认开）。关掉后桌宠会被其它窗口盖住。</summary>
         public bool Topmost { get; set; } = true;
         public string BalloonId { get; set; } = string.Empty;

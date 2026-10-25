@@ -11,6 +11,7 @@ namespace MiniPet.Utils
     /// </summary>
     public static class MacNative
     {
+        private const int NSApplicationActivationPolicyRegular = 0;
         private const int NSApplicationActivationPolicyAccessory = 1;
 
         [DllImport("/usr/lib/libobjc.dylib")]
@@ -30,14 +31,48 @@ namespace MiniPet.Utils
         {
             try
             {
-                var nsApp = objc_msgSend(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
-                if (nsApp == IntPtr.Zero) { return; }
-                objc_msgSend(nsApp, sel_registerName("setActivationPolicy:"), NSApplicationActivationPolicyAccessory);
+                SetActivationPolicy(NSApplicationActivationPolicyAccessory);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[MacNative] HideDockIcon: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 显示程序坞图标（ActivationPolicy = Regular，Dock 出现本 app 图标 + 进 Cmd-Tab）。
+        /// 运行时可反复切换（V0.1.0 发布后胶水要求 Dock 默认可见，右键菜单可切回隐藏）。失败安全 no-op。
+        /// </summary>
+        public static void ShowDockIcon()
+        {
+            try
+            {
+                SetActivationPolicy(NSApplicationActivationPolicyRegular);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MacNative] ShowDockIcon: {ex.Message}");
+            }
+        }
+
+        /// <summary>统一入口：visible=true → Regular（Dock 可见），false → Accessory。</summary>
+        public static void SetDockIconVisible(bool visible)
+        {
+            if (visible)
+            {
+                ShowDockIcon();
+            }
+            else
+            {
+                HideDockIcon();
+            }
+        }
+
+        private static void SetActivationPolicy(int policy)
+        {
+            var nsApp = objc_msgSend(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+            if (nsApp == IntPtr.Zero) { return; }
+            objc_msgSend(nsApp, sel_registerName("setActivationPolicy:"), policy);
         }
     }
 }
