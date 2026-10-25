@@ -10,7 +10,9 @@ using Avalonia.Styling;
 using Microsoft.Extensions.DependencyInjection;
 using MiniPet.Models;
 using MiniPet.Services;
+#if !NO_AI
 using MiniPet.Services.Adapters;
+#endif
 using MiniPet.Views;
 using Avalonia.Themes.Fluent;
 
@@ -21,9 +23,12 @@ public partial class App : Application
     private ServiceProvider? _serviceProvider;
 
     // Agent 接入链（PLAN-agent-integration §1/§3）。关闭时统一 Stop，避免轮询/FSW 泄露。
+    // NO_AI 纯净版（-p:MiniPetNoAi=true）：Adapters 程序集被整体剔除，装配链与列表一并不存在。
     private AgentStateAggregator? _agentAggregator;
     private EffectLayerService? _effectLayer;
+#if !NO_AI
     private readonly List<IAgentStateAdapter> _agentAdapters = new();
+#endif
 
     public App()
     {
@@ -120,8 +125,8 @@ public partial class App : Application
             // 数据流：adapter(Hermes/CC/Codex) → EventBus(AgentStateChanged) → Aggregator
             //        → EventBus(PetReflectStateChanged) → EffectLayerService(气泡/表情)
             // Aggregator 与 EffectLayerService 在构造内已自 Subscribe，这里只 new + Start。
-            // NO_AI 编译符号（Windows 纯净版打包：-p:DefineConstants=NO_AI）整块跳过——无任何
-            // AI 适配器/轮询/重连，即开即用纯桌宠；正常构建不受影响。
+            // NO_AI 纯净版打包（-p:MiniPetNoAi=true，csproj 剔除 Adapters/聊天窗/AI 设置页并定义
+            // NO_AI 符号）整块跳过——无任何 AI 适配器/轮询/重连，即开即用纯桌宠；正常构建不受影响。
 #if !NO_AI
             try
             {
@@ -262,11 +267,13 @@ public partial class App : Application
                 // 先停 agent 接入链（轮询/FSW），避免退出期间还发状态事件
                 try
                 {
+#if !NO_AI
                     foreach (var ad in _agentAdapters)
                     {
                         try { ad.Stop(); } catch { }
                     }
                     _agentAdapters.Clear();
+#endif
                     _agentAggregator?.Stop();
                 }
                 catch { }

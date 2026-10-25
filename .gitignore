@@ -30,3 +30,7 @@ dist/
 .hermes/
 .worldbook/
 CLAUDE.md
+
+# 发布产物（zip/.app 打包输出）与本会话临时目录
+out/
+.tmp/

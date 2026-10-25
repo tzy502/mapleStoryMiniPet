@@ -1,15 +1,19 @@
 # MiniPet Windows 构建与发布脚本（在 Windows 上运行）
 # 用法：
-#   .\scripts\build-win.ps1            # 仅编译 + 测试
-#   .\scripts\build-win.ps1 -Publish   # 编译 + 测试 + self-contained win-x64 发布
+#   .\scripts\build-win.ps1                # 仅编译 + 测试（完整版，含 AI 观察）
+#   .\scripts\build-win.ps1 -Publish      # 编译 + 测试 + self-contained win-x64 发布（完整版）
+#   .\scripts\build-win.ps1 -Pure -Publish # 纯净版发布（-p:MiniPetNoAi=true，无任何 AI 功能）
 #
 # 前提：已安装 .NET 9 SDK（https://dotnet.microsoft.com/download）
 param(
-    [switch]$Publish
+    [switch]$Publish,
+    [switch]$Pure
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
+$Extra = @()
+if ($Pure) { $Extra += "-p:MiniPetNoAi=true" }
 
 Write-Host "=== MiniPet Windows 构建 ===" -ForegroundColor Cyan
 Write-Host "工作目录: $Root"
@@ -36,8 +40,8 @@ if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 测试失败" -ForegroundColor R
 
 if ($Publish) {
     # 3) self-contained win-x64 发布（含 .NET 运行时，目标机免装 .NET）
-    Write-Host "`n[3/3] dotnet publish -r win-x64 --self-contained ..." -ForegroundColor Yellow
-    dotnet publish "$Root\MiniPet\MiniPet.csproj" -c Release -r win-x64 --self-contained true -p:UsedAvaloniaProducts=
+    Write-Host "`n[3/3] dotnet publish -r win-x64 --self-contained ... $(if ($Pure) {'（纯净版 NO_AI）'} else {''})" -ForegroundColor Yellow
+    dotnet publish "$Root\MiniPet\MiniPet.csproj" -c Release -r win-x64 --self-contained true -p:UsedAvaloniaProducts= @Extra
     if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 发布失败" -ForegroundColor Red; exit $LASTEXITCODE }
     $publishDir = "$Root\MiniPet\bin\Release\net9.0\win-x64\publish"
     Write-Host "`n发布完成: $publishDir" -ForegroundColor Green

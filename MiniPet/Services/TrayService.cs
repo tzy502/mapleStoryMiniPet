@@ -514,6 +514,33 @@ public class TrayService
 
     private static WindowIcon CreateTrayIcon()
     {
+        // 优先加载内置 Slime 图标（Assets/Slime.png，EmbeddedResource 内嵌随二进制分发）；
+        // 等比缩到状态栏友好高度（macOS 菜单栏 ~22pt / Windows 托盘 16-20px 自适应）。
+        try
+        {
+            var assembly = typeof(TrayService).Assembly;
+            var resourceName = Array.Find(assembly.GetManifestResourceNames(), n => n.EndsWith("Slime.png", StringComparison.OrdinalIgnoreCase));
+            if (resourceName != null)
+            {
+                using var stream = assembly.GetManifestResourceStream(resourceName);
+                if (stream != null)
+                {
+                    using var source = new Bitmap(stream);
+                    const int TargetHeight = 22;
+                    var w = Math.Max(1, (int)Math.Round((double)source.PixelSize.Width * TargetHeight / source.PixelSize.Height));
+                    // 不 dispose：WindowIcon 构造后部分平台实现仍持有该位图引用
+                    var scaled = source.CreateScaledBitmap(new PixelSize(w, TargetHeight), BitmapInterpolationMode.HighQuality);
+                    Console.WriteLine($"[TrayService] 托盘图标已加载内嵌 Slime（{source.PixelSize.Width}x{source.PixelSize.Height} → {w}x{TargetHeight}）");
+                    return new WindowIcon(scaled);
+                }
+            }
+            Console.Error.WriteLine("[TrayService] 未找到内嵌 Slime.png 资源，回退绘制版");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[TrayService] 加载 Slime 托盘图标失败，回退绘制版: {ex.Message}");
+        }
+
         try
         {
             using var bitmap = new SKBitmap(32, 32);

@@ -10,7 +10,9 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
+#if !NO_AI
 using MiniPet.Services.Adapters;
+#endif
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views;
@@ -223,7 +225,9 @@ public partial class PetWindow
 
             cm.Items.Add(new Separator());
 
+#if !NO_AI
             // ── 🤖 AI（折叠：Hermes 终端 / 对话 / DSH 对话 / DSH 状态，胶水 2026-09-24 要求收起）──
+            // NO_AI 纯净版不出现该菜单（AI 窗口/适配器均已从编译剔除）
             var aiMenu = new MenuItem { Header = "🤖 AI" };
 
             // Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态）
@@ -279,6 +283,7 @@ public partial class PetWindow
             aiMenu.Items.Add(dshStatusItem);
 
             cm.Items.Add(aiMenu);   // 折叠成一个「🤖 AI」子菜单（顶层不再铺开）
+#endif // !NO_AI
 
             // ── V0.1.3 多桌宠：添加 / 移除 / 设为主宠 ──
             var petMenuItem = new MenuItem { Header = "🐾 桌宠" };
@@ -538,6 +543,7 @@ public partial class PetWindow
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPaperdoll: {ex.Message}"); }
     }
 
+#if !NO_AI
     /// <summary>
     /// 快速唤起 hermes CLI（UseShellExecute=true，让系统按 PATH 解析并独立窗口运行）。
     /// 失败（未安装/不在 PATH）→ 提示用户。
@@ -651,6 +657,7 @@ public partial class PetWindow
             ShowInfoPopup("DSH 对话", "DSH 接入初始化失败。\n请确认本机 DSH（DeepSeek Harness）已运行（127.0.0.1:3080），\n或在 设置中心 → Agent 接入 → DSH 连接 检查配置后重试。");
         }
     }
+#endif // !NO_AI
 
     /// <summary>简单的信息弹窗（自包含，无第三方依赖）：标题 + 多行文本 + 关闭按钮。</summary>
     private void ShowInfoPopup(string title, string body)

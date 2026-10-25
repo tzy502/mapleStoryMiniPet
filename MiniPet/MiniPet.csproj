@@ -6,6 +6,30 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <NoWarn>NU1605</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.1.0</Version>
+    <!-- Windows exe 图标（OrangeMushroom 多尺寸）；macOS .app 图标由打包脚本用 Assets/mac/AppIcon.icns -->
+    <ApplicationIcon>Assets/app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- ====== NO_AI 纯净版（对外发布包）：-p:MiniPetNoAi=true ======
+       定义 NO_AI 编译符号并从编译中剔除全部 AI 适配器 / AI 聊天窗 / AI 设置页，
+       二进制内无任何 AI 功能（无网络连接、无文件监控），纯桌宠即开即用。
+       代码侧配合：App/PetWindow.Menu/SettingsWindow 以 #if !NO_AI 挡住装配与 UI 入口。 -->
+  <PropertyGroup Condition="'$(MiniPetNoAi)' == 'true'">
+    <DefineConstants>$(DefineConstants);NO_AI</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MiniPetNoAi)' == 'true'">
+    <Compile Remove="Services/Adapters/**/*.cs" />
+    <Compile Remove="Views/HermesChatWindow.cs" />
+    <Compile Remove="Views/DshChatWindow.cs" />
+    <Compile Remove="Views/SettingsWindow.Agent.cs" />
+  </ItemGroup>
+
+  <!-- ====== BASS 原生库拷贝目标判定（按目标平台而非构建机 OS）：
+       macOS 上交叉发布 win-x64 时也必须拷 bass.dll（修复原 IsOSPlatform 条件交叉发布漏拷）。 ====== -->
+  <PropertyGroup>
+    <_BassForWindows Condition="'$(RuntimeIdentifier)' == 'win-x64' or '$(RuntimeIdentifier)' == 'win-x86' or '$(RuntimeIdentifier)' == 'win-arm64' or ('$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows')))">true</_BassForWindows>
+    <_BassForMac Condition="'$(RuntimeIdentifier)' == 'osx-x64' or '$(RuntimeIdentifier)' == 'osx-arm64' or ('$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('OSX')))">true</_BassForMac>
   </PropertyGroup>
 
   <ItemGroup>
@@ -39,13 +63,23 @@
     </Content>
   </ItemGroup>
 
-  <!-- ====== 音乐模块 V0.2.0：BASS 原生库按构建平台拷贝（IsOSPlatform 条件，非 RID 条件——项目无 RuntimeIdentifier） ====== -->
   <ItemGroup>
-    <None Include="lib/audio/libbass.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <!-- 托盘图标（状态栏）：随程序集内嵌（EmbeddedResource），运行时 TrayService 经清单流加载
+         （Avalonia 12 已移除 AvaloniaLocator.Current，不走 AssetLoader） -->
+    <EmbeddedResource Include="Assets/Slime.png" />
+    <!-- 图标源文件 / ico / icns：不进二进制，随仓库分发供各平台打包脚本使用 -->
+    <None Include="Assets/OrangeMushroom.png" />
+    <None Include="Assets/app.ico" />
+    <None Include="Assets/mac/AppIcon.icns" />
+  </ItemGroup>
+
+  <!-- ====== 音乐模块 V0.2.0：BASS 原生库按上方 _BassForWindows/_BassForMac 判定拷贝 ====== -->
+  <ItemGroup>
+    <None Include="lib/audio/libbass.dylib" Condition="'$(_BassForMac)' == 'true'">
       <Link>libbass.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="lib/audio/bass.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <None Include="lib/audio/bass.dll" Condition="'$(_BassForWindows)' == 'true'">
       <Link>bass.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

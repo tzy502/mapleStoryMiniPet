@@ -436,7 +436,12 @@ public partial class SettingsWindow : Window
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14, 0, 14, 0) };
         // 🐾 桌宠 = V0.1.3 多桌宠管理页（索引必须与 BuildBody 的 _mainPanes 顺序、PetsMainTabIndex 一致）
         // 🎵 音乐 = V0.2.1 音乐页（索引见 MusicTabIndex）
+        // NO_AI 纯净版：剔除「🔗 AI 设置」「💬 对话记录」两个 tab（MusicTabIndex 同步变为 2）
+#if NO_AI
+        var tabs = new[] { "📦 桌宠设置", "🐾 桌宠", "🎵 音乐" };
+#else
         var tabs = new[] { "📦 桌宠设置", "🐾 桌宠", "🔗 AI 设置", "💬 对话记录", "🎵 音乐" };
+#endif
 
         for (int i = 0; i < tabs.Length; i++)
         {
@@ -464,6 +469,7 @@ public partial class SettingsWindow : Window
         _mainPanes.Add(panePets);
         grid.Children.Add(panePets);
 
+#if !NO_AI
         var pane1 = BuildAiSettingsPane();
         pane1.IsVisible = false;
         _mainPanes.Add(pane1);
@@ -472,6 +478,7 @@ public partial class SettingsWindow : Window
         pane2.IsVisible = false;
         _mainPanes.Add(pane2);
         grid.Children.Add(pane2);
+#endif
         // 第 4 个顶层 tab：🎵 音乐（SettingsWindow.Music.cs partial 构建；懒加载在 OnMusicTabActivated 触发）
         var pane3 = BuildMusicPane();
         pane3.IsVisible = false;
@@ -500,10 +507,12 @@ public partial class SettingsWindow : Window
         return grid;
     }
 
+#if !NO_AI
     /// <summary>
     /// AI 设置主 pane（2026-08-16 重构：通用设置独立 tab 放最前——阈值/Adapter 开关/7 态映射/WZ 节点；
     /// Hermes tab 只留 Hermes 连接与 Profile；Deepseek harness tab = DSH 监控 + DSH 对话）。
     /// 子 tab：通用 / Hermes / Deepseek harness / Claude Code / Codex（后两者占位待实现）。
+    /// NO_AI 纯净版：本 pane 与 SettingsWindow.Agent.cs partial 一并剔除。
     /// </summary>
     private Border BuildAiSettingsPane()
     {
@@ -544,6 +553,7 @@ public partial class SettingsWindow : Window
         container.Children.Add(body);
         return new Border { Child = container };
     }
+#endif // !NO_AI
 
     private Border BuildPetSettingsPane()
     {
