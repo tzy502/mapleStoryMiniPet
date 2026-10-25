@@ -52,13 +52,6 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // 2026-08-17 用户要求：macOS 桌宠不进程序坞（Dock）——ActivationPolicy=Accessory，
-        // 窗口照常显示/可输入（设置中心不受影响）；Windows 任务栏隐藏见 PetWindow.ShowInTaskbar。
-        if (OperatingSystem.IsMacOS())
-        {
-            try { Utils.MacNative.HideDockIcon(); }
-            catch (Exception ex) { Console.Error.WriteLine($"[App] HideDockIcon: {ex.Message}"); }
-        }
         var services = new ServiceCollection();
         services.AddSingleton<ConfigService>();
         services.AddSingleton<CacheManager>();
@@ -104,6 +97,15 @@ public partial class App : Application
             var wzService = _serviceProvider.GetRequiredService<WzService>();
             var configService = _serviceProvider.GetRequiredService<ConfigService>();
             var eventBus = _serviceProvider.GetRequiredService<EventBus>();
+
+            // macOS Dock 图标（V0.1.0 对外发布默认显示——Dock 有应用图标可右键退出；
+            // 配置关 = 旧版 Accessory 行为：不进 Dock/Cmd-Tab 仅状态栏托盘，桌宠右键菜单可随时切换。
+            // Windows 任务栏隐藏走 PetWindow.ShowInTaskbar，与此无关。）
+            if (OperatingSystem.IsMacOS())
+            {
+                try { Utils.MacNative.SetDockIconVisible(configService.GetShowDockIcon()); }
+                catch (Exception ex) { Console.Error.WriteLine($"[App] DockIcon: {ex.Message}"); }
+            }
             // 注入缓存（世界地图树预渲染缓存用；预构建在 WZ 加载成功后触发）
             try
             {

@@ -386,6 +386,27 @@ public partial class PetWindow
             };
             petMenuItem.Items.Add(topmostItem);
 
+            // ── 🚢 Dock 图标（仅 macOS；V0.1.0 对外发布默认开，可随时切回旧版隐藏行为）──
+            if (OperatingSystem.IsMacOS())
+            {
+                var dockItem = new MenuItem
+                {
+                    Header = (_configService.GetShowDockIcon() ? "✓ " : "   ") + "🚢 Dock 图标",
+                };
+                dockItem.Click += (_, _) =>
+                {
+                    try
+                    {
+                        bool v = !_configService.GetShowDockIcon();
+                        _configService.SetShowDockIcon(v);
+                        MiniPet.Utils.MacNative.SetDockIconVisible(v);
+                        dockItem.Header = (v ? "✓ " : "   ") + "🚢 Dock 图标";
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DockIconToggle: {ex.Message}"); }
+                };
+                petMenuItem.Items.Add(dockItem);
+            }
+
             // ── 退出 ──
             var exitItem = new MenuItem { Header = "退出" };
             exitItem.Click += (_, _) =>

@@ -4,8 +4,8 @@
 #   2) win-x64：self-contained 交叉 publish（含 bass.dll，按 RID 判定拷贝）→ zip
 # 全部 -p:MiniPetNoAi=true（纯净版：无任何 AI 功能/网络连接/文件监控）。
 #
-# 用法：scripts/release-build.sh [版本号]
-#   版本号缺省从 MiniPet.csproj 的 <Version> 读取（如 0.1.0）
+# 用法：scripts/release-build.sh [版本号] [RID...]
+#   版本号缺省从 MiniPet.csproj 的 <Version> 读取（如 0.1.0）；RID 缺省 = osx-arm64 osx-x64 win-x64
 # 产物：out/MiniPet-<ver>-win-x64.zip / MiniPet-<ver>-macos-arm64.zip / MiniPet-<ver>-macos-x64.zip
 set -euo pipefail
 
@@ -14,7 +14,18 @@ DOTNET="${DOTNET:-/Volumes/SSD/C#/dotnet}"
 PROJ="$ROOT/MiniPet/MiniPet.csproj"
 OUT="$ROOT/out"
 
-VERSION="${1:-}"
+ARGS=("$@")
+VERSION="${ARGS[0]:-}"
+if [ -n "$VERSION" ] && [[ "$VERSION" != *.* ]]; then
+    # 第一个参数不是版本号（形如 x.y.z）则视为 RID 列表开头
+    RIDS=("${ARGS[@]:-osx-arm64 osx-x64 win-x64}")
+    VERSION=""
+else
+    RIDS=("${ARGS[@]:1}")
+    if [ ${#RIDS[@]} -eq 0 ]; then
+        RIDS=(osx-arm64 osx-x64 win-x64)
+    fi
+fi
 if [ -z "$VERSION" ]; then
     VERSION="$(sed -n 's/.*<Version>\(.*\)<\/Version>.*/\1/p' "$PROJ" | head -1 | tr -d '[:space:]')"
 fi
@@ -71,7 +82,6 @@ publish_and_zip() {
     <key>CFBundleExecutable</key><string>MiniPet</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>10.15</string>
-    <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -98,9 +108,9 @@ PLIST
 }
 
 mkdir -p "$OUT"
-publish_and_zip osx-arm64
-publish_and_zip osx-x64
-publish_and_zip win-x64
+for rid in "${RIDS[@]}"; do
+    publish_and_zip "$rid"
+done
 
 echo ""
 echo "=== 全部完成 ==="
