@@ -58,7 +58,7 @@ public partial class PetWindow
 
     private void OpenBackgroundTab()
     {
-        try { ShowSettingsWindow(); _settingsWindow?.OpenBackgroundTab(); }
+        try { var settings = _petManager.ShowSettings(_petId); settings?.OpenBackgroundTab(); }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OpenBackgroundTab: {ex.Message}"); }
     }
 
@@ -208,8 +208,12 @@ public partial class PetWindow
                         _mapViewportWindow.SetMap(map, _mapService); // SetMap 会 ClearSpriteCache，新 flag 生效
                         _mapViewportWindow.Show();
                         RaisePet(); // #1 摄像机窗口 Topmost=true 后紧跟把桌宠置顶
-                        s.MapMode = 2;
-                        _configService.SaveSettings(s);
+
+                        // PLAN 步骤 8：async gap 前捕获的旧 settings 快照（方法开头的 s）不再整对象回存——
+                        // 改为 Update 事务（锁内读最新配置只改 MapMode，不覆盖期间其他字段的并发修改，
+                        // 如音乐 PlayHistory 高频写入；改动语义与原 s.MapMode = 2 完全一致）
+                        _configService.Update(cfg => { cfg.MapMode = 2; });
+
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CameraMode Show: {ex.Message}"); }
                 });
@@ -244,8 +248,7 @@ public partial class PetWindow
                 _backgroundWindow.Show();
                 RaisePet();
             }
-            s.MapMode = 1;
-            _configService.SaveSettings(s);
+            _configService.UpdateSettings(st => st.MapMode = 1);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToStaticMode: {ex.Message}"); }
     }
@@ -256,6 +259,13 @@ public partial class PetWindow
     {
         try
         {
+            // V0.1.3：地图背景只挂主宠——右键菜单已拦，但设置中心也能触发本方法（背景页「应用到主窗口」
+            // / 点历史项），不拦的话非主宠也能挂上背景，与主宠的背景互相遮挡（背景/整图缓存是全局单份）。
+            if (!_isPrimaryRole)
+            {
+                ShowInfoPopup("背景", "地图背景只挂在主宠上。\n请先在右键菜单「🐾 桌宠 → ⭐ 设为主宠」把这只设为主宠，或在主宠上应用。");
+                return;
+            }
             var map = _mapService.LoadMap(sel.Id);
             if (map == null) return;
             _currentMap = map;
@@ -278,14 +288,23 @@ public partial class PetWindow
             _backgroundWindow.Show();
             RaisePet();
             _placePetAfterRender = true; // 落地推迟到渲染完成（OnMapRendered），裁紧值此时才就绪
-            var s = _configService.LoadSettings();
-            s.MapId = sel.Id;
-            s.MapMode = 1; // 应用地图 = 静态模式
-            s.CropX = sel.CropX; s.CropY = sel.CropY; s.CropW = sel.CropW; s.CropH = sel.CropH;
-            s.MapHistory.RemoveAll(x => x.Id == sel.Id);
-            s.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = sel.Name, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
-            if (s.MapHistory.Count > 10) s.MapHistory = s.MapHistory.Take(10).ToList();
-            _configService.SaveSettings(s);
+            // V0.1.3 + V0.2.1：改走事务更新（锁内读最新配置只写地图字段），既不回滚其他宠物写入的实例数据，
+            // 也不覆盖期间音乐 PlayHistory 等并发写入（原写法持旧快照整份 SaveSettings）。
+_configService.Update(st =>
+            {
+                st.MapId = sel.Id;
+                st.MapMode = 1; // 应用地图 = 静态模式
+                st.CropX = sel.CropX; st.CropY = sel.CropY; st.CropW = sel.CropW; st.CropH = sel.CropH;
+                st.MapHistory.RemoveAll(x => x.Id == sel.Id);
+                // 写历史前重解析名字（存量坏数据 sel.Name==id 会被洗成 WZ 中文名，修「历史菜单中文缺失」）
+                var resolvedName = _wzService.ResolveDisplayName(sel.Id, sel.Name);
+                st.MapHistory.Insert(0, new MapHistoryEntry { Id = sel.Id, Name = resolvedName, CropX = sel.CropX, CropY = sel.CropY, CropW = sel.CropW, CropH = sel.CropH });
+                if (st.MapHistory.Count > 10) { st.MapHistory = st.MapHistory.Take(10).ToList(); }
+            });
+            // 场景联动（F17，设计 §11.10）：地图切换成功后通知音乐服务（fire-and-forget 后台任务，
+            // 内部自判 SceneLinkEnabled 开关——联动关/无 BGM/同曲跨图 均 no-op 保持当前播放不断曲）。
+            _ = _musicService.OnMapChanged(sel.Id);
+
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyMapSelection: {ex.Message}"); }
     }

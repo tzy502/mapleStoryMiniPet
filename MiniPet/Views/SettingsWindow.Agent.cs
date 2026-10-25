@@ -708,7 +708,8 @@ public partial class SettingsWindow
             }
             ai.AgentStateFeedback = map;
             _settings.AgentIntegration = ai;
-            _config.SaveSettings(_settings);
+            // V0.1.3 多桌宠：Agent 接入配置是全局设置（特效只作用主宠）——合并写（保留磁盘最新 Pets），不整份覆盖
+            _config.SaveSettingsKeepingPets(_settings);
             if (_statusBarText != null) { _statusBarText.Text = "Agent 接入设置已保存"; }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SaveAgentIntegration: {ex.Message}"); }

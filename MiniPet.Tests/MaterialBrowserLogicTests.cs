@@ -105,7 +105,12 @@ public class MaterialBrowserLogicTests
     [InlineData("帽子", "1000000", "Character/Cap/01000000.img")]
     [InlineData("武器", "1302000", "Character/Weapon/01302000.img")]
     [InlineData("坐骑", "1902000", "Character/TamingMob/01902000.img")]
-    [InlineData("椅子", "3010000", "Item/Install/0301.img/03010000")]
+    // R-chair2 修（2026-10-10）：原 0301.img 本 WZ（Install_000.wz 分片）不存在 → 椅子 icon 全失败。
+    // 实测分组：3015xxx 按 id/100，3020+ 按 id/10000，其余按 id/1000。
+    [InlineData("椅子", "3010000", "Item/Install/03010.img/03010000")]
+    [InlineData("椅子", "3015632", "Item/Install/030156.img/03015632")]
+    [InlineData("椅子", "3019632", "Item/Install/03019.img/03019632")]
+    [InlineData("椅子", "3020000", "Item/Install/0302.img/03020000")]
     [InlineData("怪物", "8880150", null)]
     // 饰品三分类（对齐 MapleSalon2 拆分）：101 面饰 / 102 眼饰 / 103 耳环 → 同一 Accessory 目录
     [InlineData("面饰", "1010000", "Character/Accessory/01010000.img")]

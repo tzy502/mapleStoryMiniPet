@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace MiniPet.Models
@@ -14,6 +15,8 @@ namespace MiniPet.Models
         // life/portal 在 mapRoot 解析（扁平列表），渲染时按 Java handler 顺序（life 在层后、portal 在 front back 后）。
         public List<MapLife> Lifes { get; set; } = new List<MapLife>();
         public List<MapPortal> Portals { get; set; } = new List<MapPortal>();
+        /// <summary>梯子 / 绳索（F18 行走攀爬用，见 LadderRope）。</summary>
+        public List<LadderRope> Ropes { get; set; } = new List<LadderRope>();
         public int MinX { get; set; }
         public int MinY { get; set; }
         public int MaxX { get; set; }
@@ -119,6 +122,12 @@ namespace MiniPet.Models
         public int Fh { get; set; }
         public bool Flip { get; set; }
         public bool Hide { get; set; }
+        /// <summary>
+        /// 渲染 z（WZ `life/{i}/z`）——**参与层内 (z, id) 排序**，对齐参考实现
+        /// （mapRederWeb `index.ts:595` `compositeZIndex(maplife.z, maplife.id)`）。
+        /// 之前项目没有该字段 → life 只能画在所有 obj/tile 之上，遮挡关系与游戏不符。
+        /// </summary>
+        public int Z { get; set; }
         public Sprite Resource { get; set; } = new Sprite();
     }
 
@@ -135,5 +144,28 @@ namespace MiniPet.Models
         public string PName { get; set; } = string.Empty;
         public int Image { get; set; }
         public Sprite Resource { get; set; } = new Sprite();
+        /// <summary>目标地图 id（tm；空 / 999999999 / -1 = 无目标，不能跨图）。F18 选传送门用。</summary>
+        public string Tm { get; set; } = string.Empty;
+        /// <summary>目标传送门名（tn）。</summary>
+        public string Tn { get; set; } = string.Empty;
+        /// <summary>是否可跨图（tm 有效）。</summary>
+        public bool HasTarget => !string.IsNullOrEmpty(Tm) && Tm != "999999999" && Tm != "-1";
+    }
+
+    /// <summary>
+    /// 梯子 / 绳索 —— WZ `Map/Map/MapX/{mapId}.img/ladderRope/{i}`：x / y1 / y2 / l。
+    /// 对齐 sdlMS game_ladderrope（l=1 梯子，0=绳）。
+    /// </summary>
+    public class LadderRope
+    {
+        public int Id { get; set; }
+        public int X { get; set; }
+        public int Y1 { get; set; }
+        public int Y2 { get; set; }
+        public bool IsLadder { get; set; }
+        /// <summary>上端 y（较小者）。</summary>
+        public int Top => Math.Min(Y1, Y2);
+        /// <summary>下端 y（较大者）。</summary>
+        public int Bottom => Math.Max(Y1, Y2);
     }
 }

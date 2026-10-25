@@ -22,6 +22,8 @@ namespace MiniPet.Views;
 
 /// <summary>
 /// SettingsWindow 纸娃娃 tab（partial 拆分）：BuildPaperdollTab 至 ApplyPaperdoll。原实现从 SettingsWindow.axaml.cs 平移，行为完全一致。
+/// V0.1.3 多桌宠：本页编辑/应用的是「目标宠物」（TargetPet()）自己的搭配——应用到桌宠写目标宠物实例字段；
+/// 预设存档（SavedPaperdolls）是全局共享，语义不变。
 /// </summary>
 public partial class SettingsWindow
 {
@@ -566,7 +568,8 @@ public partial class SettingsWindow
                 {
                     var s = _config.LoadSettings();
                     s.SavedPaperdolls[name] = clone;
-                    _config.SaveSettings(s);
+                    // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                    _config.SaveSettingsKeepingPets(s);
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] NewPresetPersist: {ex.Message}"); }
                 RefreshPresetList();
@@ -607,7 +610,8 @@ public partial class SettingsWindow
                 {
                     var s = _config.LoadSettings();
                     s.SavedPaperdolls[name] = clone;
-                    _config.SaveSettings(s);
+                    // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                    _config.SaveSettingsKeepingPets(s);
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePresetPersist: {ex.Message}"); }
                 RefreshPresetList();
@@ -633,7 +637,8 @@ public partial class SettingsWindow
                 {
                     var s = _config.LoadSettings();
                     s.SavedPaperdolls[name] = clone;
-                    _config.SaveSettings(s);
+                    // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                    _config.SaveSettingsKeepingPets(s);
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] SavePresetPersist: {ex.Message}"); }
                 RefreshPresetList();
@@ -929,15 +934,33 @@ public partial class SettingsWindow
         catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] UpdatePaperdollPreview: {ex.Message}"); }
     }
 
-    /// <summary>应用到主窗口：点击后禁用按钮 + 合成中文案 → 触发 OnPaperdollApplied（PetWindow 后台构建完成后 SetPaperdollApplyBusy(false) 恢复，体验 B）。</summary>
+    /// <summary>应用到主窗口：点击后禁用按钮 + 合成中文案 → 触发 OnPaperdollApplied（PetWindow 后台构建完成后 SetPaperdollApplyBusy(false) 恢复，体验 B）。
+    /// V0.1.3 多桌宠：先把搭配原子写入「目标宠物」自己的实例字段（UpdatePet，不整份覆盖 settings，
+    /// 不会回滚别的宠物刚写的外观/位置）；事件签名不变，PetWindow 侧仍收到同一外观。</summary>
     private void ApplyPaperdoll()
     {
         try
         {
             SyncPaperdollFromInputs();
             UpdatePaperdollPreview();
+            var appearance = CloneAppearance(_paperdollCurrent);
+            // 目标宠物失效（被移除等）时 UpdatePet 内部空转（返回 null），不影响后续事件与 UI
+            _config.UpdatePet(TargetPet()?.Id ?? _targetPetId, p =>
+            {
+                p.Paperdoll = appearance;
+                p.MobId = PaperdollService.SentinelMobId;
+                p.EntityType = "player";
+            });
             SetPaperdollApplyBusy(true);
             OnPaperdollApplied?.Invoke(CloneAppearance(_paperdollCurrent));
+            // V0.1.3 定向：换装只作用到「目标宠物」那一只。旧链路（OnPaperdollApplied 回调创建者
+            // PetWindow）在编辑目标切到别的宠物时会把创建者也一起改掉，这里补一条按 petId 定向的事件。
+            var appliedSnapshot = CloneAppearance(_paperdollCurrent);
+            if (appliedSnapshot != null)
+            {
+                _eventBus.Publish(EventType.PaperdollApplied,
+                    new PetPaperdollEvent(TargetPet()?.Id ?? _targetPetId, appliedSnapshot));
+            }
             if (_statusBarText != null) { _statusBarText.Text = "⏳ 正在合成，请稍候…"; }
         }
         catch (Exception ex)
@@ -1026,7 +1049,8 @@ public partial class SettingsWindow
             {
                 var s = _config.LoadSettings();
                 s.SavedPaperdolls.Remove(name);
-                _config.SaveSettings(s);
+                // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                _config.SaveSettingsKeepingPets(s);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] DeletePresetPersist: {ex.Message}"); }
             RefreshPresetList();
@@ -1095,7 +1119,8 @@ public partial class SettingsWindow
                         var s = _config.LoadSettings();
                         s.SavedPaperdolls.Remove(oldName);
                         s.SavedPaperdolls[newName] = preset.Data;
-                        _config.SaveSettings(s);
+                        // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                        _config.SaveSettingsKeepingPets(s);
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] RenamePresetPersist: {ex.Message}"); }
                     RefreshPresetList();
@@ -1139,7 +1164,8 @@ public partial class SettingsWindow
             {
                 var s = _config.LoadSettings();
                 s.SavedPaperdolls[name] = clone;
-                _config.SaveSettings(s);
+                // V0.1.3 多桌宠：合并写（只回写非 Pets 字段，Pets 保持磁盘最新），不整份覆盖
+                _config.SaveSettingsKeepingPets(s);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[SettingsWindow] CopyPresetPersist: {ex.Message}"); }
             RefreshPresetList();

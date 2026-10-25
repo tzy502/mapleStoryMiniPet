@@ -16,7 +16,10 @@ namespace MiniPet.Services
         private readonly CacheManager _cache;
         private readonly WzService _wz;
         private int _displayDurationMs = 5000;
-        private CancellationTokenSource? _hideCts;
+        // V0.1.3 多桌宠：按目标宠物分槽（key = petId，空串 = 广播槽）。旧实现单槽会在 B 弹气泡时
+        // 取消 A 正在渲染/显示的气泡（跨宠物互相打断），多只桌宠同屏时表现为「谁说话谁把别人掐掉」。
+        private readonly Dictionary<string, CancellationTokenSource> _hideCtsMap = new(StringComparer.Ordinal);
+        private readonly object _hideCtsLock = new();
         private readonly HashSet<string> _seeding = new();
 
         // 补-13/S12：按 balloonId 缓存的解码后瓦片（预览与显示反复 RenderBalloon，避免每次重解 11 张 PNG）。
@@ -27,8 +30,11 @@ namespace MiniPet.Services
         private readonly Queue<string> _tileOrder = new();
         private const int MaxTileCacheEntries = 24;
 
-        /// <summary>气泡渲染完成回调：(text, data, pngBytes) — 由上层在 UI 线程显示</summary>
-        public event Action<string, BalloonData, byte[], int?>? OnBalloonReady;
+        /// <summary>
+        /// 气泡渲染完成回调：(text, data, pngBytes, durationMs, targetPetId) — 由上层在 UI 线程显示。
+        /// targetPetId 非空时只有该宠物显示（多桌宠定向）；null = 广播给所有桌宠。
+        /// </summary>
+        public event Action<string, BalloonData, byte[], int?, string?>? OnBalloonReady;
 
         public BalloonService(CacheManager cache, WzService wz)
         {
@@ -115,26 +121,54 @@ namespace MiniPet.Services
             var arrow = decoded.Arrow;
             var head = decoded.Head;
 
-            if (nw == null || n == null || ne == null ||
-                w == null || c == null || e == null ||
-                sw == null || s == null || se == null)
-                return null;
+            // ⚠️ 不同气泡样式的瓦片组合天生不同（WZ 实测：id=1 无 NW/NE/SW/SE，id=520 **无中央 C**）——
+            // 原实现要求九宫格齐全，导致这些样式**永远渲染失败**（设置中心预览空白，胶水 2026-09-24 报）。
+            // 现在：缺失瓦片用 1×1 透明占位（画了也看不见），布局尺寸用「有数据的同类瓦片」兜底。
+            static SKBitmap Blank1() => new SKBitmap(1, 1);
+            nw ??= Blank1();
+            n ??= Blank1();
+            ne ??= Blank1();
+            w ??= Blank1();
+            e ??= Blank1();
+            sw ??= Blank1();
+            s ??= Blank1();
+            se ??= Blank1();
+            c ??= Blank1();
+            if (w.Width <= 0 || w.Height <= 0) { w = Blank1(); }
+            if (e.Width <= 0 || e.Height <= 0) { e = Blank1(); }
+            if (n.Width <= 0 || n.Height <= 0) { n = Blank1(); }
+            if (s.Width <= 0 || s.Height <= 0) { s = Blank1(); }
+            if (nw.Width <= 0 || nw.Height <= 0) { nw = Blank1(); }
+            if (ne.Width <= 0 || ne.Height <= 0) { ne = Blank1(); }
+            if (sw.Width <= 0 || sw.Height <= 0) { sw = Blank1(); }
+            if (se.Width <= 0 || se.Height <= 0) { se = Blank1(); }
 
-            if (nw.Width <= 0 || nw.Height <= 0 || c.Width <= 0 || c.Height <= 0) return null;
-
-            int colW = c.Width;
-            int colH = c.Height;
+            // 中央瓦片缺失/退化时：列宽高用左右/上下边兜底（保证还能排版出文字）
+            int colW = c.Width > 1 ? c.Width : Math.Max(12, w.Width > 1 ? w.Width : n.Height);
+            int colH = c.Height > 1 ? c.Height : Math.Max(12, n.Height > 1 ? n.Height : 16);
+            if (c.Width <= 1 || c.Height <= 1)
+            {
+                c = new SKBitmap(Math.Max(1, colW), Math.Max(1, colH));   // 透明中央
+            }
 
             // 文字颜色：WZ 的 clr 是「从白色减去的 RGB 补值」（MapleSalon2 getWzClrColor：
             // color = 0x1000000 + clr，clr 常为负数如 -1 = 白、-0x10000 = 红）；clr=0 同 MapleSalon2 视为白。
             // ⚠️ 2026-08-08 曾重写丢失 Color → SKPaint 默认黑色文字（用户报黑字）
             int clr = balloonData.Clr;
-            uint rgb = clr == 0 ? 0xFFFFFFu : (uint)((0x1000000 + clr) & 0xFFFFFF);
-            byte cr = (byte)(rgb >> 16);
-            byte cg = (byte)(rgb >> 8);
-            byte cb = (byte)rgb;
-            // 文字默认不透明（WZ clr 无 alpha 通道）
-            var textColor = new SKColor(cr, cg, cb, 0xFF);
+            // ⚠️ clr = -1 / 0 经 `0x1000000 + clr` 解析出来是**纯白**，而气泡底多是浅色
+            //（实测 id=233 粉黄底、id=520 浅青底）→ 白字几乎不可见（胶水 2026-09-24 报预览失败，
+            //  实际是「渲染成功但文字看不见」）。这两个值属默认占位，按游戏观感用深色；
+            // 只有显式指定了颜色的（如 -0x10000 = 红）才用 WZ 色。
+            SKColor textColor;
+            if (clr == 0 || clr == -1)
+            {
+                textColor = new SKColor(0x22, 0x22, 0x22, 0xFF);
+            }
+            else
+            {
+                uint rgb = (uint)((0x1000000 + clr) & 0xFFFFFF);
+                textColor = new SKColor((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb, 0xFF);
+            }
 
             // 文字断行（中文逐字符，对齐 MapleSalon2：wordWrapWidth=90, lineHeight=16, SimSun/MingLiU 系）
             // 加粗仅「思考中…」（Review 状态气泡）使用（胶水 2026-08-15：只针对思考加粗）
@@ -153,6 +187,26 @@ namespace MiniPet.Services
 
             int minW = Math.Max(80, wrapW);
             int minH = Math.Max(40, lines.Count * (int)lineHeight);
+            // 无中央瓦片的样式（如 520）：平铺会产生重复的边块 → 强制 1×1
+            bool tiledCenter = tiles.C.Length > 1;
+            bool skipCenter = !tiledCenter;
+            if (!tiledCenter)
+            {
+                // 中央块按「文字所需尺寸」生成**白底**块：否则气泡太窄会把文字截断，
+                // 且中央透明会让文字悬空（520 实测）。白底 + 深色字 = 可读。
+                // 无 c 瓦片时——**完全按参考实现**：MapleSalon2 的 assets[4] 会退化成 Texture.EMPTY（1×1 透明），
+                // 于是 colWidth/colHeight = 1，addCenterTile 用 1px 网格平铺 EMPTY = **中央透明**（不填任何颜色）。
+                // （之前我填白块 / 填上边中点色都是自作聪明，反而和参考不一样；胶水 2026-09-24 两次对比图纠正。）
+                // 520 这类样式的 WZ 里根本没有 c（数据不完整）。严格照参考公式会退化：
+                // colWidth = EMPTY.width = 1 → colCount = 90 → top 行铺 90 个 n 瓦片 → 气泡超宽成 1316px
+                //（参考实现同样如此）→ 说明 MapleSalon2 也没法正常显示它们、更不可能是胶水截图那个气泡。
+                // 这里按「文字所需尺寸」当中央，colCount=rowCount=1，保证仍是一个尺寸正常的气泡。
+                colW = Math.Max(80, wrapW);
+                colH = Math.Max(20, lines.Count * (int)lineHeight + 10);
+            }
+            // 参考实现只有**一套公式**（chatBalloonBackground.ts：ceil(minWidth/colWidth)，
+            // 无 c 时 colWidth 退化成 EMPTY 的 1）——之前给它加「无 c 就强制 1」的分支是错的，
+            // 会把中央区域算成 1×1 → 画布塌缩、文字溢出（胶水 2026-09-24 报）。
             int colCount = Math.Max(1, (int)Math.Ceiling(minW / (double)colW));
             int rowCount = Math.Max(1, (int)Math.Ceiling(minH / (double)colH));
 
@@ -192,8 +246,32 @@ namespace MiniPet.Services
                 rects.Add((e, rightX - PivotX(tiles.EOrigin.X), y - tiles.EOrigin.Y, rightX - PivotX(tiles.EOrigin.X) + e.Width, y - tiles.EOrigin.Y + e.Height, false));
                 y += colH;
             }
-            // 中心块位置 = (leftOffset2, topLeftPadding.y)，无 origin 偏移（MapleSalon2 addCenterTile 不用 pivot）
-            rects.Add((c, leftOffset2, centerTop, leftOffset2 + colW * colCount, centerTop + colH * rowCount, true));
+            // 中心块 = (leftOffset2, topLeftPadding.y)，无 origin 偏移（MapleSalon2 addCenterTile 不用 pivot）。
+            // ⚠️ 参考实现用的是 **TilingSprite 平铺**（chatBalloonBackground.ts addCenterTile:
+            //    `TilingSprite.from(assets[4])` + `setSize(w,h)`）——即按 colWidth×colHeight 网格**重复** c 瓦片，
+            // 不是把一块 c 拉伸铺满（拉伸会把图案拉长，与游戏观感不同，胶水 2026-09-24 指出）。
+            if (skipCenter)
+            {
+                // 无 c：中央不画内容（参考语义 = Texture.EMPTY 平铺 = 透明），但**必须占位**——
+                // 否则 union 画布只按边框算尺寸，文字会溢出气泡（实测塌成 70×66）。
+                // 用实际尺寸的透明 bitmap 占位（1×1 不参与 bounds 计算）。
+                int cw = Math.Max(1, colW * colCount);
+                int ch = Math.Max(1, colH * rowCount);
+                var placeholder = new SKBitmap(cw, ch);
+                rects.Add((placeholder, leftOffset2, centerTop, leftOffset2 + cw, centerTop + ch, false));
+            }
+            else
+            {
+                for (int ty = 0; ty < rowCount; ty++)
+                {
+                    for (int tx = 0; tx < colCount; tx++)
+                    {
+                        float cx0 = leftOffset2 + tx * colW;
+                        float cy0 = centerTop + ty * colH;
+                        rects.Add((c, cx0, cy0, cx0 + colW, cy0 + colH, false));
+                    }
+                }
+            }
 
             // bottom：sw → s×colCount（i==0 画 arrow）→ se
             rects.Add((sw, -(float)PivotX(tiles.SWOrigin.X), y - tiles.SWOrigin.Y, -tiles.SWOrigin.X + sw.Width, y - tiles.SWOrigin.Y + sw.Height, false));
@@ -320,11 +398,21 @@ namespace MiniPet.Services
         /// 后台线程合成气泡 PNG，完成后通过 OnBalloonReady 回调（由上层在 UI 线程显示）。
         /// 自动淡出计时由 BalloonControl 内部负责。
         /// </summary>
-        public async Task Show(string text, BalloonData data, int? durationMs = null, bool bold = false)
+        public async Task Show(string text, BalloonData data, int? durationMs = null, bool bold = false, string? targetPetId = null)
         {
-            _hideCts?.Cancel();
-            _hideCts = new CancellationTokenSource();
-            var token = _hideCts.Token;
+            var key = targetPetId ?? string.Empty;
+            CancellationTokenSource cts;
+            lock (_hideCtsLock)
+            {
+                if (_hideCtsMap.TryGetValue(key, out var prev))
+                {
+                    try { prev.Cancel(); } catch { }
+                    try { prev.Dispose(); } catch { }
+                }
+                cts = new CancellationTokenSource();
+                _hideCtsMap[key] = cts;
+            }
+            var token = cts.Token;
             try
             {
                 byte[]? rendered = null;
@@ -335,18 +423,25 @@ namespace MiniPet.Services
                 }, token);
 
                 if (rendered != null)
-                    OnBalloonReady?.Invoke(text, data, rendered, durationMs);
+                    OnBalloonReady?.Invoke(text, data, rendered, durationMs, targetPetId);
             }
             catch (TaskCanceledException) { }
             catch (Exception ex) { Console.Error.WriteLine($"[BalloonService] Show: {ex.Message}"); }
         }
 
         /// <summary>
-        /// 隐藏气泡
+        /// 隐藏气泡（targetPetId 为空 = 隐藏广播槽；多桌宠时各宠物各隐藏自己的）。
         /// </summary>
-        public void Hide()
+        public void Hide(string? targetPetId = null)
         {
-            _hideCts?.Cancel();
+            var key = targetPetId ?? string.Empty;
+            lock (_hideCtsLock)
+            {
+                if (_hideCtsMap.TryGetValue(key, out var cts))
+                {
+                    try { cts.Cancel(); } catch { }
+                }
+            }
         }
 
         /// <summary>

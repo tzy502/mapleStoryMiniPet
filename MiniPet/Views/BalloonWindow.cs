@@ -34,6 +34,7 @@ namespace MiniPet.Views
             TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
             Topmost = true; // 气泡在桌宠之上
             IsHitTestVisible = false;
+            ShowActivated = false; // V0.1.3：弹气泡不抢焦点（胶水反馈：切姿势/说话时焦点被夺走）
 
             var canvas = new Canvas { ClipToBounds = false };
             canvas.Children.Add(_balloonControl);

@@ -101,16 +101,20 @@ namespace MiniPet.Services
             lock (_lock)
             {
                 var key = MakeKey(mobId, action);
-                var entry = new LRUEntry
-                {
-                    Strip = strip,
-                    PngData = pngData
-                };
 
-                // 已存在则更新访问顺序
-                if (_memoryCache.ContainsKey(key))
+                // A5：条带重建（帧数/几何变化或解码失败）后旧帧键会残留 → GetFramePng 命中旧帧显示错误帧。
+                // 修复（原按 "mobId|action_" 前缀全表扫描）：entry 自带本动作帧键清单，替换时精确删除，
+                // 锁内开销 O(本动作帧数)，不再随全局帧数增长（缓存多只 mob 时原实现每帧键都扫一遍）。
+                if (_memoryCache.TryGetValue(key, out var old))
                 {
-                    _accessOrder.Remove(key);
+                    foreach (var oldKey in old.FrameKeys)
+                    {
+                        _framesCache.TryRemove(oldKey, out _);
+                    }
+                    if (old.Node != null)
+                    {
+                        _accessOrder.Remove(old.Node);
+                    }
                 }
                 else
                 {
@@ -118,20 +122,16 @@ namespace MiniPet.Services
                     EvictIfNeeded(mobId);
                 }
 
-                _accessOrder.AddFirst(key);
+                var entry = new LRUEntry
+                {
+                    Strip = strip,
+                    PngData = pngData,
+                    FrameKeys = new List<string>(frames.Keys)
+                };
+                entry.Node = _accessOrder.AddFirst(key);
                 _memoryCache[key] = entry;
 
                 // 锁内只做字典合并（极快），不再做像素解码/裁剪/重编码。
-                // A5：条带重建（帧数/几何变化或解码失败）后旧帧键会残留 → GetFramePng 命中旧帧显示错误帧。
-                // 合并前先按 "mobId|action_" 前缀清掉本动作的旧帧键（ConcurrentDictionary 枚举安全，可边删边遍历）。
-                var framePrefix = mobId + KeySep + action + "_";
-                foreach (var oldKey in _framesCache.Keys)
-                {
-                    if (oldKey.StartsWith(framePrefix, StringComparison.Ordinal))
-                    {
-                        _framesCache.TryRemove(oldKey, out _);
-                    }
-                }
                 foreach (var kv in frames)
                 {
                     _framesCache[kv.Key] = kv.Value;
@@ -209,9 +209,13 @@ namespace MiniPet.Services
                 var key = MakeKey(mobId, action);
                 if (_memoryCache.TryGetValue(key, out var entry))
                 {
-                    // 更新访问顺序
-                    _accessOrder.Remove(key);
-                    _accessOrder.AddFirst(key);
+                    // 更新访问顺序：用 entry 持有的链表节点做 O(1) 摘除 + 前插
+                    // （原 _accessOrder.Remove(key) 是 O(N) 线性查找，而本方法在 UI 帧循环热路径上）
+                    if (entry.Node != null)
+                    {
+                        _accessOrder.Remove(entry.Node);
+                        _accessOrder.AddFirst(entry.Node);
+                    }
                     return (entry.Strip, entry.PngData);
                 }
                 return (null, null);
@@ -230,7 +234,8 @@ namespace MiniPet.Services
                 bool loadedFromCache = false;
                 foreach (var action in cachedActions)
                 {
-                    if (_cacheManager.IsSpriteCached(mobId, action))
+                    if (!_cacheManager.IsSpriteCached(mobId, action)) { continue; }
+                    try
                     {
                         var cached = _cacheManager.LoadSpriteStrip(mobId, action);
                         if (cached != null)
@@ -243,6 +248,11 @@ namespace MiniPet.Services
                                 loadedFromCache = true;
                             }
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        // 磁盘缓存单项读取失败（损坏/权限）不应让整个预加载失败，继续走 WZ 重建
+                        Console.Error.WriteLine($"[SpriteService] 磁盘缓存读取失败({mobId}/{action})，转 WZ 重建: {ex.Message}");
                     }
                 }
                 if (loadedFromCache)
@@ -377,11 +387,20 @@ namespace MiniPet.Services
                 var (pngDataWz, stripWz, configWz) = wz.BuildSpriteStrip(mobId, action, type);
                 if (pngDataWz == null || stripWz == null || configWz == null) return false;
 
-                var configJson = JsonSerializer.Serialize(configWz);
-                var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
-
-                _cacheManager.SaveSpriteStrip(mobId, action, pngDataWz, configBytes);
+                // 先入内存缓存：磁盘缓存不可写（权限/磁盘满/只读卷）时也必须能播，
+                // 原实现在 SaveSpriteStrip 抛异常后直接进 catch，连内存条带都没缓存 → 切换判定失败。
                 CacheStrip(mobId, action, stripWz, pngDataWz);
+
+                try
+                {
+                    var configJson = JsonSerializer.Serialize(configWz);
+                    var configBytes = System.Text.Encoding.UTF8.GetBytes(configJson);
+                    _cacheManager.SaveSpriteStrip(mobId, action, pngDataWz, configBytes);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SpriteService] SaveSpriteStrip({mobId}/{action}) 跳过（磁盘缓存不可写，本次仅内存缓存）: {ex.Message}");
+                }
                 return true;
             }
             catch (Exception ex)
@@ -438,17 +457,18 @@ namespace MiniPet.Services
 
                 var parts = evictKey.Split(KeySep, 2);
                 var evictMobId = parts[0];
-                var evictAction = parts.Length > 1 ? parts[1] : string.Empty;
                 if (evictMobId != incomingMobId)
                 {
-                    // 同时清理该 mob+action 的帧缓存（前缀含 mobId，避免误删其他 mob 的同名 action 帧）
-                    var prefix = evictMobId + KeySep + evictAction + "_";
-                    var keysToRemove = _framesCache.Keys
-                        .Where(k => k.StartsWith(prefix))
-                        .ToList();
-                    foreach (var k in keysToRemove) _framesCache.TryRemove(k, out _);
-
-                    _memoryCache.Remove(evictKey);
+                    // 按 entry 记录的帧键清单精确清理（原按前缀扫全表，O(全局帧数)）
+                    if (_memoryCache.TryGetValue(evictKey, out var victim))
+                    {
+                        foreach (var frameKey in victim.FrameKeys)
+                        {
+                            _framesCache.TryRemove(frameKey, out _);
+                        }
+                        victim.Node = null;
+                        _memoryCache.Remove(evictKey);
+                    }
                     _accessOrder.Remove(node);
                     mobs = _memoryCache.Keys
                         .Select(k => k.Split(KeySep)[0])
@@ -464,6 +484,10 @@ namespace MiniPet.Services
         {
             public SpriteStrip? Strip { get; set; }
             public byte[]? PngData { get; set; }
+            /// <summary>本 entry 在 _framesCache 中的帧键（替换/淘汰时精确清理，免全表前缀扫描）。</summary>
+            public List<string> FrameKeys { get; set; } = new();
+            /// <summary>本 entry 在 _accessOrder 中的节点引用（O(1) 更新访问顺序）。</summary>
+            public LinkedListNode<string>? Node { get; set; }
         }
     }
 }

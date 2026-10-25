@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>f18probe</AssemblyName>
+    <RootNamespace>f18probe</RootNamespace>
+    <NoWarn>CS0168;CS0219;CS0414;CS8600;CS8602;CS8604;CS8618;CS8625;CS0649</NoWarn>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="MiniPet">
+      <HintPath>/Users/a502/IdeaProjects/mapleStoryMiniPet/MiniPet/bin/Debug/net9.0/MiniPet.dll</HintPath>
+    </Reference>
+    <Reference Include="WzComparerR2.WzLib">
+      <HintPath>/Users/a502/IdeaProjects/mapleStoryMiniPet/MiniPet/bin/Debug/net9.0/WzComparerR2.WzLib.dll</HintPath>
+    </Reference>
+    <Reference Include="SkiaSharp">
+      <HintPath>/Users/a502/IdeaProjects/mapleStoryMiniPet/MiniPet/bin/Debug/net9.0/SkiaSharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

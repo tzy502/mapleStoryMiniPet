@@ -15,6 +15,11 @@ obj/
 .vs/
 *.log
 
+# 原型 / 调试工具的产物（大图、CSV、构建输出——不入库）
+prototypes/**/out/
+prototypes/**/bin/
+prototypes/**/obj/
+
 # worktree 工作树（并行开发隔离）
 .worktrees/
 
@@ -25,3 +30,7 @@ dist/
 .hermes/
 .worldbook/
 CLAUDE.md
+
+# 发布产物（zip/.app 打包输出）与本会话临时目录
+out/
+.tmp/

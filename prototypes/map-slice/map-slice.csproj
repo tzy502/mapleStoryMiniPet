@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <StartupObject>MapSlice.Program</StartupObject>
+    <!-- 跳过主工程 CS8632 等告警干扰，输出走 obj 旁路 -->
+    <NoWarn>CS8632;CS0414</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- StartupObject 是命令行全局属性会穿透 ProjectReference（主程序集无该入口类 → CS1555），
+         在此从引用上移除——同 MiniPet.CrashSelfTest 口径 -->
+    <ProjectReference Include="../../MiniPet/MiniPet.csproj" GlobalPropertiesToRemove="StartupObject" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="WzComparerR2.WzLib">
+      <HintPath>../../MiniPet/lib/WzComparerR2.WzLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -17,7 +17,17 @@ public enum EventType
     // adapter 发布的 Agent 状态变化（经 PublishOnUIThread marshal 到 UI 线程）
     AgentStateChanged,
     // AgentStateAggregator 计算后的桌宠反映态（已在 UI 线程，直接 Publish）
-    PetReflectStateChanged
+    PetReflectStateChanged,
+    // ── V0.1.3 多桌宠命令（payload: Models.PetCommandEvent；由 PetManager 订阅执行）──
+    AddPet,
+    RemovePet,
+    SetPrimaryPet,
+    // 设置在设置中心点「应用到桌宠」：payload Models.PetPaperdollEvent，只有目标宠物窗口执行换装
+    PaperdollApplied,
+    // 设置在设置中心点「确定应用」（Mob/Npc）：payload Models.PetEntityAppliedEvent，只有目标宠物窗口切实体
+    EntityApplied,
+    // 换装完成回执：payload string petId（发起方设置窗口据此解除「合成中」按钮态）
+    PaperdollAppliedDone
 }
 
 public class EventBus

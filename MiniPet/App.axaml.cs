@@ -10,7 +10,9 @@ using Avalonia.Styling;
 using Microsoft.Extensions.DependencyInjection;
 using MiniPet.Models;
 using MiniPet.Services;
+#if !NO_AI
 using MiniPet.Services.Adapters;
+#endif
 using MiniPet.Views;
 using Avalonia.Themes.Fluent;
 
@@ -21,9 +23,12 @@ public partial class App : Application
     private ServiceProvider? _serviceProvider;
 
     // Agent 接入链（PLAN-agent-integration §1/§3）。关闭时统一 Stop，避免轮询/FSW 泄露。
+    // NO_AI 纯净版（-p:MiniPetNoAi=true）：Adapters 程序集被整体剔除，装配链与列表一并不存在。
     private AgentStateAggregator? _agentAggregator;
     private EffectLayerService? _effectLayer;
+#if !NO_AI
     private readonly List<IAgentStateAdapter> _agentAdapters = new();
+#endif
 
     public App()
     {
@@ -47,13 +52,6 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // 2026-08-17 用户要求：macOS 桌宠不进程序坞（Dock）——ActivationPolicy=Accessory，
-        // 窗口照常显示/可输入（设置中心不受影响）；Windows 任务栏隐藏见 PetWindow.ShowInTaskbar。
-        if (OperatingSystem.IsMacOS())
-        {
-            try { Utils.MacNative.HideDockIcon(); }
-            catch (Exception ex) { Console.Error.WriteLine($"[App] HideDockIcon: {ex.Message}"); }
-        }
         var services = new ServiceCollection();
         services.AddSingleton<ConfigService>();
         services.AddSingleton<CacheManager>();
@@ -63,23 +61,51 @@ public partial class App : Application
         // TrayService 仅在 Windows 平台有效，非 Windows 平台内部降级为 no-op
         services.AddSingleton<TrayService>();
         services.AddSingleton<BalloonService>();
-        services.AddSingleton<PaperdollService>();
+        // V0.1.3 多桌宠：PaperdollService 改 Transient —— 每只纸娃娃桌宠一个实例
+        // （单例只持有一份 _current/_currentHash/Flip，多只共存时后一只会顶掉前一只的外观）。
+        services.AddTransient<PaperdollService>();
         services.AddSingleton<MapService>();
-        // AnimService 用 Singleton：PetWindow 与 EffectLayerService 共享同一实例
-        // （app 单 PetWindow，等价 Transient；改单例才能让 EffectLayer 的 IActionDriver 注入命中同一实例）
-        services.AddSingleton<AnimService>();
+        // V0.1.3 多桌宠：AnimService 改 Transient —— 每只宠物一个状态机
+        // （单例的单 _currentMobId / 单帧槽 / 单累加器会被 N 只宠物互相覆盖：动画串台 + 空闲随机 N 倍推进）。
+        // 主宠的实例由 PetManager 绑定给 EffectLayerService（Agent 特效只驱动主宠）。
+        services.AddTransient<AnimService>();
+        // V0.1.3 多桌宠：宠物注册表（创建 / 移除 / 主宠切换 / 背景与 Agent 特效绑定）
+        services.AddSingleton<PetManager>();
+        // 音乐模块 V0.2.0（F15-F17）：BASS 播放器（长生命周期单例，Bass.Init 懒初始化在首次 Prepare）+
+        // 目录服务 + 播放编排服务。IMusicPlayer 与 BassMusicPlayer 指向同一实例（接口注册转发）；
+        // MusicCatalogService 依赖 WzService，MusicPlayerService 依赖 WzService + MusicCatalogService +
+        // IMusicPlayer + ConfigService，均可自动解析。释放：现有退出路径全部 Environment.Exit(0) 硬退
+        // （BASS 流随进程回收，PLAN 步骤 8 声明；与其他单例服务同样不走容器 dispose，保持现状一致）。
+        services.AddSingleton<BassMusicPlayer>();
+        services.AddSingleton<IMusicPlayer>(sp => sp.GetRequiredService<BassMusicPlayer>());
+        services.AddSingleton<MusicCatalogService>();
+        services.AddSingleton<MusicPlayerService>();
+        // 音乐迷你控制条（V0.2.1 增量②）：单例窗口，构造注入 MusicPlayerService/EventBus/ConfigService
+        // 自动解析；显隐自评驱动 Show/Hide，退出 Environment.Exit 硬退不走容器 dispose（与音乐服务同策略）
+        services.AddSingleton<MusicMiniBarWindow>();
         services.AddTransient<PetWindow>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
-            desktop.MainWindow = _serviceProvider.GetRequiredService<PetWindow>();
+            // V0.1.3 多桌宠：按配置（settings.Pets，旧配置自动迁移）创建全部桌宠；主宠作为 MainWindow
+            var petManager = _serviceProvider.GetRequiredService<PetManager>();
+            desktop.MainWindow = petManager.CreateAllFromConfig();
 
             // 自动加载 WZ
             var wzService = _serviceProvider.GetRequiredService<WzService>();
             var configService = _serviceProvider.GetRequiredService<ConfigService>();
             var eventBus = _serviceProvider.GetRequiredService<EventBus>();
+
+            // macOS Dock 图标（V0.1.0 对外发布默认显示——Dock 有应用图标可右键退出；
+            // 配置关 = 旧版 Accessory 行为：不进 Dock/Cmd-Tab 仅状态栏托盘，桌宠右键菜单可随时切换。
+            // Windows 任务栏隐藏走 PetWindow.ShowInTaskbar，与此无关。）
+            if (OperatingSystem.IsMacOS())
+            {
+                try { Utils.MacNative.SetDockIconVisible(configService.GetShowDockIcon()); }
+                catch (Exception ex) { Console.Error.WriteLine($"[App] DockIcon: {ex.Message}"); }
+            }
             // 注入缓存（世界地图树预渲染缓存用；预构建在 WZ 加载成功后触发）
             try
             {
@@ -89,12 +115,20 @@ public partial class App : Application
             catch (Exception ex) { Console.Error.WriteLine($"[App] 缓存注入: {ex.Message}"); }
             var petWindow = desktop.MainWindow as PetWindow;
 
+            // 音乐迷你控制条（V0.2.1 增量②）：注册即实例化挂订阅（单例解析一次，之后由显隐自评
+            // 决定 Show/Hide）；构造/订阅任何失败仅 stderr 不影响主流程（不崩溃不弹模态）
+            try
+            {
+                _ = _serviceProvider.GetRequiredService<MusicMiniBarWindow>();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[App] MiniBar init: {ex.Message}"); }
+
             // ===== Agent 接入链装配（PLAN-agent-integration.md §1/§3）=====
             // 数据流：adapter(Hermes/CC/Codex) → EventBus(AgentStateChanged) → Aggregator
             //        → EventBus(PetReflectStateChanged) → EffectLayerService(气泡/表情)
             // Aggregator 与 EffectLayerService 在构造内已自 Subscribe，这里只 new + Start。
-            // NO_AI 编译符号（Windows 纯净版打包：-p:DefineConstants=NO_AI）整块跳过——无任何
-            // AI 适配器/轮询/重连，即开即用纯桌宠；正常构建不受影响。
+            // NO_AI 纯净版打包（-p:MiniPetNoAi=true，csproj 剔除 Adapters/聊天窗/AI 设置页并定义
+            // NO_AI 符号）整块跳过——无任何 AI 适配器/轮询/重连，即开即用纯桌宠；正常构建不受影响。
 #if !NO_AI
             try
             {
@@ -120,7 +154,14 @@ public partial class App : Application
                     _effectLayer = new EffectLayerService(eventBus, balloonService, configService, paperdoll);
                     // 接 IActionDriver（缺口3）：AnimService 实现 IActionDriver，Run/Idle 经它切忙碌动作
                     //     （纸娃娃→walk1 / Mob→move / NPC→fallback stand）。internal set 同 assembly 可写。
-                    _effectLayer.ActionDriver = _serviceProvider.GetRequiredService<AnimService>();
+                    // V0.1.3 多桌宠：AnimService 已 per-pet → Agent 特效只绑定「主宠」的实例与气泡目标；
+                    //     主宠切走（移除/改设）时经 PrimaryChanged 跟随，不留悬空驱动。
+                    ApplyPrimaryToEffectLayer(_effectLayer, petManager);
+                    petManager.PrimaryChanged += _ =>
+                    {
+                        // Agent 集成被禁用时 EffectLayer 不存在 → 静默跳过，不打无谓错误
+                        if (_effectLayer != null) { ApplyPrimaryToEffectLayer(_effectLayer, petManager); }
+                    };
 
                     // 3) 按 adapter 开关实例化 adapter 并 Start
                     if (ai.HermesEnabled)
@@ -177,8 +218,8 @@ public partial class App : Application
                             try { wzService.GetWorldMapTree(); }
                             catch (Exception ex) { Console.Error.WriteLine($"[App] 世界地图树预构建: {ex.Message}"); }
                         });
-                        if (petWindow != null)
-                            petWindow.LoadDefaultPet(wzService);
+                        // V0.1.3：每只桌宠各自恢复自己的实体
+                        petManager.LoadAllPets(wzService);
                     }
                     else
                     {
@@ -195,12 +236,9 @@ public partial class App : Application
                             failWindow.Show();
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[App] 失败弹窗: {ex.Message}"); }
-                        // 缓存加载默认宠物（现有逻辑保留）
-                        if (petWindow != null)
-                        {
-                            var spriteService = _serviceProvider.GetRequiredService<SpriteService>();
-                            petWindow.LoadDefaultPet(null);
-                        }
+                        // 缓存加载默认宠物（现有逻辑保留；V0.1.3：全部桌宠）
+                        _ = _serviceProvider.GetRequiredService<SpriteService>();
+                        petManager.LoadAllPets(null);
                     }
                 }
                 catch (Exception ex)
@@ -214,15 +252,15 @@ public partial class App : Application
                         failWindow.Show();
                     }
                     catch (Exception ex2) { Console.Error.WriteLine($"[App] 异常弹窗: {ex2.Message}"); }
-                    // 异常后也尝试缓存加载
-                    if (petWindow != null) petWindow.LoadDefaultPet(null);
+                    // 异常后也尝试缓存加载（V0.1.3：全部桌宠）
+                    petManager.LoadAllPets(null);
                 }
             }
             else
             {
                 // WZ 路径未配置：默认打开设置页引导配置（2026-08-17 用户要求），并从缓存加载默认宠物
                 petWindow?.OpenSettingsForWzConfig();
-                if (petWindow != null) petWindow.LoadDefaultPet(null);
+                petManager.LoadAllPets(null);
             }
 
             // 订阅 AppExit 事件来真正退出应用
@@ -231,11 +269,13 @@ public partial class App : Application
                 // 先停 agent 接入链（轮询/FSW），避免退出期间还发状态事件
                 try
                 {
+#if !NO_AI
                     foreach (var ad in _agentAdapters)
                     {
                         try { ad.Stop(); } catch { }
                     }
                     _agentAdapters.Clear();
+#endif
                     _agentAggregator?.Stop();
                 }
                 catch { }
@@ -256,6 +296,22 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// 把「主宠」绑成 Agent 特效的驱动 + 气泡目标（V0.1.3 多桌宠：AnimService 已 per-pet，
+    /// 特效只作用于主宠；主宠切换 / 移除时重新绑定，避免指向已销毁窗口的动画实例）。
+    /// </summary>
+    private static void ApplyPrimaryToEffectLayer(EffectLayerService effectLayer, PetManager petManager)
+    {
+        try
+        {
+            var primary = petManager.Primary;
+            effectLayer.ActionDriver = primary?.Animation;
+            effectLayer.TargetPetId = primary?.PetId;
+            Console.WriteLine($"[App] Agent 特效绑定主宠: {primary?.PetId ?? "(无)"}");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[App] ApplyPrimaryToEffectLayer: {ex.Message}"); }
     }
 
     /// <summary>

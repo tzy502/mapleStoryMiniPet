@@ -44,6 +44,113 @@ public class PaperdollService : IEntityFrameProvider
     // 表情驱动（预留 gateway：未来 Hermes/Claude/Codex 按 agent 状态注入）。
     public IExpressionDriver? ExpressionDriver { get; set; }
 
+    // ═══════════════════════════════════════════
+    // 表情（V0.2.x M1）：手动/自动表情状态
+    //   PaperdollService 是 per-pet Transient（App.axaml.cs）→ 状态天然多宠隔离
+    // ═══════════════════════════════════════════
+
+    /// <summary>当前手动/自动播放中的表情（default = 无）。volatile：Tick 线程写、渲染线程读。</summary>
+    private volatile string _manualExpression = ExpressionDefault;
+    /// <summary>播放截止时刻（durationMs ≤ 0 时为 DateTime.MaxValue = 常驻）。</summary>
+    private DateTime _manualExpireUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// WZ 实测的 25 个表情（default + 24，见 docs/ai/PLAN-表情功能.md §2）。
+    /// Friendly = 可进「随机表情」池；负面表情只能从菜单手动播。
+    /// </summary>
+    /// 顺序照抄 MapleSalon2 `const/emotions.ts:31` 的 CharacterExpressionsOrder（qBlue 是 GMS 特有，附在末尾）。
+    /// Friendly = 进「随机表情」池（PLAN §4.4：只放友好表情，shine 不在池内）。
+    public static readonly (string Key, string Cn, bool Friendly)[] KnownExpressions =
+    {
+        ("blink", "眨眼", false), ("hit", "受击", false), ("smile", "微笑", true),
+        ("troubled", "烦恼", false), ("cry", "哭", false), ("angry", "生气", false),
+        ("bewildered", "慌张", false), ("stunned", "发晕", false), ("vomit", "呕吐", false),
+        ("oops", "哎呀", true), ("cheers", "欢呼", true), ("chu", "亲亲", true),
+        ("wink", "眨眼（俏皮）", true), ("pain", "痛苦", false), ("glitter", "闪亮", true),
+        ("despair", "绝望", false), ("love", "爱心", true), ("shine", "闪耀", false),
+        ("blaze", "怒火", false), ("hum", "哼歌", true), ("bowing", "鞠躬", false),
+        ("hot", "热", false), ("dam", "郁闷", false), ("default", "默认", false),
+        ("qBlue", "蓝色问号", false),
+    };
+
+    /// <summary>
+    /// 播放表情，durationMs 后自动回默认（≤0 = 常驻直到 <see cref="CancelExpression"/>）。
+    /// 表情只换**脸图层内容**，不打断 body 动作（不进 AnimService 状态机）。
+    /// 帧源缓存 key 已含 expression（CollectPiecesForFrame），换表情零额外失效成本。
+    /// </summary>
+    public void PlayExpression(string expr, int durationMs = 3000)
+    {
+        _manualExpression = string.IsNullOrEmpty(expr) ? ExpressionDefault : expr;
+        _manualExpireUtc = durationMs > 0 ? DateTime.UtcNow.AddMilliseconds(durationMs) : DateTime.MaxValue;
+    }
+
+    /// <summary>立即回默认表情。</summary>
+    public void CancelExpression()
+    {
+        _manualExpression = ExpressionDefault;
+        _manualExpireUtc = DateTime.MinValue;
+    }
+
+    /// <summary>当前生效的表情（诊断/测试用）。</summary>
+    public string CurrentExpression => ResolveExpression();
+
+    /// <summary>手动表情是否在生效中。</summary>
+    public bool IsExpressionActive =>
+        !string.Equals(_manualExpression, ExpressionDefault, StringComparison.Ordinal)
+        && DateTime.UtcNow < _manualExpireUtc;
+
+    // ── M2 自动表情时钟（眨眼 / 随机表情）──
+    private DateTime _nextBlinkUtc = DateTime.MinValue;
+    private DateTime _nextRandomUtc = DateTime.MinValue;
+    private readonly Random _exprRng = new();
+
+    /// <summary>自动眨眼（待机每 3~6s 眨一次，≈180ms）。菜单可关。</summary>
+    public bool AutoBlinkEnabled { get; set; } = true;
+    /// <summary>随机表情（待机每 20~45s 播一个友好表情，3s）。菜单可开，默认关。</summary>
+    public bool RandomExpressionEnabled { get; set; }
+    /// <summary>抑制随机表情（行走/攀爬、拖拽、Agent 忙碌时由外部置位；眨眼不受影响）。</summary>
+    public bool SuppressRandomExpression { get; set; }
+
+    /// <summary>
+    /// 表情时钟：由外部每帧驱动（PetWindow 33ms 定时器）。
+    /// 手动表情播放期间不打扰；眨眼与随机表情各自独立计时。
+    /// </summary>
+    public void TickExpressionClock()
+    {
+        try
+        {
+            if (IsExpressionActive)
+            {
+                return;
+            }
+            var now = DateTime.UtcNow;
+            if (AutoBlinkEnabled && now >= _nextBlinkUtc)
+            {
+                _nextBlinkUtc = now.AddMilliseconds(_exprRng.Next(3000, 6000));
+                PlayExpression(ExpressionBlink, 180);
+                return;
+            }
+            if (RandomExpressionEnabled && !SuppressRandomExpression)
+            {
+                if (_nextRandomUtc == DateTime.MinValue)
+                {
+                    // 首次开启也要等 20~45s（不能 immediate 播一个，验收 §4 指出过）
+                    _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
+                }
+                else if (now >= _nextRandomUtc)
+                {
+                    _nextRandomUtc = now.AddMilliseconds(_exprRng.Next(20000, 45000));
+                    var pool = KnownExpressions.Where(e => e.Friendly).ToArray();
+                    if (pool.Length > 0)
+                    {
+                        PlayExpression(pool[_exprRng.Next(pool.Length)].Key, 3000);
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Paperdoll] TickExpressionClock: {ex.Message}"); }
+    }
+
     /// <summary>面向（true=朝左，水平翻转渲染；默认朝右）。</summary>
     public bool Flip { get; set; }
 
@@ -83,6 +190,11 @@ public class PaperdollService : IEntityFrameProvider
     private readonly ConcurrentDictionary<string, int> _chairEffectPosCache = new();
     private readonly ConcurrentDictionary<string, int> _chairEffectZCache = new();
     private readonly ConcurrentDictionary<string, bool> _chairTamingMobCache = new();
+    /// <summary>椅子特效帧 delay 缓存（WZ {eff}/{frame}/delay；缺省 110ms 对齐 MapleSalon2/WzComparerR2）。</summary>
+    private readonly ConcurrentDictionary<string, int> _chairEffectDelayCache = new();
+
+    // R-chair2 椅子 info 快照缓存（bodyRelMove/sitEmotion/sitAction/removeBody/removeEffect 一次读取）
+    private readonly ConcurrentDictionary<string, ChairDataSnapshot> _chairDataCache = new();
     // 装备真实 vslot/islot 读取缓存（itemId → 槽串；null=WZ 无数据，回退硬编码默认）。
     // 2026-08-17 修复：遮挡锁原用硬编码 vslot（帽 CpH1H5 等），cap 1003953 真实 vslot=CpH5
     // （只占 Cp+H5，不锁前发 H1）却被硬编码锁 H1 → 前发 hairOverHead 被错误隐藏（用户反馈
@@ -129,6 +241,7 @@ public class PaperdollService : IEntityFrameProvider
     /// <summary>设置当前外观（主窗口渲染目标）。切换外观清空依赖外观的缓存。</summary>
     public void SetAppearance(CharacterAppearance appearance)
     {
+        CancelExpression();   // 换外观回到默认表情（避免旧外观的表情残留）
         _current = appearance;
         _currentHash = HashAppearance(appearance);
         _zmapCache = null;
@@ -144,6 +257,7 @@ public class PaperdollService : IEntityFrameProvider
         _chairEffectPosCache.Clear();
         _chairEffectZCache.Clear();
         _chairTamingMobCache.Clear();
+        _chairDataCache.Clear();
         _vslotCache.Clear();
         _islotCache.Clear();
         _loggedFrameFailures.Clear();
@@ -169,9 +283,10 @@ public class PaperdollService : IEntityFrameProvider
         try
         {
             var hash = HashAppearance(a);
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault));
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault), action, frame);
             ResolveAnchors(pieces);
             AssignLayers(pieces);
+            HideFrontFaceLayersOnBackAction(pieces, a, action, frame);
             ApplyLocks(hash, a, pieces);
             foreach (var p in pieces)
             {
@@ -356,7 +471,7 @@ public class PaperdollService : IEntityFrameProvider
                 return (null, 0, 0, 0, 0);
             }
 
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression));
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, expression), action, frame);
             ResolveAnchors(pieces);
             // R5 诊断：锚点解算后 body 未锁定（数据缺失/断件）——只打一次，防 30fps 刷屏
             var bodyDiagnostic = pieces.FirstOrDefault(p => p.Category == "body");
@@ -366,6 +481,7 @@ public class PaperdollService : IEntityFrameProvider
                 Console.Error.WriteLine($"[Paperdoll] ResolveAnchors: body 未锁定（body 数据缺失）hash={hash} action={action} frame={frame} pieces={pieces.Count}");
             }
             AssignLayers(pieces);
+            HideFrontFaceLayersOnBackAction(pieces, a, action, frame);
             // 遮挡锁：帽子遮发 / 套服遮裤等覆盖关系（对齐 MapleSalon2 buildLock/refreshLock）
             ApplyLocks(hash, a, pieces);
 
@@ -379,7 +495,6 @@ public class PaperdollService : IEntityFrameProvider
                 }
                 return (null, 0, 0, 0, 0);
             }
-
             // 帧位移 move（对齐 MapleSalon2 instruction.move）：WZ 每帧有 move 位移数据，
             // 角色位置由 move 决定（平滑）；忽略它则位置纯靠锚点（body 每帧 navel 变 → 呼吸整体摆 → 抖动）
             // 2026-08-16：move 查询走缓存（神之子头冠卡顿修复）——动画帧 RenderFrame 原每帧
@@ -404,16 +519,19 @@ public class PaperdollService : IEntityFrameProvider
                 canvas.Scale(-1, 1);
                 canvas.Translate(-bounds.W / 2f, 0);
             }
+            // 椅子/特效固定基准锚（胶水 2026-09-16「椅子的 origin 逻辑在抖动」）：
+            // 场景物件（椅子/花田特效）不随 body 呼吸帧摆——它们的锚定 navel 用**同动作 frame 0** 的
+            // body navel（固定值），当前呼吸帧的 navel 变化不再带动椅子层（实测 stand1 呼吸两帧
+            // 铜像位移 8px 循环抖动）。
             // z 大（底）先画，z 小（顶）后画；piece 相对 body 锚点平移到画布 + 帧位移 move
+            // （2026-09-16 回退「sceneObj 固定基准/冻结」实验：引发花田渲染错位——该方向的
+            //   呼吸抖动对齐需先精读 web 的坐标分层语义，见 §7.30 下轮）
             foreach (var p in locked.OrderByDescending(p => p.ZIndex))
             {
                 var pb = GetBmp(p.PiecePath);
                 if (pb == null) continue;
                 var dyeBmp = GetDyeBmp(a, p.Category, p.PiecePath);
-                if (dyeBmp != null)
-                    canvas.DrawBitmap(dyeBmp, p.FinalX - bx - bounds.Left + mvX, p.FinalY - by - bounds.Top + mvY);
-                else
-                    canvas.DrawBitmap(pb, p.FinalX - bx - bounds.Left + mvX, p.FinalY - by - bounds.Top + mvY);
+                canvas.DrawBitmap(dyeBmp ?? pb, p.FinalX - bx - bounds.Left + mvX, p.FinalY - by - bounds.Top + mvY);
             }
             if (Flip) canvas.Restore();
             // 翻转后 origin 镜像（水平）
@@ -446,9 +564,41 @@ public class PaperdollService : IEntityFrameProvider
     // 部件收集（WZ 读取在此，结果缓存 per hash|action|frame|expression）
     // ═══════════════════════════════════════════
 
-    private List<PieceSource> CollectPiecesForFrame(string hash, CharacterAppearance a, string action, int frame, string expression)
+    private List<PieceSource> CollectPiecesForFrame(string hash, CharacterAppearance a, string action, int frame, string expression,
+        bool sampleAllChairFrames = false)
     {
-        string key = $"{hash}|{action}|{frame}|{expression}";
+        // R-chair2（对齐 MapleSalon2 sitCharacter/generateChairGroupData）：
+        // ① 表情：info.sitEmotion 存在时覆盖用户表情（gd.expression = sitEmotion || data.expression，数字→表情名查表）；
+        // ② info.removeBody（变身椅）：人物部件全隐藏，只留椅子特效层（对齐 gd.hideBody → character.isHideBody）；
+        // ③ info.removeEffect：装备特效全隐（对齐 ChairTab useCharacterEffectVisible(chair.isHideEffect)）。
+        //    invisibleWeapon/invisibleCape 在 web 端 getter 无消费者（未实现），不跟随。
+        var chairData = string.IsNullOrEmpty(a.Chair?.Id) ? null : GetChairData(a.Chair!.Id);
+        if (chairData != null && chairData.SitEmotion.Length > 0) { expression = chairData.SitEmotion; }
+        bool chairHideBody = chairData != null && chairData.RemoveBody;
+        bool chairRemoveEffect = chairData != null && chairData.RemoveEffect;
+        // 椅子特效帧按真实时间推进（无状态时间分片，对齐 MapleSalon2 BaseAnimatablePart 的 Ticker 连续播放），
+        // 而 sources 缓存 key（hash|action|frame|expression）没有时间维度——命中缓存时特效帧被冻结在
+        // 首次时间片（2026-10-14 探针 --chairanim 实证 3019632 跨 13 个 210ms 时间片 8 帧输出全同）。
+        // 修法：特效时间片编进 key（时间片变化才重收部件）；帧号本调用内一次计算并传参给
+        // AddChairPieces（key 与部件路径同源、不跨时间片漂移）。
+        // sampleAllChairFrames（bounds/预热专用）：不编时间、union 全部特效帧 → 画布尺寸稳定
+        // （3019632 各帧 241x173~207 不等，按单帧采样会裁边）。
+        string chairKeyPart = "";
+        int[]? chairTimeFrames = null;
+        if (chairData != null)
+        {
+            if (sampleAllChairFrames)
+            {
+                chairKeyPart = "cfall";
+            }
+            else
+            {
+                string chairRoot = GetRoots(hash, a).FirstOrDefault(r => r.Category == "chair").Root ?? "";
+                chairTimeFrames = ComputeCurrentChairFrames(chairRoot);
+                if (chairTimeFrames != null) { chairKeyPart = "cf" + string.Join(".", chairTimeFrames); }
+            }
+        }
+        string key = $"{hash}|{action}|{frame}|{expression}|{chairKeyPart}";
         if (_frameSourcesCache.TryGetValue(key, out var cached)) return cached;
 
         // R-chair：带椅子时角色渲染为坐姿（对齐 MapleSalon2 sitCharacter：groupData.action = info.sitAction || Sit）。
@@ -457,6 +607,14 @@ public class PaperdollService : IEntityFrameProvider
         // R20 骑乘：坐骑 characterAction 映射叠加在坐姿之上——01930001 等飞行坐骑角色应播映射动作
         // （stand1→fly），坐骑部件由 AddMountPieces 按原角色动作独立解析（保持 MapleSalon2 语义）。
         var (renderAction, renderFrame) = ResolveRenderAction(a, action, frame);
+        // 背面动作判定（对齐 sdlMS character_render_system.cpp:129 `bone_data[action][frame].face` 与
+        // MapleSalon2 CharacterFaceFrame.isBackAction）：body 帧 face=0（爬绳 ladder/rope 等）→ 不渲染
+        // 脸型与 101 面饰，否则后脑勺上会贴一张正脸（「背部有眼睛」）。
+        // isHideFace（MapleSalon2 characterFaceFrame.ts:106-109）：body 动作为 blink / hide 时也不画脸
+        bool faceVisible = IsBodyFaceVisible(a, renderAction, renderFrame)
+                           && action != "blink" && action != "hide";
+        // invisibleFace（MapleSalon2 item.ts:311）：穿戴物 info.invisibleFace == 1（面罩类）→ 覆盖脸型
+        bool overrideFace = IsFaceOverriddenByEquipment(hash, a);
 
         var sources = new List<PieceSource>();
         // R18 hideBody：坐骑动作映射 hideBody（characterAction[坐骑动作] == "hideBody"，坐骑完全覆盖角色）
@@ -465,6 +623,8 @@ public class PaperdollService : IEntityFrameProvider
         foreach (var (category, root) in GetRoots(hash, a))
         {
             if (mountHideBody && category != "mount") continue;
+            // R-chair2 变身椅（info.removeBody）：人物部件全隐藏，只留椅子特效层
+            if (chairHideBody && category != "chair") continue;
             // R1 坐骑：TamingMob/{id}.img/{mountAction}/{mountFrame}/0 —— 结构同角色部件（origin/map.navel/z），
             // 走同一 Piece 管线；动作缺省时回退 stand1/stand2（骑乘姿态），帧号 clamp 到坐骑帧数（最小联动）。
             if (category == "mount")
@@ -474,24 +634,35 @@ public class PaperdollService : IEntityFrameProvider
             }
             // R1 椅子：Item/Install|Cash/{img}.img/{id}/effect|effect2|effect3/{frame} —— effect 帧节点本身是单 canvas（Wz_Png），
             // 无 map 锚点（ResolveAnchors 兜底锚到身体 navel）；帧号 clamp 到特效帧数。
-            // R-chair：坐姿渲染时椅子特效帧用原始帧号（多帧特效随动画循环）。
+            // R-chair：特效帧按 WZ delay 独立时间片推进（帧号由调用方预计算传入，null = bounds/预热 All 模式）。
             if (category == "chair")
             {
-                AddChairPieces(sources, a, root, frame);
+                AddChairPieces(sources, a, root, frame, chairTimeFrames);
                 continue;
             }
             // R14 脸型：表情结构（对齐 MapleSalon2 CharacterFaceItem）——default 无数字帧（直接 piece），
             // blink/angry 等为数字帧（blink/0/face…）；帧号取模循环（对齐 MapleSalon2 frame % frames.length）。
             if (category == "face")
             {
+                if (!faceVisible || overrideFace) { continue; }
                 AddExpressionPieces(sources, a, category, root, ResolveFaceAction(root, expression), frame);
                 continue;
             }
             // R14 饰品三分类（101 面饰 / 102 眼饰 / 103 耳环，对齐 MapleSalon2 拆分，可同时穿戴）：
             // 动作结构优先，动作缺失回退 default 静态帧；101 面饰与脸型同构（表情结构 default/blink…），走表情收集。
-            if (category is "faceaccessory" or "eyeaccessory" or "earring")
+            if (category == "faceaccessory")
             {
-                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame);
+                // 101 面饰与脸型同层：背面动作时随脸一起隐藏
+                // （对齐 MapleSalon2 item.ts isFaceAccessory = isFace || isFaceAccessory）
+                if (!faceVisible) { continue; }
+                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame, faceVisible);
+                continue;
+            }
+            if (category is "eyeaccessory" or "earring")
+            {
+                // 102 眼饰 / 103 耳环不属于 faceAccessory：背面动作保留（与 MapleSalon2 一致）；
+                // 但静态回退时要走 backDefault（103 耳环自带背面粉）
+                AddAccessoryPieces(sources, a, category, root, renderAction, expression, renderFrame, faceVisible);
                 continue;
             }
 
@@ -539,7 +710,9 @@ public class PaperdollService : IEntityFrameProvider
         // R13 节点级装备特效：{root}/effect（真实客户端披风/武器特效结构，如 110249；本 WZ 披风仅帧级 effect）。
         // 按 EnableEffect 开关收集，effect 帧 clamp 到特效自身帧数（最小可用联动，同椅子 effect 的处理）。
         // R18：hideBody 时角色部件全隐藏，装备特效同样不收集（避免悬空显示）。
-        if (a.EnableEffect && !mountHideBody)
+        // R-chair2：变身椅（removeBody）同隐藏；椅子 info.removeEffect → 装备特效全隐
+        // （对齐 MapleSalon2 ChairTab useCharacterEffectVisible(chair.isHideEffect)）。
+        if (a.EnableEffect && !mountHideBody && !chairHideBody && !chairRemoveEffect)
         {
             foreach (var (category, root) in GetRoots(hash, a))
             {
@@ -597,7 +770,7 @@ public class PaperdollService : IEntityFrameProvider
     /// ③ 无动作结构（101 面饰实测：仅 default/blink/hit… 表情结构，与脸型同构）→ 走表情收集 AddExpressionPieces。
     /// 修复前 101 面饰被当动作结构走 {root}/stand1/0 → 不存在 → 永不渲染（用户反馈「面饰不显示」）。
     /// </summary>
-    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, string expression, int frame)
+    private void AddAccessoryPieces(List<PieceSource> sources, CharacterAppearance a, string category, string root, string action, string expression, int frame, bool faceVisible = true)
     {
         string itemId = GetCategoryItemId(a, category);
         // ① 动作结构
@@ -614,8 +787,8 @@ public class PaperdollService : IEntityFrameProvider
                 }
                 return;
             }
-            // ② 帧缺失 → 静态 default 回退
-            AddDefaultStaticPiece(sources, a, category, root, itemId);
+            // ② 帧缺失 → 静态 default 回退（背面动作优先用物品自带的 backDefault 背面粉）
+            AddDefaultStaticPiece(sources, a, category, root, itemId, backFace: !faceVisible);
             return;
         }
         // ③ 表情结构（101 面饰）：default 直接 piece / blink 数字帧
@@ -623,9 +796,15 @@ public class PaperdollService : IEntityFrameProvider
     }
 
     /// <summary>静态默认帧收集：{root}/default 直接 piece（102/103 动作缺失时的回退；piece 名同节点名 "default"，z 指向对应 accessory 层）。</summary>
-    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string category, string root, string itemId)
+    private void AddDefaultStaticPiece(List<PieceSource> sources, CharacterAppearance a, string category, string root, string itemId, bool backFace = false)
     {
+        // 背面动作（爬绳/趴下等 face=0）：优先用物品的 backDefault 背面粉（WZ 里 103 耳环等有该节点）；
+        // 没有 backDefault 的物品退回 default（对齐 MapleSalon2 的背面处理缺口，本项目自行补齐）。
         string defaultPath = $"{root}/default";
+        if (backFace && _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/backDefault") != null))
+        {
+            defaultPath = $"{root}/backDefault";
+        }
         if (!_wz.WithWzLock(() => _wz.FindNodeByPath(defaultPath) != null)) return;
         foreach (var pieceName in _wz.GetFramePieceNames(defaultPath))
         {
@@ -751,37 +930,124 @@ public class PaperdollService : IEntityFrameProvider
     /// R-chair（对齐 MapleSalon2 createItems 的 effectReg /effect[0-9]?/）：
     /// ① 收集 effect/effect2/effect3 全部特效层——probe 实测 30.8% 椅子带 effect2（778/2530），
     ///    原实现只收集 effect → 特效层整体缺失；
-    /// ② pos==1 椅子整体上移 50px（带 tamingMob 且 id&lt;3011000 上移 30px，对齐 ChairEffectPart）；
-    /// ③ effect 节点 z&gt;0 的特效层置顶（对齐 MapleSalon2 getOrCreatEffectLayer：z&gt;=1 → zIndex+200 置顶）。
+    /// ② effect 节点 z&gt;0 的特效层置顶（对齐 MapleSalon2 getOrCreatEffectLayer：z&gt;=1 → zIndex+200 置顶）。
+    /// R-chair2 锚定偏移（对齐 MapleSalon2 ChairEffectPart position 与 sitCharacter 的相对关系；
+    /// MiniPet 坐标系以人物 navel 为原点 = web 人物 pivot）：
+    /// ③ 有 bodyRelMove 且无 sitAction 且 pos&lt;2：web 中 effect 与人物**一起**平移 bodyRelMove（相对不变）
+    ///    → 锚 navel 不动；pos==1 保留整体上移 −50；
+    /// ④ 有 bodyRelMove 其余情况（pos&gt;=2 或有 sitAction）：web effect 原点钉在椅子坐标系原点、
+    ///    人物平移 bodyRelMove → MiniPet 锚 = navel − bodyRelMove（3019632 花田椅 pos=3 bm=(47,−2) → 锚 (−47,+2)）；
+    /// ⑤ 无 bodyRelMove 且 pos==1：保持现状（带 tamingMob 且 id&lt;3011000 → −30，否则 −50）；
+    /// ⑥ info.removeBody（变身椅）：web 人物容器 y−30 → effect 相对下移 +30。
     /// </summary>
-    private void AddChairPieces(List<PieceSource> sources, CharacterAppearance a, string chairRoot, int frame)
+    /// <summary>椅子特效单帧 delay（WZ {eff}/{frame}/delay；缺省 110ms 对齐 MapleSalon2/WzComparerR2 缺省）。缓存。</summary>
+    private int GetChairEffectDelay(string effectRoot, int frame)
+    {
+        string key = $"{effectRoot}|{frame}";
+        if (_chairEffectDelayCache.TryGetValue(key, out var d)) return d;
+        int delay = 0;
+        try { delay = _wz.GetIntProperty($"{effectRoot}/{frame}/delay"); } catch { }
+        if (delay <= 0) delay = 110;
+        _chairEffectDelayCache[key] = delay;
+        return delay;
+    }
+
+    /// <summary>
+    /// 椅子特效当前帧（无状态时间分片，2026-09-16 修「卡顿/不播放」）：按绝对时间在
+    /// 「各帧 delay 累计时长」环上定位当前帧——多调用点（主窗口/预览）幂等，不存在时钟被
+    /// 双重推进的闪烁；缺失帧（WZ 帧编号不连续）自动跳过。
+    /// </summary>
+    private int ComputeChairEffectFrame(string chairRoot, string effName, int effectFrames)
+    {
+        if (effectFrames <= 1) return 0;
+        long total = 0;
+        var delays = new long[effectFrames];
+        for (int f = 0; f < effectFrames; f++)
+        {
+            delays[f] = GetChairEffectDelay(chairRoot + "/" + effName, f);
+            total += delays[f];
+        }
+        if (total <= 0) return 0;
+        // 高精度时钟（DateTime.UtcNow 在 Windows 精度 ~15.6ms → 帧切换时机跳变 = 卡顿）
+        long pos = Math.Max(Environment.TickCount64, 0) % total;
+        for (int f = 0; f < effectFrames; f++)
+        {
+            if (pos < delays[f]) return f;
+            pos -= delays[f];
+        }
+        return 0;
+    }
+
+    /// <summary>椅子特效层名（对齐 MapleSalon2 chairEffectItem effectReg /effect[0-9]?/ 实测全集）。</summary>
+    private static readonly string[] ChairEffectLayers = { "effect", "effect2", "effect3" };
+
+    /// <summary>
+    /// 各特效层（effect/effect2/effect3）当前时间片帧号；没有任何多帧层 → null
+    /// （特效与时间无关，缓存 key 保持原样不引入时间维度）。热路径零 WZ 锁（帧数/delay 全走缓存）。
+    /// </summary>
+    private int[]? ComputeCurrentChairFrames(string chairRoot)
+    {
+        if (chairRoot.Length == 0) { return null; }
+        var frames = new int[ChairEffectLayers.Length];
+        bool animated = false;
+        for (int i = 0; i < ChairEffectLayers.Length; i++)
+        {
+            int fc = GetChairEffectFrameCount($"{chairRoot}/{ChairEffectLayers[i]}");
+            if (fc > 1)
+            {
+                frames[i] = ComputeChairEffectFrame(chairRoot, ChairEffectLayers[i], fc);
+                animated = true;
+            }
+        }
+        return animated ? frames : null;
+    }
+
+    private void AddChairPieces(List<PieceSource> sources, CharacterAppearance a, string chairRoot, int frame, int[]? timeFrames)
     {
         string itemId = a.Chair?.Id ?? "";
-        foreach (var effName in new[] { "effect", "effect2", "effect3" })
+        var data = GetChairData(itemId);
+        for (int li = 0; li < ChairEffectLayers.Length; li++)
         {
+            string effName = ChairEffectLayers[li];
             string effectRoot = $"{chairRoot}/{effName}";
             int effectFrames = GetChairEffectFrameCount(effectRoot);
             if (effectFrames <= 0) continue;
-            int effectFrame = Math.Min(frame, effectFrames - 1);
-            string piecePath = $"{effectRoot}/{effectFrame}";
-            if (!_wz.WithWzLock(() => _wz.FindNodeByPath(piecePath) != null)) continue;
-            int pos = GetChairEffectPos(effectRoot);
-            int z = GetChairEffectZ(effectRoot);
-            int offsetY = 0;
-            if (pos == 1)
+            // timeFrames == null → bounds/预热 All 模式：union 全部帧（帧尺寸不一，画布需容纳最大帧）；
+            // 否则用调用方算好的当前时间片帧号（与缓存 key 同源）。
+            if (timeFrames == null)
             {
-                bool hasTamingMob = HasChairTamingMob(chairRoot);
-                int idNum = int.TryParse(itemId, out var iv) ? iv : 0;
-                offsetY = (hasTamingMob && idNum / 1000 < 3011) ? -30 : -50;
+                for (int f = 0; f < effectFrames; f++)
+                {
+                    AddChairEffectPiece(sources, a, data, itemId, chairRoot, effectRoot, effName, f);
+                }
             }
-            // z>0 特效层（effect2 实测 z=3）置顶渲染；z<=0（椅子本体）走默认身后层
-            string layerOverride = z > 0 ? "effect" : "";
-            sources.Add(new PieceSource("chair", $"{effName}/{effectFrame}", piecePath, itemId)
+            else
             {
-                OffsetY = offsetY,
-                ZFieldOverride = layerOverride,
-            });
+                AddChairEffectPiece(sources, a, data, itemId, chairRoot, effectRoot, effName, timeFrames[li]);
+            }
         }
+    }
+
+    private void AddChairEffectPiece(List<PieceSource> sources, CharacterAppearance a, ChairDataSnapshot data,
+        string itemId, string chairRoot, string effectRoot, string effName, int effectFrame)
+    {
+        string piecePath = $"{effectRoot}/{effectFrame}";
+        if (!_wz.WithWzLock(() => _wz.FindNodeByPath(piecePath) != null)) return;
+        int pos = GetChairEffectPos(effectRoot);
+        int z = GetChairEffectZ(effectRoot);
+        bool hasTamingMob = false;
+        int idNum = int.TryParse(itemId, out var iv) ? iv : 0;
+        if (pos == 1 && !data.HasBodyRelMove) { hasTamingMob = HasChairTamingMob(chairRoot); }
+        var (offX, offsetY) = ComputeChairEffectOffset(data.HasBodyRelMove, data.BmX, data.BmY,
+            data.HasSitAction, pos, data.RemoveBody, hasTamingMob, idNum);
+        // z>0 特效层（effect2 实测 z=3）置顶渲染；z<=0（椅子本体）走默认身后层
+        string layerOverride = z > 0 ? "effect" : "";
+        sources.Add(new PieceSource("chair", $"{effName}/{effectFrame}", piecePath, itemId)
+        {
+            OffsetX = offX,
+            OffsetY = offsetY,
+            ZFieldOverride = layerOverride,
+        });
     }
 
     /// <summary>椅子坐姿动作（对齐 MapleSalon2 getFirstCharacterGroupData：info/sitAction 优先，缺省 Sit）。
@@ -879,6 +1145,104 @@ public class PaperdollService : IEntityFrameProvider
         bool b = _wz.WithWzLock(() => _wz.FindNodeByPath($"{chairRoot}/info/tamingMob") != null);
         _chairTamingMobCache[chairRoot] = b;
         return b;
+    }
+
+    /// <summary>椅子 info 快照（R-chair2，对齐 MapleSalon2 generateChairGroupData / ChairEffectPart）：
+    /// bodyRelMove（坐姿偏移）、sitEmotion（数字索引→表情名）、sitAction 有无、removeBody/removeEffect。
+    /// 缓存 per 椅子 id，动画热帧零 WZ 读取。</summary>
+    private sealed class ChairDataSnapshot
+    {
+        public bool HasBodyRelMove;
+        public int BmX;
+        public int BmY;
+        public string SitEmotion = "";
+        public bool HasSitAction;
+        public bool RemoveBody;
+        public bool RemoveEffect;
+    }
+
+    /// <summary>MapleSalon2 CharacterExpressionsOrder（const/emotions.ts）：info.sitEmotion 数字索引 → 表情名
+    /// （3019632 花田椅 sitEmotion=14 → glitter）。表情名与 WZ Face img 表情节点同名。</summary>
+    private static readonly string[] ChairSitEmotionOrder =
+    {
+        "blink", "hit", "smile", "troubled", "cry", "angry", "bewildered", "stunned",
+        "vomit", "oops", "cheers", "chu", "wink", "pain", "glitter", "despair",
+        "love", "shine", "blaze", "hum", "bowing", "hot", "dam", "default",
+    };
+
+    /// <summary>info.sitEmotion 原始值 → 表情名（R-chair2）：数字按 MapleSalon2 CharacterExpressionsOrder 查表
+    /// （越界回退空串=保持用户表情），非数字原样返回（'hide' 等非法值由 face 管线回退 default）。</summary>
+    public static string ResolveChairSitEmotion(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        if (int.TryParse(raw, out var idx))
+        {
+            return (idx >= 0 && idx < ChairSitEmotionOrder.Length) ? ChairSitEmotionOrder[idx] : "";
+        }
+        return raw;
+    }
+
+    /// <summary>
+    /// 椅子 effect 层锚定偏移（R-chair2 纯函数，对齐 MapleSalon2 ChairEffectPart position × sitCharacter
+    /// 的相对关系；MiniPet 坐标系以人物 navel 为原点 = web 人物 pivot）：
+    /// ① 有 bodyRelMove 且无 sitAction 且 pos&lt;2：web 中 effect 与人物**一起**平移 bodyRelMove（相对不变）
+    ///    → 锚 navel 不动（0,0）；pos==1 保留整体上移 −50（ChairEffectPart: bm.y−50 相对人物 bm → 恒 −50）；
+    /// ② 有 bodyRelMove 其余情况（pos&gt;=2 或有 sitAction）：web effect 原点钉在椅子坐标系原点、人物平移
+    ///    bodyRelMove → MiniPet 锚 = navel − bodyRelMove（3019632 花田椅 pos=3 bm=(47,−2) → (−47,+2)）；
+    /// ③ 无 bodyRelMove 且 pos==1：保持 R-chair 现状（带 tamingMob 且 id&lt;3011000 → −30，否则 −50）；
+    /// ④ info.removeBody（变身椅）：web 人物容器 y−30 → effect 相对下移 +30（叠加到各分支）。
+    /// </summary>
+    public static (int OffX, int OffY) ComputeChairEffectOffset(
+        bool hasBodyRelMove, int bmX, int bmY, bool hasSitAction, int pos,
+        bool removeBody, bool hasTamingMob, int idNum)
+    {
+        int offX = 0;
+        int offY = 0;
+        if (hasBodyRelMove)
+        {
+            if (!hasSitAction && pos < 2)
+            {
+                if (pos == 1) { offY = -50; }
+            }
+            else
+            {
+                offX = -bmX;
+                offY = -bmY;
+            }
+        }
+        else if (pos == 1)
+        {
+            offY = (hasTamingMob && idNum / 1000 < 3011) ? -30 : -50;
+        }
+        if (removeBody) { offY += 30; }
+        return (offX, offY);
+    }
+
+    private ChairDataSnapshot GetChairData(string id)
+    {
+        if (_chairDataCache.TryGetValue(id, out var cached)) return cached;
+        var snap = new ChairDataSnapshot();
+        string root = ChairRoot(id);
+        if (root.Length > 0)
+        {
+            var bm = _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/bodyRelMove")?.GetValueEx<Wz_Vector>(null));
+            if (bm != null)
+            {
+                snap.HasBodyRelMove = true;
+                snap.BmX = bm.X;
+                snap.BmY = bm.Y;
+            }
+            var emotionRaw = _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/sitEmotion")?.GetValueEx<object>(null)?.ToString());
+            snap.SitEmotion = ResolveChairSitEmotion(emotionRaw);
+            snap.HasSitAction = !string.IsNullOrEmpty(_wz.GetStringProperty($"{root}/info/sitAction"));
+            snap.RemoveBody = _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/removeBody") != null);
+            // 对齐 MapleSalon2 isHideEffect = removeEffect || removeEffectAll || removeEffectBodyParts
+            snap.RemoveEffect = _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/removeEffect") != null)
+                || _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/removeEffectAll") != null)
+                || _wz.WithWzLock(() => _wz.FindNodeByPath($"{root}/info/removeEffectBodyParts") != null);
+        }
+        _chairDataCache[id] = snap;
+        return snap;
     }
 
     /// <summary>坐骑 characterAction 正向映射（缓存）：坐骑动作名 → 角色动作名（MapleSalon2 tamingMob.ts 同源）。</summary>
@@ -1115,6 +1479,20 @@ public class PaperdollService : IEntityFrameProvider
     /// 帧位移 move 读取（带缓存）：key = hash|action|frame。首次查 WZ（锁内），之后命中缓存零锁——
     /// 保证动画帧 RenderFrame 热帧不抢 _wzLock（后台预热持锁期间动画不阻塞）。
     /// </summary>
+    /// <summary>取指定帧的 body 锚点（MaterializePieces→ResolveAnchors 完整同口径管线）。椅子/特效层固定基准用。</summary>
+    private (int X, int Y) GetBodyFrameAnchor(string hash, CharacterAppearance a, string action, int frame)
+    {
+        try
+        {
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, frame, ExpressionDefault), action, frame);
+            if (pieces == null || pieces.Count == 0) { return (0, 0); }
+            ResolveAnchors(pieces);
+            var bodyP = pieces.FirstOrDefault(p => p.Category == "body");
+            return bodyP != null ? (bodyP.AnchorX, bodyP.AnchorY) : (0, 0);
+        }
+        catch { return (0, 0); }
+    }
+
     private Wz_Vector? GetFrameMove(string hash, CharacterAppearance a, string action, int frame)
     {
         string key = $"{hash}|{action}|{frame}";
@@ -1132,24 +1510,97 @@ public class PaperdollService : IEntityFrameProvider
         return mv;
     }
 
-    private List<Piece> MaterializePieces(List<PieceSource> sources)
+    private List<Piece> MaterializePieces(List<PieceSource> sources, string action = "", int frame = 0)
     {
         var pieces = new List<Piece>();
         foreach (var s in sources)
         {
             var meta = GetMeta(s.PiecePath);
             if (meta == null) continue;
-            pieces.Add(new Piece
+            var piece = new Piece
             {
                 Category = s.Category, PieceName = s.PieceName, PiecePath = s.PiecePath,
                 ItemId = s.ItemId, Ox = meta.Ox, Oy = meta.Oy, Map = meta.Map,
                 // R-chair：椅子特效层层覆盖（z>0 置顶）与 pos 偏移从 PieceSource 透传
                 ZField = s.ZFieldOverride.Length > 0 ? s.ZFieldOverride : meta.ZField,
                 OffsetX = s.OffsetX, OffsetY = s.OffsetY,
-            });
+            };
+            // alert / heal 动作：动作型装备提供 handMove 手部锚点（对齐 MapleSalon2
+            // CharacterActionItem.ancherSetup —— 这两个动作抬手/施放，武器等要挂到手部锚点；
+            // 部件若自带 handMove 则不覆盖）
+            if ((action == "alert" || action == "heal")
+                && IsActionItemCategory(piece.Category)
+                && !piece.Map.ContainsKey("handMove"))
+            {
+                piece.Map["handMove"] = HandMoveDefaultAnchor(frame);
+            }
+            pieces.Add(piece);
         }
         return pieces;
     }
+
+    /// <summary>
+    /// 背面动作（body 帧 face=0 / blink / hide）时，脸层容器整体隐藏
+    /// （对齐 MapleSalon2 characterFaceFrame.ts:185-196 `layer.visible = !isBackAction`）。
+    /// </summary>
+    private void HideFrontFaceLayersOnBackAction(List<Piece> pieces, CharacterAppearance a, string action, int frame)
+    {
+        var (renderAction, renderFrame) = ResolveRenderAction(a, action, frame);
+        bool back = !IsBodyFaceVisible(a, renderAction, renderFrame)
+                    || action == "blink" || action == "hide";
+        if (!back) { return; }
+        foreach (var p in pieces)
+        {
+            if (!string.IsNullOrEmpty(p.ResolvedLayer) && FrontFaceLayers.Contains(p.ResolvedLayer))
+            {
+                p.Hidden = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 脸层容器（对齐 MapleSalon2 characterFaceFrame.ts:185-196 的 FrontFaceLayers）：
+    /// 背面动作时这些层的部件整体不渲染 —— 不区分 category（102 眼饰若落在 accessoryEyeBelowFace 同样隐藏）。
+    /// </summary>
+    private static readonly HashSet<string> FrontFaceLayers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "accessoryFace", "capAccessoryBelowAccFace", "accessoryFaceOverFaceBelowCap",
+        "face", "accessoryEyeBelowFace", "accessoryFaceBelowFace",
+    };
+
+    /// <summary>
+    /// 是否有穿戴物声明 info.invisibleFace == 1（面罩类，遮住脸型）。
+    /// 对齐 MapleSalon2 item.ts:311 `isOverrideFace = wz?.info?.invisibleFace === 1`。
+    /// </summary>
+    private bool IsFaceOverriddenByEquipment(string hash, CharacterAppearance a)
+    {
+        try
+        {
+            foreach (var (category, root) in GetRoots(hash, a))
+            {
+                if (category is not ("face" or "faceaccessory" or "cap" or "capaccessory")) { continue; }
+                if (_wz.WithWzLock(() => _wz.GetIntProperty($"{root}/info/invisibleFace")) == 1)
+                {
+                    return true;
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>是否为「动作型装备」部件（非 body/head/hair/face/mount/chair/effect 的穿戴物）。</summary>
+    private static bool IsActionItemCategory(string category) =>
+        category is not ("body" or "head" or "hair" or "face" or "mount" or "chair" or "effect" or "ear");
+
+    /// <summary>alert / heal 动作的手部默认锚点（MapleSalon2 const/ancher.ts handMoveDefaultAnchers；
+    /// 帧号越界取第 0 个）。</summary>
+    private static (int x, int y) HandMoveDefaultAnchor(int frame) => frame switch
+    {
+        1 => (-10, 0),
+        2 => (-12, 3),
+        _ => (-8, -2),
+    };
 
     /// <summary>head 的耳朵 canvas：以 "ear" 结尾（排除 capeArm 等含 ear 子串的 key）。</summary>
     private static bool IsEarPiece(string name) => name.EndsWith("ear", StringComparison.OrdinalIgnoreCase);
@@ -1548,6 +1999,7 @@ public class PaperdollService : IEntityFrameProvider
     /// </summary>
     private static readonly Dictionary<string, string> CapeLayerAliases = new(StringComparer.OrdinalIgnoreCase)
     {
+        // —— 披风系（本项目原有）——
         ["capeArm"] = "cape",
         ["capeBack"] = "backCape",
         ["backCapeBelowHead"] = "backMailChestOverPants",
@@ -1560,6 +2012,36 @@ public class PaperdollService : IEntityFrameProvider
         ["capeOverBody"] = "weaponOverBody",
         ["capeBelowHead"] = "armBelowHead",
         ["capeOverArm"] = "gloveWrist",
+        // —— MapleSalon2 zmapIndex.fixLayers 其余条目（WZ 里层名与真实层不一致的装备）——
+        ["accessoryFaceOverCap"] = "accessoryEyeOverCap",   // 1012781
+        ["backBelowBody"] = "backShieldBelowBody",          // 1402233
+        ["backCapAcssesary"] = "backHairBelowCap",          // 1012418
+        ["backCapBelowHair"] = "backCap",                   // 1003169
+        ["backWeaponBelowGlove"] = "backWeaponOverGlove",   // 1472196
+        ["capBelowHair"] = "hairBelowBody",                 // 1004506
+        ["capBelowBody"] = "hairBelowBody",                 // 1004962
+        ["capBackHair"] = "hairOverHead",                   // 1006737
+        ["capBelowHead"] = "capAccessoryBelowBody",         // 1003975
+        ["gloveBelowHair"] = "hair",                        // 1082738
+        ["hairBelowHead"] = "mailArmBelowHead",             // 33525
+        ["mailChestBelowBody"] = "gloveWristBelowBody",     // 1053813
+        ["shieldBelowArm"] = "weaponBelowArm",              // 1092062
+        ["weapnBelowBody"] = "weaponBelowBody",             // 1702891（拼写错误）
+        ["weponBelowBody"] = "weaponBelowBody",             // 1402235（拼写错误）
+        ["weaponBelowArmOverHead"] = "head",                // 1332168
+        ["weaponBelowGlove"] = "gloveWristOverBody",        // 1703541
+        ["weaponBelowHand"] = "weaponOverArmBelowHead",     // 1702012
+        ["weaponBelowHandOverBody"] = "weaponOverArmBelowHead", // 1702288
+        ["weaponBelowHead"] = "weaponOverArmBelowHead",     // Blaster 武器
+        ["weaponBelowbody"] = "weaponBelowBody",            // 1703234（大小写）
+        ["weaponBodyBelow"] = "weaponBelowBody",            // 1412004
+        ["weaponOverArmBelowBody"] = "weaponOverArmBelowHead",  // 1342028
+        ["weaponOverBelowArm"] = "weaponOverArmBelowHead",  // 1703029
+        ["weaponOverGloveBelowMailArm"] = "glove",          // 1702443
+        ["weaponOverHead"] = "hairOverHead",                // 1703236
+        ["weaponWrist"] = "gloveWrist",                     // 1472152
+        ["weaponback"] = "backWeapon",                      // 1702556
+        ["weaponWristOverGloveOverArm"] = "weaponOverArm",  // v0.8.20
     };
 
     private static string? ResolveCapeLayerAlias(string name)
@@ -1673,6 +2155,25 @@ public class PaperdollService : IEntityFrameProvider
         if (a.BodyId >= 2000 && a.BodyId <= 2999) return a.BodyId;
         return a.Gender == 0 ? 2000 : 2001;
     }
+    /// <summary>
+    /// 该 body 动作帧是否显示面部：WZ `{body}/{action}/{frame}/face`（1=显示；0=背面动作，如 ladder/rope）。
+    /// 字段缺失按「显示」处理（老版本 WZ / 特殊动作）。对齐 sdlMS 的 bone_data.face 与 MapleSalon2 isBackAction。
+    /// </summary>
+    private bool IsBodyFaceVisible(CharacterAppearance a, string action, int frame)
+    {
+        try
+        {
+            string path = $"{BodyRoot(a)}/{action}/{frame}/face";
+            return _wz.WithWzLock(() =>
+            {
+                var node = _wz.FindNodeByPath(path);
+                if (node == null) { return true; }
+                try { return node.GetValue<int>() != 0; } catch { return true; }
+            });
+        }
+        catch { return true; }
+    }
+
     private static string BodyRoot(CharacterAppearance a) => $"Character/{BodyNumber(a):D8}.img";
     private static string HeadRoot(CharacterAppearance a) => $"Character/{BodyNumber(a) + 10000:D8}.img";
 
@@ -1791,12 +2292,14 @@ public class PaperdollService : IEntityFrameProvider
 
         // 胶水 2026-08-18：逻辑动作名（stand/walk）先解析到实际动作（stand1/2）再查帧数——
         // 原直接 GetActionFrameCount(body, "stand") = 0 → bounds 0x0 → 渲染 FAIL（bounds 不走 ResolveRenderAction）。
+        // sampleAllChairFrames（2026-10-14）：椅子特效 union 全部帧——各帧尺寸不一（3019632 实测
+        // 241x173~207），按当前时间片单帧采样 → 其他帧越界裁边；union 后画布尺寸恒定不抖。
         string actualAction = ResolveLogicalAction(a, action);
         int frameCount = GetActionFrameCount(BodyRoot(a), actualAction);
         int minX = 0, minY = 0, maxX = 0, maxY = 0;
         for (int f = 0; f < frameCount; f++)
         {
-            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+            var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault, sampleAllChairFrames: true));
             ResolveAnchors(pieces);
             // 该帧 body 锚点作为画布原点参考（照抄 MapleSalon2：bodyFrame.pivot = body ancher）
             var bodyP = pieces.FirstOrDefault(p => p.Category == "body" && p.Locked);
@@ -2076,6 +2579,12 @@ public class PaperdollService : IEntityFrameProvider
 
     private string ResolveExpression()
     {
+        // 手动/自动表情优先（未过期）→ 否则交回 agent 驱动（IExpressionDriver，未来 Hermes 按状态注入）
+        string manual = _manualExpression;
+        if (!string.Equals(manual, ExpressionDefault, StringComparison.Ordinal) && DateTime.UtcNow < _manualExpireUtc)
+        {
+            return manual;
+        }
         try { return ExpressionDriver?.GetExpression() ?? ExpressionDefault; }
         catch { return ExpressionDefault; }
     }
@@ -2113,7 +2622,9 @@ public class PaperdollService : IEntityFrameProvider
     {
         if (a == null || !_wz.IsLoaded) return;
         var hash = HashAppearance(a);
-        foreach (var action in WarmupActions)
+        // 带椅子时角色渲染恒为坐姿（R-chair）→ sit 的 bounds/部件一并预热，切椅子首帧不冷解码
+        var actions = string.IsNullOrEmpty(a.Chair?.Id) ? WarmupActions : WarmupActions.Append("sit").ToArray();
+        foreach (var action in actions)
         {
             try
             {
@@ -2125,14 +2636,16 @@ public class PaperdollService : IEntityFrameProvider
                 for (int f = 0; f < fc; f++)
                 {
                     GetFrameMove(hash, a, action, f);
-                    var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault));
+                    // sampleAllChairFrames：椅子特效 union 全部帧 → 下方 GetBmp 顺带预解码
+                    // 全部特效帧位图（3019632 effect 12 帧，缺省只热当前时间片 1 帧）
+                    var pieces = MaterializePieces(CollectPiecesForFrame(hash, a, action, f, ExpressionDefault, sampleAllChairFrames: true));
                     foreach (var p in pieces)
                     {
                         if (p.Category == "body" || p.Category == "head" || p.Category == "hair" || p.Category == "face"
                             || p.Category == "cap" || p.Category == "cape" || p.Category == "coat" || p.Category == "pants"
                             || p.Category == "shoe" || p.Category == "glove" || p.Category == "weapon" || p.Category == "shield"
                             || p.Category == "earring" || p.Category == "faceaccessory" || p.Category == "eyeaccessory"
-                            || p.Category == "effect")
+                            || p.Category == "effect" || p.Category == "chair")
                         {
                             GetBmp(p.PiecePath);
                         }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using MiniPet.Models;
 using MiniPet.Utils;
@@ -43,6 +44,17 @@ namespace MiniPet.Services
         public WzError? LastError => _lastError;
         public string? LastWzLibWarning { get; private set; }
 
+        /// <summary>
+        /// WZ 重载代际失效钩子（V0.2.0 音乐模块）：每次 LoadWz 尝试收场（成功或失败）后触发一次，
+        /// 携带自增后的重载代际号（订阅方用它区分「哪一代 WZ」——目录任务启动记代际、完成后比对，不符即失效）。
+        /// 供 MusicCatalogService 等订阅方清缓存/失效在途任务。⚠️ 触发点绝不持有 _wzLock/_loadLock——
+        /// 订阅方回调可能反向调用 WzService，持锁触发会死锁（见 LoadWz finally）。
+        /// </summary>
+        public event Action<int>? WzReloaded;
+
+        /// <summary>WZ 重载代际号：每次 LoadWz 尝试收场时自增（随 WzReloaded 事件发布）。</summary>
+        private int _wzGeneration;
+
         /// <summary>WzError → 中文文案映射，供失败弹窗/状态栏使用。</summary>
         public static string GetErrorText(WzError err) => err switch
         {
@@ -68,7 +80,12 @@ namespace MiniPet.Services
             }
             try
             {
-                _wzLoaded = false;
+                // 重载开始即在锁内发布「卸载」状态（原为锁外直接置 _wzLoaded = false，行为等价、可见性更强）：
+                // 后续构建全部在局部变量上进行，读者构建期间见「未加载」，不再进入旧结构
+                lock (_wzLock)
+                {
+                    _wzLoaded = false;
+                }
                 _lastError = null;
                 LastWzLibWarning = null;
                 _mapCatalog.Reset();
@@ -86,13 +103,20 @@ namespace MiniPet.Services
             if (string.IsNullOrEmpty(baseWzPath) || !Directory.Exists(baseWzPath))
             {
                 _lastError = WzError.WzPathInvalid;
-                // D1：路径无效视为加载失败——释放上一轮残留结构，避免半构建内存驻留
-                _wzs = null;
-                _mobFullRoot = null;
+                // D1：路径无效视为加载失败——锁内发布置空状态（释放上一轮残留结构，避免半构建内存驻留）
+                lock (_wzLock)
+                {
+                    _wzs = null;
+                    _mobFullRoot = null;
+                }
                 return (false, _lastError);
             }
             _baseWzPath = baseWzPath;
 
+            // 局部构建变量：全部加载（含 Mob/Packs 追加）完成后才在单个 _wzLock 临界区一次性发布，
+            // 消除原「先行置 _wzLoaded=true 后仍继续加载至 Packs 完成」的半成品发布窗口
+            Wz_Structure wzs;
+            Wz_Node? mobFullRoot = null;
             try
             {
                 // 自动探测 Base 子目录
@@ -104,13 +128,12 @@ namespace MiniPet.Services
                 Console.WriteLine($"[WzService] 加载 WZ 目录: {wzFolder}");
                 Wz_Structure.DefaultAutoDetectExtFiles = true;
                 Wz_Structure.DefaultImgCheckDisabled = true;
-                _wzs = new Wz_Structure();
-                _wzs.LoadWzFolder(wzFolder, ref _wzs.WzNode, true);
-                _wzLoaded = true;
-                Console.WriteLine($"[WzService] Base 加载成功, imgs: {_wzs.img_number}");
+                wzs = new Wz_Structure();
+                wzs.LoadWzFolder(wzFolder, ref wzs.WzNode, true);
+                Console.WriteLine($"[WzService] Base 加载成功, imgs: {wzs.img_number}");
 
                 // Mob 完整信息源：Data/Mob/Mob.wz 文件模式（loadWzAsFolder=false——完整 img：Mob/{id}.img 含动作/origin/PNG-outlink）
-                _mobFullRoot = null;
+                mobFullRoot = null;
                 var mobDir = Path.Combine(baseWzPath, "Mob");
                 if (Directory.Exists(mobDir) && File.Exists(Path.Combine(mobDir, "Mob.wz")))
                 {
@@ -121,10 +144,10 @@ namespace MiniPet.Services
                         Wz_Structure.DefaultImgCheckDisabled = true;
                         var mobRoot = new Wz_Node("Mob");
                         mobWzs.LoadFile(Path.Combine(mobDir, "Mob.wz"), mobRoot, false, false);
-                        _mobFullRoot = mobRoot;
+                        mobFullRoot = mobRoot;
                         Console.WriteLine($"[WzService] Mob.wz 文件模式加载成功, 根节点: {mobRoot.Nodes.Count}");
                     }
-                    catch (Exception ex) { Console.Error.WriteLine($"[WzService] Mob.wz 文件模式失败: {ex.Message}"); _mobFullRoot = null; }
+                    catch (Exception ex) { Console.Error.WriteLine($"[WzService] Mob.wz 文件模式失败: {ex.Message}"); mobFullRoot = null; }
                 }
 
                 // 加载 Packs/*.ms — meta 数据（origin/delay/a0/a1）
@@ -137,7 +160,7 @@ namespace MiniPet.Services
                     {
                         try
                         {
-                            _wzs.LoadMsFile(msFile);
+                            wzs.LoadMsFile(msFile);
                             Console.WriteLine($"[WzService] Packs 加载: {Path.GetFileName(msFile)}");
                         }
                         catch (Exception ex)
@@ -149,7 +172,7 @@ namespace MiniPet.Services
                     {
                         try
                         {
-                            _wzs.LoadMsFile(mnFile);
+                            wzs.LoadMsFile(mnFile);
                             Console.WriteLine($"[WzService] Packs 加载: {Path.GetFileName(mnFile)}");
                         }
                         catch (Exception ex)
@@ -158,7 +181,15 @@ namespace MiniPet.Services
                         }
                     }
                 }
-                Console.WriteLine($"[WzService] 加载完成, imgs: {_wzs.img_number}");
+                Console.WriteLine($"[WzService] 加载完成, imgs: {wzs.img_number}");
+                // 单临界区发布：_wzs / _mobFullRoot / _wzLoaded 一次性原子可见——
+                // 读者要么见完整新结构（已加载），要么见未加载，不再观察到半成品结构
+                lock (_wzLock)
+                {
+                    _wzs = wzs;
+                    _mobFullRoot = mobFullRoot;
+                    _wzLoaded = true;
+                }
                 LogTopLevelNodes();
                 EnsureMapCatalog();
                 return (true, null);
@@ -167,14 +198,26 @@ namespace MiniPet.Services
             {
                 Console.Error.WriteLine($"[WzService] WZ 加载失败: {ex.Message}");
                 _lastError = WzError.Unknown;
-                // D1：释放半构建结构（内存驻留 + 允许下次 LoadWz 干净重试）
-                _wzs = null;
-                _mobFullRoot = null;
-                _wzLoaded = false;
+                // D1：释放半构建结构（内存驻留 + 允许下次 LoadWz 干净重试）——锁内发布置空状态
+                lock (_wzLock)
+                {
+                    _wzs = null;
+                    _mobFullRoot = null;
+                    _wzLoaded = false;
+                }
                 return (false, _lastError);
             }
             }
-            finally { lock (_loadLock) _loading = false; }
+            finally
+            {
+                lock (_loadLock) _loading = false;
+                // 重载代际失效钩子：每次 LoadWz 尝试收场（成功或失败）后触发一次，供 MusicCatalogService
+                // 等订阅方清缓存。⚠️ 绝不可在持 _wzLock/_loadLock 时触发——订阅方回调可能反向调用
+                // WzService（持锁触发会死锁），故置于 finally 且在两锁释放之后。
+                int gen = Interlocked.Increment(ref _wzGeneration);
+                try { WzReloaded?.Invoke(gen); }
+                catch (Exception ex) { Console.Error.WriteLine($"[WzService] WzReloaded: {ex.Message}"); }
+            }
         }
 
         /// <summary>诊断：打印 WZ 顶层节点 + Character 子节点 + 关键纸娃娃路径是否存在。</summary>
@@ -244,6 +287,53 @@ namespace MiniPet.Services
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"[WzService] FindNodeByPath({path}): {ex.Message}");
+                    return null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 提取 Sound.wz 里的一首音乐（MP3 字节流，V0.2.0 音乐模块）。
+        /// imgName 如 "Bgm00.img"，trackName 如 "SleepyWood"。
+        /// 全程 _wzLock 锁串行化；判空检查同样在锁内（Rev 4：避免「锁外见已加载、进锁后已被重载置空」的竞态）。
+        /// ⚠️ WZ 路径必须带 Sound/ 前缀（探针实证：BgmXX.img 在 Sound 节点下，根节点找不到）；
+        /// WzLib 单参 FindNodeByPath 按 '\\' 分割路径，正斜杠需 Replace（与上方 FindNodeByPath 同套路）。
+        /// </summary>
+        /// <param name="imgName">音乐分类文件名，如 "Bgm00.img"。</param>
+        /// <param name="trackName">曲名（img 内 Wz_Sound 子节点名），如 "SleepyWood"。</param>
+        /// <returns>MP3 字节流；未加载/找不到曲目/提取失败返回 null。</returns>
+        public byte[]? ExtractSound(string imgName, string trackName)
+        {
+            lock (_wzLock)
+            {
+                if (!_wzLoaded || _wzs?.WzNode == null)
+                {
+                    return null;
+                }
+                try
+                {
+                    var imgNode = _wzs.WzNode.FindNodeByPath(("Sound/" + imgName).Replace('/', '\\'));
+                    if (imgNode == null)
+                    {
+                        return null;
+                    }
+                    var img = imgNode.GetValue<Wz_Image>();
+                    if (img == null || !img.TryExtract())
+                    {
+                        return null;
+                    }
+                    // ⚠️ 曲目节点必须读 img.Node.Nodes（Wz_Image.Node 属性）——TryExtract 后外层 node.Nodes 恒 0
+                    var trackNode = img.Node.Nodes.FirstOrDefault(n => n.Text == trackName);
+                    if (trackNode == null)
+                    {
+                        return null;
+                    }
+                    var sound = trackNode.GetValue<Wz_Sound>();
+                    return sound?.ExtractSound();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[WzService] ExtractSound({imgName}/{trackName}): {ex.Message}");
                     return null;
                 }
             }
@@ -756,6 +846,14 @@ namespace MiniPet.Services
         public (byte[]? pngData, SpriteStrip? strip, PetConfig? config) BuildSpriteStrip(string id, string action, string type = "Mob")
         {
             if (!_wzLoaded || _wzs?.WzNode == null) return (null, null, null);
+
+            // 分段持锁（锁粒度收窄）：① 锁内只做 WZ 节点遍历 + 像素解码（WzLib 非线程安全，必须串行）；
+            // ② 条带拼装 + PNG 编码是纯 CPU 运算，移出锁执行——大素材单动作 Optimal 级 deflate 可达数百 ms，
+            // 原实现全程持 _wzLock，会阻塞 UI 帧循环、纸娃娃合成与其它素材的切换预加载。
+            var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
+            var frameDataList = new List<FrameData>();
+            int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
+
             lock (_wzLock)
             try
             {
@@ -768,10 +866,7 @@ namespace MiniPet.Services
                 if (actionNode == null) return (null, null, null);
 
                 // 单次遍历：收集帧像素 + 元数据
-                var frames = new List<(byte[] bgra, int w, int h, int ox, int oy)>();
-                var frameDataList = new List<FrameData>();
                 int f = 0;
-                int maxL = 0, maxT = 0, maxR = 0, maxB = 0;
                 foreach (Wz_Node child in actionNode.Nodes)
                 {
                     var origin = child.FindNodeByPath("origin")?.GetValueEx<Wz_Vector>(null);
@@ -794,8 +889,18 @@ namespace MiniPet.Services
                     maxB = Math.Max(maxB, fh - oy);
                     frameDataList.Add(new FrameData { Index = f++, Delay = delay, A0 = a0, A1 = a1 });
                 }
-                if (frames.Count == 0 || frameDataList.Count == 0) return (null, null, null);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}) 读取: {ex.Message}");
+                return (null, null, null);
+            }
 
+            if (frames.Count == 0 || frameDataList.Count == 0) return (null, null, null);
+
+            // ② 锁外：条带拼装 + PNG 编码（纯 CPU，不碰 WzLib）
+            try
+            {
                 int cw = maxL + maxR, ch = maxT + maxB;
                 int finalOx = maxL, finalOy = maxT;
 
@@ -842,7 +947,7 @@ namespace MiniPet.Services
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}): {ex.Message}");
+                Console.Error.WriteLine($"[WzService] BuildSpriteStrip({id}/{action}/{type}) 编码: {ex.Message}");
                 return (null, null, null);
             }
         }
@@ -938,8 +1043,10 @@ namespace MiniPet.Services
 
         public string GetMapWzPath(string mapId)
         {
-            var prefix = !string.IsNullOrEmpty(mapId) ? mapId[0] : '0';
-            return $"Map/Map/Map{prefix}/{mapId}.img";
+            // 胶水 2026-09-16「往 1 前面补 0 让长度一样」：短 id 补 0 到 9 位再选分片（同 MapService 口径）
+            var padded = !string.IsNullOrEmpty(mapId) ? mapId.PadLeft(9, '0') : "000000000";
+            var prefix = padded[0];
+            return $"Map/Map/Map{prefix}/{padded}.img";
         }
 
         // 信息源路径（origin/delay/动作结构全在 {type}/{id}.img；_Canvas 只是 PNG 仓库，经 outlink 跳转）
@@ -1038,7 +1145,11 @@ namespace MiniPet.Services
             lock (_wzLock)
             try
             {
-                foreach (var imgPath in new[] { "UI/_Canvas/ChatBalloon.img", "UI/ChatBalloon.img" })
+                // ⚠️ 路径顺序很重要：`UI/ChatBalloon.img` 才是**正版**（瓦片带 origin/z/_outlink，
+                // 含 c/head/arrow）；`UI/_Canvas/ChatBalloon.img` 是精简版子集（部分样式连 c 都没有，
+                // 如 520 只有 8 个裸节点）→ 之前优先读 _Canvas 导致「中央瓦片缺失、气泡拼不出来」。
+                // 对齐参考实现 MapleSalon2 loader.ts:215 `UI/ChatBalloon.img/${id}`。
+                foreach (var imgPath in new[] { "UI/ChatBalloon.img", "UI/_Canvas/ChatBalloon.img" })
                 {
                     var imgNode = _wzs.WzNode.FindNodeByPath(true, imgPath.Split('/'));
                     var img = imgNode?.GetValue<Wz_Image>();
@@ -1215,6 +1326,9 @@ namespace MiniPet.Services
 
         /// <summary>取地图显示名（转发 MapCatalogService，未命中回退 map_{id}）。</summary>
         public string GetMapName(string mapId) => _mapCatalog.GetMapName(mapId);
+
+        /// <summary>地图显示名解析（存量名 == id / map_ 哨兵视为无效，重新查缓存——修历史菜单中文缺失）。</summary>
+        public string ResolveDisplayName(string mapId, string? storedName) => _mapCatalog.ResolveDisplayName(mapId, storedName);
 
         /// <summary>
         /// 后台构建地图目录缓存（转发 MapCatalogService，单飞 + 版本化）：LoadWz 成功后触发。

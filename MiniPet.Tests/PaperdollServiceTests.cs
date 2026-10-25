@@ -307,6 +307,113 @@ public class PaperdollServiceTests
         Assert.EndsWith("someHash123", OfflineCacheMobId("someHash123"));
     }
 
+    // --- R-chair2: 椅子 info 渲染字段（对齐 MapleSalon2 generateChairGroupData / ChairEffectPart） ---
+
+    [Fact]
+    public void ResolveChairSitEmotion_NumericIndex_MapsToExpressionName()
+    {
+        // MapleSalon2 CharacterExpressionsOrder：0=blink、14=glitter（3019632 花田椅 sitEmotion=14）
+        Assert.Equal("blink", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("0"));
+        Assert.Equal("angry", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("5"));
+        Assert.Equal("glitter", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("14"));
+        Assert.Equal("default", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("23"));
+    }
+
+    [Fact]
+    public void ResolveChairSitEmotion_OutOfRange_ReturnsEmpty()
+    {
+        // 越界（负数/超表长）→ 空串 = 保持用户表情（回退不崩溃）
+        Assert.Equal("", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("-1"));
+        Assert.Equal("", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("24"));
+        Assert.Equal("", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("99"));
+    }
+
+    [Fact]
+    public void ResolveChairSitEmotion_NonNumeric_PassesThrough()
+    {
+        Assert.Equal("", MiniPet.Services.PaperdollService.ResolveChairSitEmotion(null));
+        Assert.Equal("", MiniPet.Services.PaperdollService.ResolveChairSitEmotion(""));
+        Assert.Equal("love", MiniPet.Services.PaperdollService.ResolveChairSitEmotion("love"));
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_BodyRelMoveFollowCharacter_PosLow2_AnchorsNavel()
+    {
+        // ① 有 bm 无 sitAction pos<2：effect 与人物在 web 中一起平移 → 锚 navel 不动（普通椅子多数 pos=0）
+        var (x, y) = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: true, bmX: 0, bmY: -14, hasSitAction: false, pos: 0,
+            removeBody: false, hasTamingMob: false, idNum: 3010205);
+        Assert.Equal(0, x);
+        Assert.Equal(0, y);
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_BodyRelMovePos1_KeepsLift50()
+    {
+        // ② 有 bm 无 sitAction pos==1：跟人物 + 保留上移 −50
+        var (x, y) = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: true, bmX: 10, bmY: -20, hasSitAction: false, pos: 1,
+            removeBody: false, hasTamingMob: false, idNum: 3010000);
+        Assert.Equal(0, x);
+        Assert.Equal(-50, y);
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_FlowerChair3019632_AnchorsNegativeBodyRelMove()
+    {
+        // ③ 花田椅 3019632：bm=(47,-2) pos=3 → effect 锚 = −bm = (−47,+2)（人物坐进 WZ 指定坐标）
+        var (x, y) = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: true, bmX: 47, bmY: -2, hasSitAction: false, pos: 3,
+            removeBody: false, hasTamingMob: false, idNum: 3019632);
+        Assert.Equal(-47, x);
+        Assert.Equal(2, y);
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_WithSitAction_DoesNotFollowCharacter()
+    {
+        // ④ 有 sitAction（forceAction）时 effect 不跟人物（ChairEffectPart 的 !forceAction 条件）→ 锚 = −bm
+        var (x, y) = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: true, bmX: 5, bmY: -8, hasSitAction: true, pos: 0,
+            removeBody: false, hasTamingMob: false, idNum: 3010000);
+        Assert.Equal(-5, x);
+        Assert.Equal(8, y);
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_NoBodyRelMovePos1_KeepsLegacyTamingMobLift()
+    {
+        // ⑤ 无 bm pos==1：保持 R-chair 现状——带 tamingMob 且 id<3011000 → −30，否则 −50
+        var taming = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: false, bmX: 0, bmY: 0, hasSitAction: false, pos: 1,
+            removeBody: false, hasTamingMob: true, idNum: 3010000);
+        Assert.Equal(-30, taming.OffY);
+        var normal = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: false, bmX: 0, bmY: 0, hasSitAction: false, pos: 1,
+            removeBody: false, hasTamingMob: false, idNum: 3010000);
+        Assert.Equal(-50, normal.OffY);
+        var newerTaming = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: false, bmX: 0, bmY: 0, hasSitAction: false, pos: 1,
+            removeBody: false, hasTamingMob: true, idNum: 3011000);
+        Assert.Equal(-50, newerTaming.OffY);
+    }
+
+    [Fact]
+    public void ComputeChairEffectOffset_RemoveBody_ShiftsDown30()
+    {
+        // ⑥ 变身椅（removeBody）：web 人物容器 y−30 → effect 相对下移 +30（叠加各分支）
+        var follow = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: false, bmX: 0, bmY: 0, hasSitAction: false, pos: 0,
+            removeBody: true, hasTamingMob: false, idNum: 3015812);
+        Assert.Equal(0, follow.OffX);
+        Assert.Equal(30, follow.OffY);
+        var bmBranch = MiniPet.Services.PaperdollService.ComputeChairEffectOffset(
+            hasBodyRelMove: true, bmX: 47, bmY: -2, hasSitAction: false, pos: 3,
+            removeBody: true, hasTamingMob: false, idNum: 3019632);
+        Assert.Equal(-47, bmBranch.OffX);
+        Assert.Equal(32, bmBranch.OffY);
+    }
+
     // --- embedded minimal logic replicas ---
 
     private static string MountRoot(string id)

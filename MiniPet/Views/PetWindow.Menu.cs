@@ -10,7 +10,9 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using MiniPet.Models;
 using MiniPet.Services;
+#if !NO_AI
 using MiniPet.Services.Adapters;
+#endif
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views;
@@ -27,11 +29,24 @@ public partial class PetWindow
     private MenuItem? _modeCameraItem;
     private MenuItem? _paperdollItem;
 
+    // 音乐模块 V0.2.1：右键菜单「🎵 迷你控制条」开关项（IsChecked 反映 MusicConfig.MiniBarEnabled，见 RefreshMiniBarMenuItem）
+    private MenuItem? _miniBarItem;
+    // V0.1.3 多桌宠菜单项
+    private MenuItem? _addPetMenuItem;
+    private MenuItem? _primaryPetMenuItem;
+    private MenuItem? _removePetMenuItem;
+
+
     private ContextMenu BuildContextMenu()
     {
         var cm = new ContextMenu();
         try
         {
+            // ── 🧍 外观（折叠：切换人物 / 切换动画 / 😊 表情 / 左右转向 / 切换气泡）──
+            // 胶水 2026-09-24：右键菜单顶层太长，按内容折叠
+            var appearanceMenu = new MenuItem { Header = "🧍 外观" };
+            cm.Items.Add(appearanceMenu);
+
             // ── 切换人物 ──
             var charItem = new MenuItem { Header = "切换人物" };
 
@@ -135,11 +150,15 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SettingsWindow: {ex.Message}"); }
             };
             charItem.Items.Add(playerSub);
-            cm.Items.Add(charItem);
+            appearanceMenu.Items.Add(charItem);
 
             // ── 切换动画 ──
             var animItem = new MenuItem { Header = "切换动画", Name = "AnimationMenu" };
-            cm.Items.Add(animItem);
+            appearanceMenu.Items.Add(animItem);
+
+            // ── 😊 表情（仅纸娃娃；Opening 动态重建，见 RefreshExpressionMenu）──
+            _exprMenu = new MenuItem { Header = "😊 表情", Name = "ExpressionMenu" };
+            appearanceMenu.Items.Add(_exprMenu);
 
             cm.Items.Add(new Separator());
 
@@ -155,11 +174,63 @@ public partial class PetWindow
                 try { ShowSettingsWindow(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonSettings: {ex.Message}"); }
             };
-            cm.Items.Add(balloonItem);
+            // ── 💬 随机气泡发言开关（胶水 2026-09-16：放在「切换气泡」下）──
+            var balloonToggle = new MenuItem
+            {
+                Header = "💬 随机气泡发言",
+                IsChecked = _configService.LoadSettings().RandomBalloonEnabled,
+                ToggleType = Avalonia.Controls.MenuItemToggleType.CheckBox,
+            };
+            balloonToggle.Click += (_, _) =>
+            {
+                try
+                {
+                    bool newVal = !_configService.LoadSettings().RandomBalloonEnabled;
+                    _configService.UpdateSettings(st => st.RandomBalloonEnabled = newVal);
+                    balloonToggle.IsChecked = newVal;
+                    ApplyRandomBalloonEnabled(newVal);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonToggle: {ex.Message}"); }
+            };
+            appearanceMenu.Items.Add(balloonToggle);
+            appearanceMenu.Items.Add(balloonItem);
+
+            // ── 🎵 迷你控制条（音乐模块 V0.2.1）：开关勾选项，控制 B2 的 MusicMiniBarWindow 显隐；
+            //    勾选态 = 配置 MiniBarEnabled（Opening 时经 RefreshMiniBarMenuItem 再同步一次），
+            //    点击经 ConfigService.Update 事务翻转落库 + EventBus 发布 minibar-changed 通知刷新 ──
+            _miniBarItem = new MenuItem
+            {
+                Header = "🎵 迷你控制条",
+                // 兼容旧配置 music 字段缺省/显式 null：默认不勾选
+                IsChecked = _configService.LoadSettings().Music?.MiniBarEnabled ?? false,
+            };
+            _miniBarItem.Click += (_, _) =>
+            {
+                try
+                {
+                    // 第一步：目标值 = 当前配置取反（先算好再落库，Update 事务体闭包持有）
+                    var target = !(_configService.LoadSettings().Music?.MiniBarEnabled ?? false);
+                    // 第二步：Update 事务持久化（UI 线程 _lock 内 读→改→写 整事务；music 子对象兜底非空）
+                    _configService.Update(s => { s.Music ??= new MusicConfig(); s.Music.MiniBarEnabled = target; });
+                    // 第三步：同步本项勾选态 + EventBus 发布开关变化（payload=bool 最新值）通知迷你条窗口
+                    _miniBarItem.IsChecked = target;
+                    _eventBus.Publish(MiniPetEvents.MiniBarChanged, target);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MiniBarToggle: {ex.Message}"); }
+            };
+            // 折叠成「🎵 音乐」子菜单（胶水 2026-09-24：合并成音乐；后续音乐项都放这里）
+            var musicMenu = new MenuItem { Header = "🎵 音乐" };
+            musicMenu.Items.Add(_miniBarItem);
+            cm.Items.Add(musicMenu);
 
             cm.Items.Add(new Separator());
 
-            // ── Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态） ──
+#if !NO_AI
+            // ── 🤖 AI（折叠：Hermes 终端 / 对话 / DSH 对话 / DSH 状态，胶水 2026-09-24 要求收起）──
+            // NO_AI 纯净版不出现该菜单（AI 窗口/适配器均已从编译剔除）
+            var aiMenu = new MenuItem { Header = "🤖 AI" };
+
+            // Hermes 终端（快速唤起 hermes CLI + 显示 Agent 反映态）
             var terminalItem = new MenuItem { Header = "Hermes 终端" };
             var launchItem = new MenuItem { Header = "🚀 启动 hermes" };
             launchItem.Click += (_, _) =>
@@ -175,7 +246,7 @@ public partial class PetWindow
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AgentStatus: {ex.Message}"); }
             };
             terminalItem.Items.Add(statusItem);
-            cm.Items.Add(terminalItem);
+            aiMenu.Items.Add(terminalItem);
 
             // ── Hermes 对话（迷你聊天对话框，PLAN §3；单例，已开则 Activate/聚焦） ──
             var chatItem = new MenuItem { Header = "💬 对话" };
@@ -184,7 +255,7 @@ public partial class PetWindow
                 try { HermesChatWindow.OpenOrActivate(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] HermesChat: {ex.Message}"); }
             };
-            cm.Items.Add(chatItem);
+            aiMenu.Items.Add(chatItem);
 
             // ── DSH 对话（DeepSeek Harness 桥接，feat/dsh-bridge；单例，已开则 Activate/聚焦）──
             // 对话链路独立于「观察开关」：未装配（DshEnabled 关）时点击自动装配 DshAdapter
@@ -200,7 +271,7 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshChat: {ex.Message}"); }
             };
-            cm.Items.Add(dshChatItem);
+            aiMenu.Items.Add(dshChatItem);
 
             // ── DSH 状态（监控是默认行为：默认开启时桌宠反映 DSH 干活状态；弹窗只读显示连接 + 反映态，不装配 adapter）──
             var dshStatusItem = new MenuItem { Header = "📊 DSH 状态" };
@@ -209,7 +280,39 @@ public partial class PetWindow
                 try { ShowDshStatusPopup(); }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DshStatus: {ex.Message}"); }
             };
-            cm.Items.Add(dshStatusItem);
+            aiMenu.Items.Add(dshStatusItem);
+
+            cm.Items.Add(aiMenu);   // 折叠成一个「🤖 AI」子菜单（顶层不再铺开）
+#endif // !NO_AI
+
+            // ── V0.1.3 多桌宠：添加 / 移除 / 设为主宠 ──
+            var petMenuItem = new MenuItem { Header = "🐾 桌宠" };
+            _addPetMenuItem = new MenuItem { Header = "➕ 添加桌宠（复制这只）" };
+            _addPetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.AddPet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AddPet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_addPetMenuItem);
+
+            _primaryPetMenuItem = new MenuItem { Header = "⭐ 设为主宠" };
+            _primaryPetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.SetPrimaryPet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SetPrimaryPet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_primaryPetMenuItem);
+
+            _removePetMenuItem = new MenuItem { Header = "🗑 移除这只桌宠" };
+            _removePetMenuItem.Click += (_, _) =>
+            {
+                try { _eventBus.Publish(EventType.RemovePet, new PetCommandEvent(_petId)); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RemovePet: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(_removePetMenuItem);
+
+            cm.Items.Add(petMenuItem);
+            cm.Items.Add(new Separator());
 
             // ── 设置中心 ──
             var settingsItem = new MenuItem { Header = "设置中心" };
@@ -220,9 +323,7 @@ public partial class PetWindow
             };
             cm.Items.Add(settingsItem);
 
-            cm.Items.Add(new Separator());
-
-            // ── 重置到桌面中央 ──
+            // ── 重置到桌面中央（收进「🐾 桌宠」）──
             var centerItem = new MenuItem { Header = "重置到桌面中央" };
             centerItem.Click += (_, _) =>
             {
@@ -256,9 +357,55 @@ public partial class PetWindow
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CenterWindow: {ex.Message}"); }
             };
-            cm.Items.Add(centerItem);
+            petMenuItem.Items.Add(centerItem);   // 收进「🐾 桌宠」
 
-            cm.Items.Add(new Separator());
+            // ── 📌 置顶（胶水 2026-09-24）──
+            var topmostItem = new MenuItem
+            {
+                Header = (_configService.GetTopmost() ? "✓ " : "   ") + "📌 置顶",
+            };
+            topmostItem.Click += (_, _) =>
+            {
+                try
+                {
+                    bool v = !_configService.GetTopmost();
+                    _configService.SetTopmost(v);
+                    // 胶水 2026-09-24：置顶要对**所有**桌宠生效（主子都要），不只当前这只
+                    try
+                    {
+                        foreach (var pet in _petManager.Pets) { pet.Topmost = v; }
+                    }
+                    catch (Exception ex2)
+                    {
+                        Console.Error.WriteLine($"[PetWindow] Topmost(all pets): {ex2.Message}");
+                        Topmost = v;
+                    }
+                    topmostItem.Header = (v ? "✓ " : "   ") + "📌 置顶";
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] TopmostToggle: {ex.Message}"); }
+            };
+            petMenuItem.Items.Add(topmostItem);
+
+            // ── 🚢 Dock 图标（仅 macOS；V0.1.0 对外发布默认开，可随时切回旧版隐藏行为）──
+            if (OperatingSystem.IsMacOS())
+            {
+                var dockItem = new MenuItem
+                {
+                    Header = (_configService.GetShowDockIcon() ? "✓ " : "   ") + "🚢 Dock 图标",
+                };
+                dockItem.Click += (_, _) =>
+                {
+                    try
+                    {
+                        bool v = !_configService.GetShowDockIcon();
+                        _configService.SetShowDockIcon(v);
+                        MiniPet.Utils.MacNative.SetDockIconVisible(v);
+                        dockItem.Header = (v ? "✓ " : "   ") + "🚢 Dock 图标";
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DockIconToggle: {ex.Message}"); }
+                };
+                petMenuItem.Items.Add(dockItem);
+            }
 
             // ── 退出 ──
             var exitItem = new MenuItem { Header = "退出" };
@@ -268,7 +415,7 @@ public partial class PetWindow
                 {
                     _isExiting = true;
                     _trayService.HideTrayIcon();
-                    _settingsWindow?.Close();
+                    // V0.1.3：设置中心全局唯一（由 PetManager 持有），随进程一起退出，不在这里关
                     _backgroundWindow.Close();
                     _mapViewportWindow.Close();
                     _eventBus.Publish(EventType.AppExit);
@@ -282,10 +429,54 @@ public partial class PetWindow
                     Environment.Exit(1);
                 }
             };
+            // ── 左右转向（胶水 2026-09-16：所有桌宠每个都可以独立转向）──
+            var flipItem = new MenuItem { Header = "↔ 转向" };
+            flipItem.Click += (_, _) =>
+            {
+                try { FlipFacing(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FlipFacing: {ex.Message}"); }
+            };
+            appearanceMenu.Items.Add(flipItem);
+
+
+            // ── 播放音乐时加载地图（原「行走显示地图背景」；胶水 2026-09-24：移到🎵音乐下并改文案）──
+            var mapBgItem = new MenuItem
+            {
+                Header = "🗺️ 播放音乐时加载地图",
+                IsChecked = _configService.LoadSettings().WalkShowMapBackground,
+                ToggleType = Avalonia.Controls.MenuItemToggleType.CheckBox,
+            };
+            mapBgItem.Click += (_, _) =>
+            {
+                try
+                {
+                    bool newVal = !_configService.LoadSettings().WalkShowMapBackground;
+                    _configService.UpdateSettings(st => st.WalkShowMapBackground = newVal);
+                    mapBgItem.IsChecked = newVal;
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MapBgToggle: {ex.Message}"); }
+            };
+            musicMenu.Items.Add(mapBgItem);   // 收进「🎵 音乐」
+
+            cm.Items.Add(new Separator());
             cm.Items.Add(exitItem);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BuildMenu: {ex.Message}"); }
         return cm;
+    }
+
+    /// <summary>
+    /// 刷新「🎵 迷你控制条」勾选态（ContextMenu.Opening 时调用，与 MiniBarEnabled 配置保持同步：
+    /// 覆盖设置页等其他写入点的变更；初始勾选已在构建时读配置）。
+    /// </summary>
+    private void RefreshMiniBarMenuItem()
+    {
+        if (_miniBarItem == null) { return; }
+        try
+        {
+            _miniBarItem.IsChecked = _configService.LoadSettings().Music?.MiniBarEnabled ?? false;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshMiniBarMenuItem: {ex.Message}"); }
     }
 
     /// <summary>
@@ -298,7 +489,8 @@ public partial class PetWindow
         try
         {
             var settings = _configService.LoadSettings();
-            var hasPreset = settings.CurrentPaperdoll != null;
+            // V0.1.3：看本宠物自己的搭配是否存在
+            var hasPreset = ((settings.Pets?.FirstOrDefault(p => p.Id == _petId)?.Paperdoll) ?? _cfg.Paperdoll) != null;
             if (IsSentinelActive())
             {
                 _paperdollItem.Header = "✓ 纸娃娃（当前）";
@@ -314,6 +506,33 @@ public partial class PetWindow
     }
 
     /// <summary>
+    /// 刷新「桌宠」菜单（ContextMenu.Opening 时调用，V0.1.3）：
+    /// 当前主宠标记为 ✓ 并禁用重复设置；仅剩一只时禁用移除。
+    /// </summary>
+    private void RefreshPetMenu()
+    {
+        try
+        {
+            var count = _petManager?.Count ?? 1;
+            if (_primaryPetMenuItem != null)
+            {
+                _primaryPetMenuItem.Header = _isPrimaryRole ? "✓ 主宠（当前）" : "⭐ 设为主宠";
+                _primaryPetMenuItem.IsEnabled = !_isPrimaryRole;
+            }
+            if (_removePetMenuItem != null)
+            {
+                _removePetMenuItem.Header = count > 1 ? "🗑 移除这只桌宠" : "🗑 移除这只桌宠（仅剩一只，不可移除）";
+                _removePetMenuItem.IsEnabled = count > 1;
+            }
+            if (_addPetMenuItem != null)
+            {
+                _addPetMenuItem.Header = $"➕ 添加桌宠（当前 {count} 只）";
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshPetMenu: {ex.Message}"); }
+    }
+
+    /// <summary>
     /// 切换到纸娃娃模式：恢复当前预设搭配（复用 LoadDefaultPet 启动恢复路径的 SetAppearance + 哨兵 mobId），
     /// 持久化哨兵以便重启恢复，循环播放 stand1（同 ApplyPaperdoll 完成路径），后台预热常用动作。
     /// </summary>
@@ -322,7 +541,8 @@ public partial class PetWindow
         try
         {
             var settings = _configService.LoadSettings();
-            var pa = settings.CurrentPaperdoll;
+            // V0.1.3：本宠物自己的纸娃娃搭配（旧版读全局 CurrentPaperdoll = 所有宠物共用一套外观）
+            var pa = (settings.Pets?.FirstOrDefault(p => p.Id == _petId)?.Paperdoll) ?? _cfg.Paperdoll;
             if (pa == null)
             {
                 ShowInfoPopup("切换人物", "未保存纸娃娃预设。\n请先在设置中心 > 玩家 (PLAYER) > 纸娃娃编辑器 保存搭配。");
@@ -331,10 +551,8 @@ public partial class PetWindow
             if (IsSentinelActive()) { return; } // 已在纸娃娃模式（菜单项已禁用，双保险）
             _currentEntityType = "player";
             _paperdoll.SetAppearance(pa); // 同启动恢复：切换外观清依赖外观缓存；引用赋值原子，帧循环安全
-            // 持久化哨兵（启动恢复依赖 CurrentMobId == SentinelMobId）
-            settings.CurrentMobId = PaperdollService.SentinelMobId;
-            settings.CurrentEntityType = "player";
-            _configService.SaveSettings(settings);
+            // 持久化哨兵（V0.1.3：只写本宠物这一只的实例配置）
+            PersistEntity(PaperdollService.SentinelMobId, "player");
             _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
             _animService.Play("stand1", PlayMode.Loop);
             _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，同 SwitchToPet）
@@ -346,6 +564,7 @@ public partial class PetWindow
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPaperdoll: {ex.Message}"); }
     }
 
+#if !NO_AI
     /// <summary>
     /// 快速唤起 hermes CLI（UseShellExecute=true，让系统按 PATH 解析并独立窗口运行）。
     /// 失败（未安装/不在 PATH）→ 提示用户。
@@ -459,6 +678,7 @@ public partial class PetWindow
             ShowInfoPopup("DSH 对话", "DSH 接入初始化失败。\n请确认本机 DSH（DeepSeek Harness）已运行（127.0.0.1:3080），\n或在 设置中心 → Agent 接入 → DSH 连接 检查配置后重试。");
         }
     }
+#endif // !NO_AI
 
     /// <summary>简单的信息弹窗（自包含，无第三方依赖）：标题 + 多行文本 + 关闭按钮。</summary>
     private void ShowInfoPopup(string title, string body)
@@ -515,21 +735,121 @@ public partial class PetWindow
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowInfoPopup: {ex.Message}"); }
     }
 
+    /// <summary>
+    /// 表情子菜单（V0.2.x M1，见 docs/ai/PLAN-表情功能.md §4.3）：
+    /// 仅纸娃娃哨兵模式显示；按 KnownExpressions 列中文名 + key；点击只换脸图层，不打断 body 动作。
+    /// 尾部：恢复默认 + 自动眨眼/随机表情开关（M2）。
+    /// </summary>
+    private void RefreshExpressionMenu()
+    {
+        try
+        {
+            if (_exprMenu == null) { return; }
+            _exprMenu.Items.Clear();
+            // 表情菜单**始终显示**（胶水 2026-09-24：怪物/NPC 模式下整项消失，看着像"内容没了"）——
+            // 非纸娃娃模式给出说明项，而不是隐藏整项。
+            var isSentinel = _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;
+            _exprMenu.IsVisible = true;
+            if (!isSentinel)
+            {
+                var tip = new MenuItem { Header = "（仅纸娃娃支持表情）", IsEnabled = false };
+                _exprMenu.Items.Add(tip);
+                var back = new MenuItem { Header = "切到纸娃娃" };
+                back.Click += (_, _) =>
+                {
+                    try { SwitchToPaperdoll(); }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 切纸娃娃: {ex.Message}"); }
+                };
+                _exprMenu.Items.Add(back);
+                return;
+            }
+
+            // 开关以**本地配置**为准：每次打开菜单同步一次（只读赋值，不触发落盘）
+            try
+            {
+                _paperdoll.AutoBlinkEnabled = _configService.GetAutoBlink();
+                _paperdoll.RandomExpressionEnabled = _configService.GetRandomExpression();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 读取表情开关: {ex.Message}"); }
+
+            foreach (var (key, cn, _) in PaperdollService.KnownExpressions)
+            {
+                if (string.Equals(key, PaperdollService.ExpressionDefault, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var item = new MenuItem { Header = $"{cn} ({key})" };
+                string captured = key;
+                item.Click += (_, _) =>
+                {
+                    try
+                    {
+                        // 眨眼是 3 帧快动画（≈180ms），给 3s 会「循环眨眼好几秒」（验收 §7-2）；其余表情 3s
+                        int ms = string.Equals(captured, PaperdollService.ExpressionBlink, StringComparison.Ordinal) ? 200 : 3000;
+                        _paperdoll.PlayExpression(captured, ms);
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PlayExpression({captured}): {ex.Message}"); }
+                };
+                _exprMenu.Items.Add(item);
+            }
+
+            _exprMenu.Items.Add(new Separator());
+            var reset = new MenuItem { Header = "恢复默认" };
+            reset.Click += (_, _) =>
+            {
+                try { _paperdoll.CancelExpression(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CancelExpression: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(reset);
+
+            _exprMenu.Items.Add(new Separator());
+            // 勾选用文本前缀（Avalonia 12.1 无 MenuItemToggleType；文本标记最稳且视觉清晰）
+            var blink = new MenuItem
+            {
+                Header = (_paperdoll.AutoBlinkEnabled ? "✓ " : "   ") + "自动眨眼",
+            };
+            blink.Click += (_, _) =>
+            {
+                try { ApplyExpressionSettings(!_paperdoll.AutoBlinkEnabled, _paperdoll.RandomExpressionEnabled); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] AutoBlink: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(blink);
+
+            var rnd = new MenuItem
+            {
+                Header = (_paperdoll.RandomExpressionEnabled ? "✓ " : "   ") + "随机表情",
+            };
+            rnd.Click += (_, _) =>
+            {
+                try { ApplyExpressionSettings(_paperdoll.AutoBlinkEnabled, !_paperdoll.RandomExpressionEnabled); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomExpression: {ex.Message}"); }
+            };
+            _exprMenu.Items.Add(rnd);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RefreshExpressionMenu: {ex.Message}"); }
+    }
+
     private void RefreshAnimationMenu()
     {
         try
         {
             if (ContextMenu == null) { return; }
 
+            // ⚠️ 必须**递归**查找：菜单折叠后「切换动画」位于「🧍 外观」子菜单内，只遍历顶层会找不到
+            // → animationMenu 为 null → 直接 return → 动画菜单永远空、人物只能停在 stand
+            //（胶水 2026-09-24 报「动画没有了 / 动画加载也没成功 / 人物默认 stand」）。
             MenuItem? animationMenu = null;
-            foreach (var entry in ContextMenu.Items)
+            void FindMenu(IEnumerable<object?> items)
             {
-                if (entry is MenuItem { Name: "AnimationMenu" } menu)
+                foreach (var entry in items)
                 {
-                    animationMenu = menu;
-                    break;
+                    if (animationMenu != null) { return; }
+                    if (entry is not MenuItem mi) { continue; }
+                    if (mi.Name == "AnimationMenu") { animationMenu = mi; return; }
+                    FindMenu(mi.Items);
                 }
             }
+            FindMenu(ContextMenu.Items);
             if (animationMenu == null) { return; }
 
             animationMenu.Items.Clear();
@@ -619,6 +939,14 @@ public partial class PetWindow
         {
             _bgMenu.Items.Clear();
 
+            // V0.1.3 多桌宠：地图背景只挂主宠（背景窗口是「全局单份」语义——同一张地图 + 全局层开关，
+            // 多只同时挂会互相遮挡，且 MapService 整图缓存单槽会互相顶掉）。
+            if (!_isPrimaryRole)
+            {
+                _bgMenu.Items.Add(new MenuItem { Header = "（仅主宠可挂地图背景）", IsEnabled = false });
+                return;
+            }
+
             // 1. 开关（背景=静态+摄像机抽象：任一可见即"开"）
             bool bgOn = _backgroundWindow.IsVisible || _mapViewportWindow.IsVisible;
             var toggle = new MenuItem { Header = bgOn ? "🚫 关闭背景" : "🌙 开启背景" };
@@ -656,8 +984,10 @@ public partial class PetWindow
                 foreach (var entry in recents)
                 {
                     var captured = entry;
-                    var name = !string.IsNullOrEmpty(entry.Name) ? entry.Name
-                        : (_wzService.IsLoaded ? _wzService.GetMapName(entry.Id) : entry.Id);
+                    // 存量名 == id / map_ 哨兵 → 重新查缓存（修「历史菜单中文缺失」，如 10000/1000000）
+                    var name = _wzService.IsLoaded
+                        ? _wzService.ResolveDisplayName(entry.Id, entry.Name)
+                        : (!string.IsNullOrEmpty(entry.Name) ? entry.Name : entry.Id);
                     var item = new MenuItem { Header = $"🗺️ {name} [{entry.Id}]" };
                     item.Click += (_, _) => ApplyMapSelection(new MapSelection(captured.Id, name, captured.CropX, captured.CropY, captured.CropW, captured.CropH));
                     _bgMenu.Items.Add(item);

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using MiniPet.Models;
 using MiniPet.Services;
+using MiniPet.Services.Walk;
 using MiniPet.Views.Controls;
 
 namespace MiniPet.Views;
@@ -20,6 +21,13 @@ namespace MiniPet.Views;
 public partial class PetWindow : Window
 {
     private readonly ConfigService _configService;
+    private readonly PetManager _petManager;          // 只用于菜单读取宠物总数（增删/主宠仍走 EventBus 命令事件）
+    private readonly PetInstanceConfig _cfg;          // V0.1.3：本窗口对应的宠物实例配置（身份来源）
+    private readonly string _petId;
+    private bool _isPrimaryRole;                      // 主宠：挂地图背景 + 响应 Agent 特效
+    private Action<PetSettings>? _settingsChangedHandler;   // 命名订阅（可在 OnClosed 退订）
+    // I1：气泡回调也改命名订阅（BalloonService 是 Singleton，匿名 lambda 无法退订 → 移除宠物时整棵窗口图泄漏）
+    private Action<string, BalloonData, byte[], int?, string?>? _balloonReadyHandler;
     private readonly WzService _wzService;
     private readonly AnimService _animService;
     private readonly SpriteService _spriteService;
@@ -31,6 +39,20 @@ public partial class PetWindow : Window
     private readonly PaperdollService _paperdoll;
     private readonly MapService _mapService;
     private readonly CacheManager _cacheManager;
+    // 音乐模块 V0.2.0（F15-F17）：目录服务（透传给 SettingsWindow 音乐 tab）+ 播放编排服务（气泡/菜单/场景联动挂钩）
+    private readonly MusicCatalogService _musicCatalog;
+    private readonly MusicPlayerService _musicService;
+    // F18 行走模式（胶水 2026-09-14 规则）：只由主宠承载；其余宠物在行走期间隐藏
+    private WalkModeService? _walkMode;
+    private WalkMusicBridge? _walkBridge;
+    private IDisposable? _walkVisibility;
+    private DateTime _walkLastTickUtc;
+    private DateTime _walkLogLastUtc;
+    private string _walkLastAction = string.Empty;
+    // 行走相机（缓动跟随）：人物因此在视口内有位移，宠物窗口位置随之前后移动
+    private float _walkCamX, _walkCamY;
+    /// <summary>当前行走地图（定位换算用 ClampCamera 需要 MapInfo 的 worldRect；OnWalkMapChanged 载图后赋值）。</summary>
+    private Models.MapInfo? _walkMapInfo;
     private readonly BackgroundWindow _backgroundWindow;
     private readonly MapViewportWindow _mapViewportWindow;
     private readonly DispatcherTimer _balloonTimer;
@@ -39,23 +61,56 @@ public partial class PetWindow : Window
     private AgentState _agentReflect = AgentState.Idle;   // 最近一次 Agent 反映态（PetReflectStateChanged 订阅，随机气泡仅在 Idle 触发）
     private int _paperdollGen;
     private int _petSwitchGen;
-    private static readonly string[] _randomLines = {
-        "今天天气真好~", "加油！", "记得喝水哦", "嘿嘿~", "我在看着你呢",
-        "累了就休息一下吧", "你今天也很努力呢", "要一起冒险吗？",
-        "悄悄告诉你，我其实会飞哦~", "要不要一起去打怪？", "我想吃鲷鱼烧了…",
-        "你认真工作的样子真帅！", "再玩十分钟就去睡觉！", "我在这里陪着你呀",
-        "好想出去冒险啊！", "摸摸我的头好不好？", "今天也要元气满满哦！",
-        "嘘——别告诉别人我会说话", "累了就靠在我身上休息吧", "我们是最好的搭档！",
-        "你有没有好好吃饭呀？", "窗外的云看起来好软~", "猜猜我现在在想什么？",
-        "一天不见，想我了吗？", "给你一个么么哒~", "发呆的时候也在想你哦",
-        "要不要听我讲个笑话？", "好喜欢和你一起的时光", "肚子饿了，喂我吃点啥呗",
-        "你笑起来真好看！", "保持好心情，好运自然来~"
+    /// <summary>切换素材 loading 的超时兜底计时器（后台 PreloadMob 卡住时复位 UI，见 SwitchToPet）。</summary>
+    private DispatcherTimer? _petSwitchTimeout;
+    private MenuItem? _exprMenu;
+    /// <summary>切换素材 loading 超时阈值（ms）。</summary>
+    private const int PetSwitchTimeoutMs = 10000;
+    // 对齐 PLAN-表情功能.md §4.5「表情 × 气泡联动」：31 条随机台词升级为结构化数组，
+    // 每条台词配一个语义相配的表情 key（key 仅取自 PaperdollService.KnownExpressions，见 PLAN §2 清单）；
+    // ExpireMs = 该表情的播放时长（气泡 15s，表情 8000ms 先收回默认）。
+    // 配对取向：打招呼/开心→smile，俏皮→wink，庆祝/打气→cheers，撒娇/么么哒→love/chu，
+    //           自夸/悠哉→hum，闪亮夸人→glitter，憧憬/好运→shine，问句→qBlue，
+    //           单纯眨眼/「休息一下」→blink，想吃/肚子饿→troubled。
+    private static readonly (string Text, string Expr, int ExpireMs)[] _randomLines = {
+        ("今天天气真好~", "smile", 8000),
+        ("加油！", "cheers", 8000),
+        ("记得喝水哦", "smile", 8000),
+        ("嘿嘿~", "smile", 8000),
+        ("我在看着你呢", "blink", 8000),
+        ("累了就休息一下吧", "blink", 8000),
+        ("你今天也很努力呢", "smile", 8000),
+        ("要一起冒险吗？", "cheers", 8000),
+        ("悄悄告诉你，我其实会飞哦~", "wink", 8000),
+        ("要不要一起去打怪？", "cheers", 8000),
+        ("我想吃鲷鱼烧了…", "troubled", 8000),
+        ("你认真工作的样子真帅！", "glitter", 8000),
+        ("再玩十分钟就去睡觉！", "wink", 8000),
+        ("我在这里陪着你呀", "smile", 8000),
+        ("好想出去冒险啊！", "shine", 8000),
+        ("摸摸我的头好不好？", "chu", 8000),
+        ("今天也要元气满满哦！", "cheers", 8000),
+        ("嘘——别告诉别人我会说话", "wink", 8000),
+        ("累了就靠在我身上休息吧", "love", 8000),
+        ("我们是最好的搭档！", "cheers", 8000),
+        ("你有没有好好吃饭呀？", "qBlue", 8000),
+        ("窗外的云看起来好软~", "hum", 8000),
+        ("猜猜我现在在想什么？", "qBlue", 8000),
+        ("一天不见，想我了吗？", "love", 8000),
+        ("给你一个么么哒~", "love", 8000),
+        ("发呆的时候也在想你哦", "love", 8000),
+        ("要不要听我讲个笑话？", "hum", 8000),
+        ("好喜欢和你一起的时光", "love", 8000),
+        ("肚子饿了，喂我吃点啥呗", "troubled", 8000),
+        ("你笑起来真好看！", "glitter", 8000),
+        ("保持好心情，好运自然来~", "shine", 8000)
     };
     private readonly TextBlock _infoText;
     private ProgressBar? _loadingBar;
     private TextBlock? _loadingText;
     private Point _dragStart;
     private bool _isDragging;
+    private bool _followDiagLogged;   // 行走跟随广播诊断（只打一次）
     private bool _dragCandidate;      // 点击候选拖拽（位移超阈值才转正；点击不破坏 origin 补偿基准）
     private Point _pressPoint;        // 按下位置（候选拖拽判定用）
     private PixelPoint _windowStartPos;
@@ -65,7 +120,6 @@ public partial class PetWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly Stopwatch _stopwatch;
     private double _lastElapsed;
-    private SettingsWindow? _settingsWindow;
     private bool _isExiting;
     private Models.MapInfo? _currentMap;          // #6：渲染完成回调落地时用
     private bool _placePetAfterRender;            // #6：ApplyMapSelection 后等渲染完成才落地
@@ -89,10 +143,17 @@ public partial class PetWindow : Window
     private bool _balloonWasVisibleBeforeHide;  // 隐藏到托盘前气泡是否可见（恢复时跟随显示，Y7）
     // A15：已登记的 EventBus 订阅（窗口销毁时统一退订——匿名 lambda 无法单独退订）
     private readonly List<(EventType Type, Action<object?> Handler)> _eventSubscriptions = new();
+    // 音乐模块 V0.2.1：pet:moved 发布节流状态——上次已发布的窗口位置 + 上次发布时间戳（Environment.TickCount64，10Hz gate）
+    private PixelPoint? _petMovedLastSent;
+    private long _petMovedLastMs;
 
-    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager)
+    public PetWindow(ConfigService configService, WzService wzService, AnimService animService, SpriteService spriteService, TrayService trayService, EventBus eventBus, BalloonService balloonService, PaperdollService paperdoll, MapService mapService, CacheManager cacheManager, MusicCatalogService musicCatalog, MusicPlayerService musicService, PetInstanceConfig cfg, PetManager petManager)
+
     {
         _configService = configService;
+        _cfg = cfg ?? throw new ArgumentNullException(nameof(cfg));
+        _petId = string.IsNullOrEmpty(cfg.Id) ? "pet-1" : cfg.Id;
+        _petManager = petManager;
         _wzService = wzService;
         _animService = animService;
         _spriteService = spriteService;
@@ -101,8 +162,23 @@ public partial class PetWindow : Window
         _balloonService = balloonService;
         _paperdoll = paperdoll;
         _animService.RegisterFrameProvider(paperdoll); // 纸娃娃实时合成（ADR-0005）；Mob/NPC 走图条
+        // 对齐 PLAN-表情功能.md §4.3/§4.4：自动眨眼（默认开）/ 随机表情（默认关）开关在构造时从配置初始化
+        // （ConfigService.GetAutoBlink / GetRandomExpression，Agent A 已备）；菜单勾选写回走 ApplyExpressionSettings。
+        try
+        {
+            _paperdoll.AutoBlinkEnabled = _configService.GetAutoBlink();
+            _paperdoll.RandomExpressionEnabled = _configService.GetRandomExpression();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] InitExpressionSettings: {ex.Message}"); }
+        // V0.1.3：宠物身份来自本窗口的实例配置（不再读全局单值字段——多只宠物各自身份独立）
+        _currentEntityType = (cfg.MobId == PaperdollService.SentinelMobId
+            || string.Equals(cfg.EntityType, "player", StringComparison.OrdinalIgnoreCase))
+            ? "player"
+            : NormalizeEntityType(cfg.EntityType);
         _mapService = mapService;
         _cacheManager = cacheManager;
+        _musicCatalog = musicCatalog;
+        _musicService = musicService;
         _backgroundWindow = new BackgroundWindow();
         _backgroundWindow.RequestHide += () => Dispatcher.UIThread.Post(() => { _backgroundWindow.HideMap(); _backgroundWindow.Hide(); RaisePet(); });
         _backgroundWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
@@ -117,26 +193,40 @@ public partial class PetWindow : Window
             try
             {
                 var s = _configService.LoadSettings();
-                if (!string.IsNullOrEmpty(s.MapId))
-                    _cacheManager.SaveMapPng(s.MapId, cx, cy, cw, ch, png, trimWorldX, trimWorldY);
+                // V0.1.3：用本窗口实际渲染的地图 id（旧版用全局 settings.MapId —— 多宠物不同地图会串缓存）
+                var mapId = _currentMap?.Id;
+                if (string.IsNullOrEmpty(mapId)) { mapId = s.MapId; }
+                if (!string.IsNullOrEmpty(mapId))
+                    _cacheManager.SaveMapPng(mapId, cx, cy, cw, ch, png, trimWorldX, trimWorldY);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CacheMapPng: {ex.Message}"); }
         };
 
         // 模式2 摄像机窗口：RequestHide → 切回静态模式（与「背景模式」菜单一致）；RequestSwitchMap → 进设置中心。
         _mapViewportWindow = new MapViewportWindow();
+        // 行走/背景视口不应抢焦点（Activate/激活会打断用户当前操作）
+        _mapViewportWindow.ShowActivated = false;
+        _mapViewportWindow.Focusable = false;
         var vpSettings = _configService.LoadSettings();
         _mapViewportWindow.SetViewportSize(vpSettings.ViewportW, vpSettings.ViewportH);
         _mapViewportWindow.RequestHide += () => Dispatcher.UIThread.Post(() => SwitchToStaticMode());
         _mapViewportWindow.RequestSwitchMap += () => Dispatcher.UIThread.Post(() => OpenBackgroundTab());
+        // F18 行走模式：服务改为**懒创建**（见 EnsureWalkServices）——
+        // 构造这一刻 PetManager 还没 ApplyPrimaryRole，IsPrimaryRole 恒为 false，
+        // 在这里判断会导致服务永远不创建（正是「播放音乐后宠物不动」的原因）。
 
         Title = "MiniPet";
         SizeToContent = SizeToContent.WidthAndHeight;
         MinWidth = 64;
         MinHeight = 64;
-        Topmost = true;
+        // 置顶以配置为准（🐾 桌宠 → 📌 置顶 可关；关掉后会被其它窗口盖住）
+        try { Topmost = _configService.GetTopmost(); }
+        catch { Topmost = true; }
         // 2026-08-17 用户要求：桌宠不进任务栏（Windows），仅托盘展示；设置中心正常显示
         ShowInTaskbar = false;
+        // V0.1.3 备注：这里**不能**设 ShowActivated=false —— 实测会让桌宠窗口收不到右键/拖拽
+        // （非 key window 不弹 ContextMenu，胶水反馈"菜单点不出来"）。抢焦点的真正来源是气泡窗口
+        // 与子窗口的 Show，已在 BalloonWindow 里单独处理。
         WindowDecorations = global::Avalonia.Controls.WindowDecorations.None;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Brushes.Transparent;
@@ -197,13 +287,14 @@ public partial class PetWindow : Window
         // 气泡窗口独立跟随固定锚点，动画切换位置不动）
         _balloonWindow = new BalloonWindow();
         ContextMenu = BuildContextMenu();
-        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); };
+        ContextMenu.Opening += (_, _) => { RefreshAnimationMenu(); RefreshExpressionMenu(); RefreshPaperdollMenuItem(); RebuildBgMenu(); RefreshMiniBarMenuItem(); RefreshPetMenu(); };
+
         SetupDragEvents();
 
         // 帧循环：30fps 轮询（预裁剪帧缓存 + 追帧，多帧动画顺滑）
         _stopwatch = new Stopwatch();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
-        _timer.Tick += OnTimerTick;
+        _timer.Tick += (s, e) => { TickWalkMode(); OnTimerTick(s, e); };
         _balloonTimer = new DispatcherTimer();
         _animService.EnableRandomIdle(true);
         _lastOriginX = 0;
@@ -214,10 +305,14 @@ public partial class PetWindow : Window
 
         // 动画启动由 LoadDefaultPet 控制（WZ 加载后或缓存命中后）
 
-        // 托盘集成
+        // 托盘集成（V0.2.1 音乐：先注入音乐服务再建托盘，托盘菜单首建即带音乐快捷分组；
+        // V0.1.3 多桌宠：登记为「一只」，显示 / 隐藏 / 居中作用于全部桌宠）
         try
         {
-            _trayService.SetMainWindow(this);
+            _trayService.SetMusicService(_musicService);
+            _trayService.RegisterPet(this);
+            _trayService.ShowTrayIcon();
+
             _trayService.ShowTrayIcon();
         }
         catch (Exception ex)
@@ -228,8 +323,10 @@ public partial class PetWindow : Window
         // 随机聊天气泡定时器（30~90s，仅在 stand 时触发）
         InitBalloonTimer();
 
-        SubscribeBus(EventType.UserDragStart, _ =>
+        SubscribeBus(EventType.UserDragStart, data =>
         {
+            // V0.1.3 多桌宠定向：拖谁谁动，其他桌宠不受影响（旧版无源广播会让所有宠物一起走）
+            if (data is PetDragEvent d0 && d0.PetId != _petId) { return; }
             Dispatcher.UIThread.Post(() =>
             {
                 try
@@ -254,8 +351,9 @@ public partial class PetWindow : Window
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] DragStart anim: {ex.Message}"); }
             });
         });
-        SubscribeBus(EventType.UserDragEnd, _ =>
+        SubscribeBus(EventType.UserDragEnd, data =>
         {
+            if (data is PetDragEvent d1 && d1.PetId != _petId) { return; }
             Dispatcher.UIThread.Post(() =>
             {
                 try
@@ -273,7 +371,6 @@ public partial class PetWindow : Window
             {
                 _isExiting = true;
                 _trayService.HideTrayIcon();
-                _settingsWindow?.Close();
                 _backgroundWindow.Close();
                 _mapViewportWindow.Close();
                 Close();
@@ -305,21 +402,28 @@ public partial class PetWindow : Window
             {
                 try
                 {
-                    if (data is ValueTuple<string, string> pet)
+                    // V0.1.3 定向：只有发起切换的那只更新托盘提示 / 最近使用（旧版所有宠物都会写一遍）
+                    if (data is not PetChangedEvent pet || pet.PetId != _petId) { return; }
+                    if (_isPrimaryRole)
                     {
-                        _trayService.SetTooltip($"MiniPet - {pet.Item2} (ID:{pet.Item1})");
-                        // 记录最近使用
-                        RecordRecentItem(pet.Item1, pet.Item2, _currentEntityType);
-                        // 切宠物：旧宠物 origin 基准不适用 → 首帧只同步不补偿（避免切换瞬间窗口大跳）
-                        _pendingOriginSync = true;
+                        _trayService.SetTooltip($"MiniPet - {pet.Name} (ID:{pet.MobId})");
                     }
+                    // 记录最近使用
+                    RecordRecentItem(pet.MobId, pet.Name, _currentEntityType);
+                    // 切宠物：旧宠物 origin 基准不适用 → 首帧只同步不补偿（避免切换瞬间窗口大跳）
+                    _pendingOriginSync = true;
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetChanged: {ex.Message}"); }
             });
         });
 
-        SubscribeBus(EventType.OpenSettings, _ =>
+        SubscribeBus(EventType.OpenSettings, data =>
         {
+            // V0.1.3 定向：托盘入口（PetId 空）= 主宠；右键菜单入口带自己的 id。
+            // 旧版无源广播会让 N 只宠物各弹一个设置窗。
+            var target = (data as OpenSettingsEvent)?.PetId;
+            var isMine = string.IsNullOrEmpty(target) ? _isPrimaryRole : target == _petId;
+            if (!isMine) { return; }
             Dispatcher.UIThread.Post(() =>
             {
                 try { ShowSettingsWindow(); }
@@ -327,9 +431,64 @@ public partial class PetWindow : Window
             });
         });
 
-        // 桌宠缩放：启动读 WindowScale，订阅配置变更实时跟随（设置中心拖动滑块即生效）
-        try { var sc = _configService.LoadSettings().WindowScale; _scale = sc > 0 ? sc : 1.0; } catch { _scale = 1.0; }
-        _configService.OnSettingsChanged += s => { try { _scale = s.WindowScale > 0 ? s.WindowScale : 1.0; } catch { } };
+
+        // V0.1.3 定向切实体：设置中心「📦 桌宠设置」点「确定应用」时只有目标宠物执行
+        SubscribeBus(EventType.EntityApplied, data =>
+        {
+            if (data is not PetEntityAppliedEvent ev) { return; }
+            if (ev.PetId != _petId) { return; }
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { SwitchToPet(ev.MobId, ev.Name, ev.EntityType); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] EntityApplied({_petId}): {ex.Message}"); }
+            });
+        });
+
+        // V0.1.3 定向换装：设置中心点「应用到桌宠」时只有目标宠物执行（按 petId 过滤）
+        SubscribeBus(EventType.PaperdollApplied, data =>
+        {
+            if (data is not PetPaperdollEvent ev || ev.Appearance == null) { return; }
+            if (ev.PetId != _petId) { return; }
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { ApplyPaperdoll(ev.Appearance); }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollApplied({_petId}): {ex.Message}"); }
+            });
+        });
+
+        // 桌宠缩放：本宠物自己的 WindowScale（V0.1.3 per-pet；旧版为全局单值，所有宠物共用）
+        _scale = cfg.WindowScale > 0 ? cfg.WindowScale : 1.0;
+        _settingsChangedHandler = OnSettingsChangedHandler;
+        _configService.OnSettingsChanged += _settingsChangedHandler;
+    }
+
+    /// <summary>配置变更回调：只跟随本宠物自己的缩放（窗口销毁时在 OnClosed 退订）。</summary>
+    private void OnSettingsChangedHandler(PetSettings? s)
+    {
+        try
+        {
+            var mine = s?.Pets?.FirstOrDefault(p => p.Id == _petId);
+            var sc = mine?.WindowScale ?? 0;
+            _scale = sc > 0 ? sc : 1.0;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnSettingsChanged({_petId}): {ex.Message}"); }
+
+// 音乐模块 V0.2.0（设计 §11.8）：换曲气泡——CurrentChanged 即换曲事件（用户点播/自动续播/场景联动），
+        // 可能从后台线程触发，经 Dispatcher.UIThread.Post 切回 UI 线程后走现有气泡链路（ShowBalloonNow）弹
+        // 「🎵 曲名」；track==null 忽略；启动恢复是静默预选不发 CurrentChanged（不出启动气泡，PLAN 步骤 7）。
+        _musicService.CurrentChanged += track =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    if (track == null) { return; }
+                    _ = ShowBalloonNow($"🎵 {track.Track}");
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] MusicBalloon: {ex.Message}"); }
+            });
+        };
+
     }
 
     /// <summary>EventBus 订阅登记（A15：窗口销毁时统一退订；匿名 lambda 无法单独退订）。</summary>
@@ -350,18 +509,98 @@ public partial class PetWindow : Window
         _eventSubscriptions.Clear();
     }
 
+    // ───────────────── V0.1.3 多桌宠：身份 / 主宠角色 / 生命周期 ─────────────────
+
+    /// <summary>本窗口对应的宠物实例 id（多桌宠身份；事件定向、配置读写都用它）。</summary>
+    public string PetId => _petId;
+
+    /// <summary>是否主宠（挂地图背景 + 响应 Agent 状态特效）。</summary>
+    public bool IsPrimaryRole => _isPrimaryRole;
+
+    /// <summary>本窗口的动画服务（每只宠物一份）；主宠时被 EffectLayerService 作为 Agent 特效驱动。</summary>
+    public AnimService Animation => _animService;
+
+    /// <summary>
+    /// 主宠角色派发（由 PetManager 调用）：失去主宠身份时立即收起地图背景——
+    /// 背景窗口是「全局单份」语义（同一张地图 + 全局层开关），多只同时挂会互相遮挡。
+    /// </summary>
+    internal void SetPrimaryRole(bool isPrimary)
+    {
+        try
+        {
+            _isPrimaryRole = isPrimary;
+            if (!isPrimary)
+            {
+                if (_backgroundWindow.IsVisible)
+                {
+                    _backgroundWindow.HideMap();
+                    _backgroundWindow.Hide();
+                }
+                if (_mapViewportWindow.IsVisible)
+                {
+                    _mapViewportWindow.Hide();
+                }
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SetPrimaryRole({_petId}): {ex.Message}"); }
+    }
+
+    /// <summary>设置中心「背景」页应用地图（设置中心全局唯一 → 背景落到主宠；背景是全局单份语义）。</summary>
+    internal void ApplyMapSelectionFromSettings(MapSelection sel) => ApplyMapSelection(sel);
+
+    /// <summary>设置中心镜头大小应用（落到主宠的摄像机窗口）。</summary>
+    internal void ApplyViewportSizeFromSettings(int w, int h) => _mapViewportWindow.SetViewportSize(w, h);
+
+    /// <summary>设置中心层开关变化后，主宠重渲染背景。</summary>
+    internal void ReRenderBackgroundFromSettings() => ReRenderBackground();
+
+    /// <summary>启动位置（PetManager 摆放用）：转 Manual 避免 WindowStartupLocation 居中覆盖。</summary>
+    internal void SetStartupPosition(PixelPoint p)
+    {
+        try
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Position = p;
+            _windowStartPos = p;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SetStartupPosition({_petId}): {ex.Message}"); }
+    }
+
+    /// <summary>真正关闭本窗口（「移除这只桌宠」）：不走「关闭 = 隐藏到托盘」。</summary>
+    internal void CloseForRemoval()
+    {
+        try
+        {
+            _isExiting = true;   // 让 OnClosing 不取消关闭（区别于「关闭 = 隐藏到托盘」）
+            // I1：Close() 不会把 IsVisible 置 false（Avalonia 12.1：Close→PlatformImpl.Dispose），
+            // OnPetHidden 不会触发 → 必须在这里显式停帧循环/气泡调度，否则被移除的桌宠 30fps 空转到进程结束。
+            try { _timer.Stop(); } catch { }
+            try { _balloonTimer.Stop(); } catch { }
+            try { _stopwatch.Stop(); } catch { }
+            // I1：气泡是 Singleton 的多播事件，被移除窗口不退订会连带整棵窗口对象图无法回收
+            try { if (_balloonReadyHandler != null) { _balloonService.OnBalloonReady -= _balloonReadyHandler; _balloonReadyHandler = null; } } catch { }
+            try { _backgroundWindow.Close(); } catch { }
+            try { _mapViewportWindow.Close(); } catch { }
+            try { _balloonWindow.Close(); } catch { }
+            Close();
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] CloseForRemoval({_petId}): {ex.Message}"); }
+    }
+
     public void LoadDefaultPet(WzService? wzService)
     {
         try
         {
             var settings = _configService.LoadSettings();
-            if (settings != null && !string.IsNullOrEmpty(settings.CurrentMobId))
+            // V0.1.3：只恢复「本窗口这只」的实例配置（旧版读全局单值 CurrentMobId → 多只会全变成同一只）
+            SyncCfgFromSettings(settings);
+            var mobId = _cfg.MobId;
+            if (settings != null && !string.IsNullOrEmpty(mobId))
             {
-                var mobId = settings.CurrentMobId;
                 if (mobId == PaperdollService.SentinelMobId)
                 {
                     // 纸娃娃恢复：上次实体为纸娃娃 → 恢复搭配（WZ 断线时 AnimService 回退离线图条）
-                    var pa = settings.CurrentPaperdoll;
+                    var pa = _cfg.Paperdoll;
                     if (pa != null && _wzService.IsLoaded)
                     {
                         _paperdoll.SetAppearance(pa);
@@ -409,13 +648,54 @@ public partial class PetWindow : Window
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] LoadDefaultPet: {ex.Message}"); }
     }
 
+    /// <summary>
+    /// 空闲随机节奏（V0.1.3，胶水反馈「stand 12 的切换不要那么频繁」）：
+    /// 纸娃娃动作丰富但站立变体外观相近，切换太密像抖动 → 25~60s；Mob/Npc 保持 8~15s 的活泼节奏。
+    /// </summary>
+    private void ApplyIdlePolicy()
+    {
+        try
+        {
+            if (IsSentinelActive())
+            {
+                _animService.SetIdleTimeout(25000, 60000);
+            }
+            else
+            {
+                _animService.SetIdleTimeout(8000, 15000);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyIdlePolicy({_petId}): {ex.Message}"); }
+    }
+
     public void StartAnimation()
     {
-        _animService.SetCurrentMobId(_configService.LoadSettings().CurrentMobId);
+        ApplyIdlePolicy();
+        // V0.1.3：用本宠物自己的实体 id（旧版读全局 CurrentMobId —— 多只宠物时会把刚设好的实体又覆盖回去）
+        if (!string.IsNullOrEmpty(_cfg.MobId))
+        {
+            _animService.SetCurrentMobId(_cfg.MobId);
+        }
         _animService.Play("stand", PlayMode.Loop);
         _stopwatch.Start();
         _timer.Start();
-        Console.WriteLine($"[PetWindow] StartAnimation: 动画已启动");
+        Console.WriteLine($"[PetWindow] StartAnimation({_petId}): 动画已启动 ({_cfg.MobId})");
+    }
+
+    /// <summary>把配置里属于本宠物的字段同步进内存快照 <see cref="_cfg"/>（启动 / 外部改配置后调用）。</summary>
+    private void SyncCfgFromSettings(PetSettings? settings)
+    {
+        try
+        {
+            var mine = settings?.Pets?.FirstOrDefault(p => p.Id == _petId);
+            if (mine == null) { return; }
+            _cfg.EntityType = mine.EntityType;
+            _cfg.MobId = mine.MobId;
+            _cfg.Paperdoll = mine.Paperdoll;
+            _cfg.WindowScale = mine.WindowScale;
+            _cfg.Primary = mine.Primary;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SyncCfg({_petId}): {ex.Message}"); }
     }
 
     private void InitBalloonTimer()
@@ -425,20 +705,37 @@ public partial class PetWindow : Window
             // 随机气泡（2026-08-15 恢复）：仅 Agent 空闲（Idle）时触发，随机 3~8s 间隔；
             // Agent 执行任务时（Run/Review/Wave 等）状态气泡优先，不打扰。
             _balloonTimer.Tick += (_, _) => TryShowRandomBalloon();
+            // 随机气泡持久化开关（胶水 2026-09-16）：构造时应用
+            try
+            {
+                if (!_configService.LoadSettings().RandomBalloonEnabled)
+                {
+                    _balloonTimer.Stop();
+                    Console.Error.WriteLine("[PetWindow] 随机气泡发言：已按配置关闭");
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] 读开关配置: {ex.Message}"); }
             _balloonTimer.Start();
             ScheduleRandomBalloon();
 
-            // Agent 反映态订阅：非 Idle 时抑制随机气泡（状态气泡为主）
+            // Agent 反映态订阅：非 Idle 时抑制随机气泡（状态气泡为主）。
+            // V0.1.3：Agent 特效只作用于主宠 → 非主宠不跟随全局反映态，保持自己的随机气泡节奏。
             SubscribeBus(EventType.PetReflectStateChanged, data =>
             {
+                if (!_isPrimaryRole) { return; }
                 if (data is AgentState s)
                 {
                     _agentReflect = s;
                 }
             });
 
-            _balloonService.OnBalloonReady += (text, data, png, durationMs) =>
+            _balloonReadyHandler = (text, data, png, durationMs, targetPetId) =>
             {
+                // V0.1.3 多桌宠定向：指定目标宠物时只有它显示（null = 广播给所有桌宠）
+                if (targetPetId != null && targetPetId != _petId) { return; }
+                // I1：本窗口已移除/退出（气泡窗口已 Close，Show 会抛「Cannot re-show a closed window」）
+                // → 丢弃在途回调。移除瞬间可能已有一笔气泡在合成中，这里兜住。
+                if (_isExiting) { return; }
                 Dispatcher.UIThread.Post(async () =>
                 {
                     try
@@ -448,6 +745,9 @@ public partial class PetWindow : Window
                         // 会停在旧位置漂移成「幽灵」；释放后下一轮定时器/状态变化再触发。
                         // 同理：窗口已隐藏到托盘（在途气泡回调晚到）也不显示，防隐藏后幽灵气泡。
                         if (_isDragging || !IsVisible) { return; }
+                        // I1：窗口已被移除（本回调可能在 Post 之后才执行）→ 气泡窗口已 Close，
+                        // 再 Show 会抛「Cannot re-show a closed window」，直接丢弃。
+                        if (_isExiting) { return; }
                         using var ms = new MemoryStream(png);
                         var bmp = new Bitmap(ms);
                         // 2026-08-16：尺寸必须在 ShowBalloon 前读取——一次性气泡（autoHide 非空）内部
@@ -466,6 +766,7 @@ public partial class PetWindow : Window
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonShow: {ex.Message}"); }
                 });
             };
+            _balloonService.OnBalloonReady += _balloonReadyHandler;   // I1：可退订的命名订阅
 
             // 胶水 2026-08-17：气泡淡出完成后隐藏外层窗口（旧实现空壳窗口常驻，观感「气泡一直在」）
             _balloonWindow.BalloonControl.BalloonHidden += () =>
@@ -482,6 +783,8 @@ public partial class PetWindow : Window
 
     private async void TryShowRandomBalloon()
     {
+        // 随机气泡发言开关（胶水 2026-09-16）：关 = 不弹（定时器可能被托盘恢复等路径重启）
+        if (!_configService.LoadSettings().RandomBalloonEnabled) { return; }
         try
         {
             // Agent 非空闲（干活中）：状态气泡优先，不发随机气泡。
@@ -505,9 +808,17 @@ public partial class PetWindow : Window
             Console.WriteLine($"[PetWindow] TryShowRandomBalloon: id={balloonId}, data={(data != null ? "ok" : "null(种子中)")}");
             if (data == null) { return; } // 缓存未就绪，后台种子中，下一轮再试
             var line = _randomLines[_rng.Next(_randomLines.Length)];
-            Console.WriteLine($"[PetWindow] BalloonShow: line={line}");
+            Console.WriteLine($"[PetWindow] BalloonShow: line={line.Text}, expr={line.Expr}");
+            // 对齐 PLAN-表情功能.md §4.5（表情 × 气泡联动）：弹气泡的**同时**播配对表情，
+            // 表情时长用本条自带的 ExpireMs（8000ms）——表情先收，气泡 15s 仍在，到期由 PaperdollService 自己回 default。
+            // 眨眼是 3 帧快动画（≈180ms）：配对的 blink 一律用 300ms，否则会「连续眨眼 8 秒」（验收 §7-2）
+            int exprMs = string.Equals(line.Expr, PaperdollService.ExpressionBlink, StringComparison.Ordinal)
+                ? 300 : line.ExpireMs;
+            try { _paperdoll.PlayExpression(line.Expr, exprMs); }
+            catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] BalloonExpression({line.Expr}): {ex.Message}"); }
             // 胶水 2026-08-19：随机气泡显示 15s 后自动隐藏（原 6s；调度期望 1min/条，显示期占 ~25%）
-            await _balloonService.Show(line, data, durationMs: 15000);
+            // V0.1.3：targetPetId = 本宠物 → 只在本窗口弹（多只各自随机说话，不互相顶掉）
+            await _balloonService.Show(line.Text, data, durationMs: 15000, targetPetId: _petId);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RandomBalloon: {ex.Message}"); }
         finally
@@ -526,12 +837,29 @@ public partial class PetWindow : Window
     {
         try
         {
-            _balloonSilentRound = _rng.Next(100) < 40; // 40% 静默轮
-            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(30, 43)); // 30~42s（胶水 2026-08-19：期望约 1 分钟一条——均值 36s ÷ 60% 出泡率 = 60s）
+            // 胶水 2026-09-24：说话频率高一点（原 30~42s + 40% 静默 ≈ 1 分钟一条）
+            _balloonSilentRound = _rng.Next(100) < 20; // 20% 静默轮
+            _balloonTimer.Interval = TimeSpan.FromSeconds(_rng.Next(8, 20)); // 8~19s（均 ~13s ÷ 80% 出泡率 ≈ 17s 一条）
             _balloonTimer.Stop();
             _balloonTimer.Start();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ScheduleRandomBalloon: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 对齐 PLAN-表情功能.md §4.3：菜单勾选「自动眨眼 / 随机表情」时，同步到本宠的 PaperdollService 并落盘配置。
+    /// 接线点（PetWindow.Menu.cs 不归本文件）：RefreshExpressionMenu() 里两个开关的 Click 处理器。
+    /// </summary>
+    internal void ApplyExpressionSettings(bool autoBlink, bool randomExpression)
+    {
+        try
+        {
+            _paperdoll.AutoBlinkEnabled = autoBlink;
+            _paperdoll.RandomExpressionEnabled = randomExpression;
+            _configService.SetAutoBlink(autoBlink);
+            _configService.SetRandomExpression(randomExpression);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ApplyExpressionSettings: {ex.Message}"); }
     }
 
     public async Task ShowBalloonNow(string text)
@@ -542,9 +870,29 @@ public partial class PetWindow : Window
             if (string.IsNullOrEmpty(balloonId)) { balloonId = "560"; }
             var data = _balloonService.LoadBalloon(balloonId);
             if (data == null) { return; }
-            await _balloonService.Show(text, data);
+            await _balloonService.Show(text, data, targetPetId: _petId);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowBalloonNow: {ex.Message}"); }
+    }
+
+    /// <summary>外部（托盘「重置到桌面中央」）改动位置后落盘。</summary>
+    internal void SavePositionNow() => SavePositionToConfig();
+
+    /// <summary>保存本宠物窗口位置到自己的实例配置（拖拽结束调用；多只各存各的坐标）。</summary>
+    private void SavePositionToConfig()
+    {
+        try
+        {
+            var pos = Position;
+            _configService.UpdatePet(_petId, p =>
+            {
+                p.WindowX = pos.X;
+                p.WindowY = pos.Y;
+            });
+            _cfg.WindowX = pos.X;
+            _cfg.WindowY = pos.Y;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SavePosition({_petId}): {ex.Message}"); }
     }
 
     /// <summary>
@@ -554,26 +902,30 @@ public partial class PetWindow : Window
     {
         try
         {
-            var settings = _configService.LoadSettings();
-            if (settings.RecentItems == null)
-                settings.RecentItems = new System.Collections.Generic.List<Models.RecentItem>();
-
+            // V0.1.3：改走原子更新（Load→改→Save 串行化）——多只宠物同时写配置时不再互相回滚
             var normalizedType = NormalizeEntityType(type);
-            // 移除旧的同名记录
-            settings.RecentItems.RemoveAll(r => r.Id == id);
-            // 插入到最前
-            settings.RecentItems.Insert(0, new Models.RecentItem
+            _configService.UpdateSettings(s =>
             {
-                Type = normalizedType,
-                Id = id,
-                Name = name,
-                LastUsedAt = DateTime.Now
+                if (s.RecentItems == null)
+                {
+                    s.RecentItems = new System.Collections.Generic.List<Models.RecentItem>();
+                }
+                // 移除旧的同名记录
+                s.RecentItems.RemoveAll(r => r.Id == id);
+                // 插入到最前
+                s.RecentItems.Insert(0, new Models.RecentItem
+                {
+                    Type = normalizedType,
+                    Id = id,
+                    Name = name,
+                    LastUsedAt = DateTime.Now
+                });
+                // 最多保留20条
+                while (s.RecentItems.Count > 20)
+                {
+                    s.RecentItems.RemoveAt(s.RecentItems.Count - 1);
+                }
             });
-            // 最多保留20条
-            while (settings.RecentItems.Count > 20)
-                settings.RecentItems.RemoveAt(settings.RecentItems.Count - 1);
-
-            _configService.SaveSettings(settings);
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] RecordRecentItem: {ex.Message}"); }
     }
@@ -597,9 +949,26 @@ public partial class PetWindow : Window
     {
         try
         {
-            _trayService.HideTrayIcon();
+            // V0.1.3：托盘按窗口注销（只剩最后一只被销毁时才撤图标）
+            _trayService.UnregisterPet(this);
             // A15：窗口销毁时退订全部 EventBus 订阅（防匿名 lambda 泄漏）
             UnsubscribeBusAll();
+            // V0.1.3：退订配置变更（旧版匿名 lambda 无 -=，多实例会逐个泄漏）
+            if (_settingsChangedHandler != null)
+            {
+                try { _configService.OnSettingsChanged -= _settingsChangedHandler; } catch { }
+                _settingsChangedHandler = null;
+            }
+            // I1：退订气泡回调（Singleton 事件，不退订会让被移除窗口的整棵对象图无法回收）
+            if (_balloonReadyHandler != null)
+            {
+                try { _balloonService.OnBalloonReady -= _balloonReadyHandler; } catch { }
+                _balloonReadyHandler = null;
+            }
+            // I1：兜底停帧循环/气泡调度（Close() 不产生 IsVisible 变化，OnPetHidden 不会跑）
+            try { _timer.Stop(); } catch { }
+            try { _balloonTimer.Stop(); } catch { }
+            try { _stopwatch.Stop(); } catch { }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnClosed: {ex.Message}"); }
         base.OnClosed(e);
@@ -691,11 +1060,15 @@ public partial class PetWindow : Window
                 var point = e.GetCurrentPoint(this);
                 if (point.Properties.IsRightButtonPressed)
                 {
+                    // 行走模式右键完全失效（胶水 2026-09-15）：不弹菜单
+                    if (_walkMode is { IsActive: true }) { return; }
                     ContextMenu?.Open(this);
                     return;
                 }
                 // 点击≠拖拽（胶水 2026-08-15）：仅记录按下位置，位移超阈值才进拖拽。
                 // 否则「点击」也会 _isDragging=true + 释放同步 origin 基准 → stand↔move 切换补偿错位 → 角色跳位置。
+                // 行走模式左键**可拖**（胶水 2026-09-15 更正）：拖拽期间 TickWalkMode 跳过 Position 覆盖，
+                // 松手后宠物回到地图行走位置继续走。
                 _pressPoint = e.GetPosition(this);
                 _dragCandidate = true;
             }
@@ -723,7 +1096,7 @@ public partial class PetWindow : Window
                         // 移动时默认气泡关闭（胶水规则 2026-08-08）：拖拽期间隐藏气泡，释放后恢复
                         _balloonWasVisible = _balloonWindow.IsVisible;
                         if (_balloonWasVisible) { _balloonWindow.HideBalloonWindow(); }
-                        _eventBus.Publish(EventType.UserDragStart);
+                        _eventBus.Publish(EventType.UserDragStart, new PetDragEvent(_petId));
                         return;
                     }
                     return;
@@ -746,10 +1119,12 @@ public partial class PetWindow : Window
                 _dragCandidate = false;
                 if (!_isDragging) { return; }
                 _isDragging = false;
-                _eventBus.Publish(EventType.UserDragEnd);
+                _eventBus.Publish(EventType.UserDragEnd, new PetDragEvent(_petId));
                 // 气泡锚点基准 = 拖拽结束时的角色锚点（动画切换气泡位置不动）
                 _balloonAnchorX = Position.X + _lastOriginX;
                 _balloonAnchorY = Position.Y + _lastOriginY;
+                // V0.1.3：位置持久化（每只各存各的坐标，重启后回到原位；旧版 WindowX/WindowY 是死字段）
+                SavePositionToConfig();
                 // 释放后第一帧绝对定位用：记录拖拽结束时的角色锚点屏幕位置
                 _dragEndAnchorX = (int)_balloonAnchorX;
                 _dragEndAnchorY = (int)_balloonAnchorY;
@@ -763,7 +1138,335 @@ public partial class PetWindow : Window
         };
     }
 
+    // ═══════════════════════════════════════════
+    // F18 行走模式（相机跟随 + 宠物动画 + 多宠隐藏 + 0.5s 淡入淡出）
+    // ═══════════════════════════════════════════
+
+    /// <summary>
+    /// 懒创建行走服务 + 音乐桥（幂等，只有主宠会创建）。
+    /// PetManager 是「先建完所有宠物、再 ApplyPrimaryRole」，所以构造期判断 IsPrimaryRole 必然为 false；
+    /// 这里在每帧开头补一次检查，主宠角色一确定（同一轮 CreateAllFromConfig 内）就立刻就绪。
+    /// </summary>
+    private void EnsureWalkServices()
+    {
+        if (_walkMode != null || _walkBridge != null)
+        {
+            return;
+        }
+        if (!IsPrimaryRole)
+        {
+            return;
+        }
+        // 注：随机 idle 的关闭**不能**放这里——本方法主宠第一帧就会执行，会把随机动画机制整体关掉
+        //（胶水 2026-09-24 报「默认一定时间随机切换动画的机制没了」）。改为在真正进入行走时关（见 OnWalkMapChanged）。
+        try
+        {
+            _walkMode = new WalkModeService(_wzService, _mapService, _paperdoll, _musicCatalog,
+                mapPickerOf: PickWalkMap);
+            _walkMode.MapChanged += OnWalkMapChanged;
+            _walkMode.Exited += OnWalkExited;
+            // 「播放音乐时加载地图」关闭 → 桥不启动行走（只听音乐，不触发任何 LoadMap）
+            _walkBridge = new WalkMusicBridge(_walkMode, _musicService,
+                () => { try { return _configService.LoadSettings().WalkShowMapBackground; } catch { return true; } });
+            Console.Error.WriteLine("[Walk] 行走模式服务就绪（主宠）");
+            // 预热反向索引：首帧就开始后台全量扫描（否则首次播放只能兜底到默认主城）
+            _musicCatalog.WarmUpReverseIndex();
+            try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} 服务已创建 pet={_petId}\n"); } catch { }
+            // 保险：服务就绪时音乐若已在播放（用户抢在懒创建之前点了播放），桥收不到那次事件 → 补一次 Start
+            var cur = _musicService.Current;
+            if (cur != null && _musicService.State == PlaybackState.Playing)
+            {
+                string? key = WalkPathPlanner.TrackKeyOf($"{cur.Img}/{cur.Track}");
+                if (!string.IsNullOrEmpty(key))
+                {
+                    Console.Error.WriteLine($"[Walk] 服务就绪时音乐已在播 → 直接进入行走：{key}");
+                    _walkMode.Start(key);
+                }
+            }
+            // 调试入口（验收用，不影响正常逻辑）：MINIPET_WALK_AUTOSTART=Bgm00/FloralLife 启动即进入行走模式
+            string? auto = Environment.GetEnvironmentVariable("MINIPET_WALK_AUTOSTART");
+            if (!string.IsNullOrEmpty(auto))
+            {
+                Console.Error.WriteLine($"[Walk] 调试自启（MINIPET_WALK_AUTOSTART={auto}）");
+                try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} 调试自启 {auto}\n"); } catch { }
+                _walkMode.Start(auto);
+                try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} Start 后 active={_walkMode.IsActive} map={_walkMode.CurrentMapId}\n"); } catch { }
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Walk] 初始化失败: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 选曲目对应的地图（F18 §2）：反向索引是**懒建**的，首次播放时还没就绪 →
+    /// 主动 Kick 扫描并立即返回 null 走默认图兜底；**等待放后台**（本方法经 WalkMusicBridge
+    /// 的 Dispatcher.UIThread.Post 在 UI 线程执行，旧实现的 Thread.Sleep 循环会冻结 UI）。
+    /// 索引建好后若仍在这首歌的行走中 → ReassignWalkMap 自动重开落到正确地图
+    /// （冷启动并行扫描 ~10s，覆盖「启动后立刻播放」的窗口；建好后后续即时命中）。
+    /// </summary>
+    private string? PickWalkMap(string trackKey)
+    {
+        try
+        {
+            string? m = _musicCatalog.GetFirstMapByReturnMap(trackKey);
+            if (!string.IsNullOrEmpty(m)) { return m; }
+            int slash = trackKey.IndexOf('/');
+            _musicCatalog.KickTrackMapsForImg(slash > 0 ? trackKey[..slash] + ".img" : trackKey);
+            ScheduleDeferredWalkMap(trackKey);
+            Console.Error.WriteLine($"[Walk] 反向索引未就绪，暂走默认图，索引建好后自动切：{trackKey}");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Walk] PickWalkMap: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 后台探询反向索引就绪（最多 15s，冷启动扫描 ~10s），就绪后切回 UI 线程补切正确地图。
+    /// </summary>
+    private void ScheduleDeferredWalkMap(string trackKey)
+    {
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 15000)
+            {
+                await System.Threading.Tasks.Task.Delay(200);
+                string? found = null;
+                try { found = _musicCatalog.GetFirstMapByReturnMap(trackKey); }
+                catch { }
+                if (!string.IsNullOrEmpty(found))
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() => ReassignWalkMap(trackKey, found!));
+                    return;
+                }
+            }
+            Console.Error.WriteLine($"[Walk] 反向索引 15s 未就绪，放弃自动切图：{trackKey}");
+        });
+    }
+
+    /// <summary>仍在这首歌的行走中（且没走在正确地图上）→ Stop+Start 重开，让 Start 命中已就绪的索引。</summary>
+    private void ReassignWalkMap(string trackKey, string mapId)
+    {
+        WalkModeService? walk = _walkMode;
+        if (walk == null || !walk.IsActive) { return; }
+        if (!string.Equals(walk.CurrentTrackKey, trackKey, StringComparison.Ordinal)) { return; }
+        if (string.Equals(walk.CurrentMapId, mapId, StringComparison.Ordinal)) { return; }
+        Console.Error.WriteLine($"[Walk] 反向索引就绪，{trackKey} → 重开行走切到 {mapId}");
+        string cameFrom = walk.CurrentMapId;   // 记录来源图：新图若是死胡同，「原路返回」回这里
+        walk.Stop();
+        walk.SetCameFrom(cameFrom);
+        walk.Start(trackKey);
+    }
+
+    /// <summary>每帧驱动行走（挂在既有的 33ms 主定时器上）。</summary>
+    private void TickWalkMode()
+    {
+        EnsureWalkServices();
+        if (_walkMode is not { IsActive: true })
+        {
+            return;
+        }
+        // 播放中途关掉「加载地图」→ 立刻退出行走（已加载的地图窗由 OnWalkExited 收起）
+        try
+        {
+            if (!_configService.LoadSettings().WalkShowMapBackground)
+            {
+                _walkMode.Stop();
+                return;
+            }
+        }
+        catch { }
+        var now = DateTime.UtcNow;
+        double dt = _walkLastTickUtc == default ? 1.0 / 30 : (now - _walkLastTickUtc).TotalSeconds;
+        _walkLastTickUtc = now;
+        try
+        {
+            _walkMode.Tick(dt);
+            // 相机缓动跟随（不硬跟）：人物在视口中央附近有小幅位移，宠物看起来真的在地图上移动
+            _walkCamX += (_walkMode.X - _walkCamX) * 0.06f;
+            _walkCamY += (_walkMode.Y - _walkCamY) * 0.06f;
+            _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);            // 人物朝向 = 行进方向。纸娃娃原始帧是**朝左**的（实测：向右走时脸朝反了），
+            // 所以 Facing >= 0（向右）时才翻转。
+            _spriteCanvas.FlipX = _walkMode.Facing >= 0;
+            // 窗口位置**直接绑定行走位置**：世界坐标 → 地图视口内屏幕点（脚底锚点精确对齐）。
+            // ⚠️ 必须用「钳制后」的相机换算：MapViewportWindow.KickRender 会 ClampCamera（地图比视口小时
+            // 钳到地图中点，如 706020100），若用未钳制的缓动值 _walkCam 定位，小图上人物会系统性悬空/横偏。
+            if (_isDragging) { return; }   // 行走中拖拽（胶水 2026-09-15 更正：左键拖动需要）：拖拽期间窗口跟手，松手恢复地图定位
+            // 用户正在拖相机：暂停人物跟随（SetCamera 会覆盖用户拖动），并把缓动基准同步到松手位置
+            if (_mapViewportWindow.UserDraggingCamera)
+            {
+                var cam = _mapViewportWindow.CurrentCamera;
+                _walkCamX = cam.X;
+                _walkCamY = cam.Y;
+                _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+            }
+            else
+            {
+                _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+            }
+            try
+            {
+                var vp = _mapViewportWindow.Position;
+                double vw = _mapViewportWindow.Width, vh = _mapViewportWindow.Height;
+                var (camX, camY) = MapService.ClampCamera(
+                    _walkMapInfo, _walkCamX, _walkCamY, 1f, (int)vw, (int)vh);
+                double sx = (_walkMode.X - camX) + vw / 2.0;
+                double sy = (_walkMode.Y - camY) + vh / 2.0;
+                var spriteTopLeft = _spriteCanvas.TranslatePoint(new Avalonia.Point(0, 0), this) ?? new Avalonia.Point(0, 0);
+                // ⚠️ 逻辑像素 → 物理像素必须乘 RenderScaling（Retina 2x）：项目其它地方（拖拽）也是这个口径，
+                // 少了这一步宠物脚底会整体偏一倍窗口高度（正是「脚不贴 fd」的原因）。
+                double rs = RenderScaling > 0 ? RenderScaling : 1.0;
+                // ⚠️ _lastOriginX/Y 存的已是「乘过 _scale」的值（OnTimerTick oxScaled 口径），这里**不能**再乘 _scale，
+                // 否则窗口缩放 ≠1 时脚底偏移 origin×scale×(scale-1)。
+                Position = new PixelPoint(
+                    vp.X + (int)Math.Round((sx - spriteTopLeft.X - _lastOriginX) * rs),
+                    vp.Y + (int)Math.Round((sy - spriteTopLeft.Y - _lastOriginY) * rs));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] 位置绑定失败: {ex.Message}"); }
+            // 注：这里**不能**每帧 RaisePet()——它的实现是 Activate()，会导致行走期间持续抢焦点
+            //（胶水 2026-09-14：播放音乐时不应该强焦点）。层级只在切图时提一次（OnWalkMapChanged）。
+            // 坐标日志（限频 1s，写文件供诊断「瞬移/绳下徘徊」）
+            if ((now - _walkLogLastUtc).TotalSeconds >= 1.0)
+            {
+                _walkLogLastUtc = now;
+                try
+                {
+                    System.IO.File.AppendAllText("/tmp/mp-walk.log",
+                        $"{now:HH:mm:ss.fff} map={_walkMode.CurrentMapId} pos=({_walkMode.X:F0},{_walkMode.Y:F0}) phase={_walkMode.Phase} act={_walkMode.CurrentAction} facing={_walkMode.Facing} hop={_walkMode.CurrentHopIndex}/{_walkMode.PathLength} noNext={_walkMode.NoNextPortal} half={_walkMode.HalfLen:F0}\n");
+                }
+                catch { }
+            }
+            // 行走跟随（胶水 2026-09-16）：音乐播放（主宠行走）时，纸娃娃子宠跟在主宠身后
+            //（相差几十 px 排队）、重复主宠动作与朝向——「多纸娃娃时子桌宠跟随主宠」指此时段。
+            if (_petManager != null)
+            {
+                int followSlot = 0; int skipped = 0;
+                foreach (var pet in _petManager.Pets)
+                {
+                    if (ReferenceEquals(pet, this)) { continue; }
+                    if (pet.IsSentinelActive() || !pet.IsPaperdollPet()) { skipped++; continue; }
+                    pet.FollowWalk(this, followSlot++);
+                }
+                if (!_followDiagLogged)
+                {
+                    _followDiagLogged = true;
+                    Console.Error.WriteLine($"[Walk] 跟随广播：Pets={_petManager.Pets.Count} 跟随={followSlot} 跳过={skipped}");
+                }
+            }
+
+            string act = _walkMode.CurrentAction;
+            if (!string.Equals(act, _walkLastAction, StringComparison.Ordinal))
+            {
+                // 诊断「走一半变 stand」：动作每次变化记一条（含前后动作与位置，限 1s 采样抓不到 0.4s 闪现）
+                try
+                {
+                    System.IO.File.AppendAllText("/tmp/mp-walk.log",
+                        $"{DateTime.Now:HH:mm:ss.fff} ACT {_walkLastAction} → {act} at ({_walkMode.X:F0},{_walkMode.Y:F0}) phase={_walkMode.Phase} hop={_walkMode.CurrentHopIndex}/{_walkMode.PathLength}\n");
+                }
+                catch { }
+                _walkLastAction = act;
+                _animService.Play(act, PlayMode.Loop);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[Walk] Tick: {ex.Message}"); }
+    }
+
+    /// <summary>切图（走到传送门 / 歌曲播完）：载入新地图 + 相机跟随 + 0.5s 淡入淡出 + 只留主宠。</summary>
+    private void OnWalkMapChanged(string mapId)
+    {
+        // 行走模式独占动作：否则随机 idle 会在行走途中把 walk1/walk2 顶成 stand/alert
+        try { _animService.EnableRandomIdle(false); } catch { }
+        try { System.IO.File.AppendAllText("/tmp/mp-walk.log", $"{DateTime.Now:HH:mm:ss} MapChanged → {mapId}\n"); } catch { }
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                var mi = _mapService.LoadMap(mapId);
+                if (mi == null)
+                {
+                    Console.Error.WriteLine($"[Walk] 地图加载失败: {mapId}");
+                    return;
+                }
+                _walkMapInfo = mi;
+                _mapViewportWindow.SetMap(mi, _mapService);
+                // 用户拖完视口/点过视口 → 把宠物窗口提回最前（双 Topmost 顺序由激活决定，否则人物被背景盖住）
+                _mapViewportWindow.RaisedByUserInteraction += () => Dispatcher.UIThread.Post(RaisePet);
+                if (_walkMode != null)
+                {
+                    _walkCamX = _walkMode.X;
+                    _walkCamY = _walkMode.Y;
+                    _mapViewportWindow.SetCamera(_walkCamX, _walkCamY);
+                }
+                var showMapBg = _configService.LoadSettings().WalkShowMapBackground;
+                if (!showMapBg)
+                {
+                    // 开关关：不显示地图背景视口——人物在桌面/壁纸上行走（定位公式不受影响，视口保持隐藏）
+                    _ = WalkTransition.CrossFadeAsync(this, () => { }, WalkTransition.DefaultMs);
+                    return;
+                }
+                if (!_mapViewportWindow.IsVisible)
+                {
+                    // 摆到主屏中央（行走模式的背景视口；不定位会出现在默认角落）
+                    try
+                    {
+                        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+                        if (screen != null)
+                        {
+                            _mapViewportWindow.Position = new Avalonia.PixelPoint(
+                                Math.Max(0, (screen.Bounds.Width - (int)_mapViewportWindow.Width) / 2),
+                                Math.Max(0, (screen.Bounds.Height - (int)_mapViewportWindow.Height) / 2));
+                        }
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[Walk] 视口定位失败: {ex.Message}"); }
+                    _mapViewportWindow.Show();
+                    RaisePet();
+                }
+                _ = WalkTransition.CrossFadeAsync(_mapViewportWindow, () => { }, WalkTransition.DefaultMs);
+                // 行走期间只有主宠可见（其余 Hide，句柄 Dispose 时还原）
+                // 行走跟随（胶水 2026-09-16）：纸娃娃子宠不再隐藏——跟在主宠身后一起走（排队/重复动作）；
+                // mob/NPC 桌宠照旧隐藏
+                _walkVisibility ??= WalkPetVisibility.HideOthers(
+                    this, _petManager.Pets.Where(p => !ReferenceEquals(p, this) && !p.IsPaperdollPet()));
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] MapChanged: {ex.Message}"); }
+        });
+    }
+
+    /// <summary>退出行走模式：恢复其余宠物 + 收起行走背景。</summary>
+    private void OnWalkExited()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                _walkVisibility?.Dispose();
+                _walkVisibility = null;
+                _walkLastAction = string.Empty;
+                _spriteCanvas.FlipX = false;
+                _animService.EnableRandomIdle(true);   // 退出行走恢复随机 idle
+                if (_mapViewportWindow.IsVisible)
+                {
+                    _mapViewportWindow.Hide();
+                    RaisePet();
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[Walk] Exited: {ex.Message}"); }
+        });
+    }
+
     private void OnTimerTick(object? sender, EventArgs e)
+    {
+        // M2 表情时钟：眨眼/随机表情（每宠各自实例，天然隔离）
+        // 抑制随机表情：行走/攀爬、拖拽中、Agent 忙碌（验收 §4：只接行走不够）
+        _paperdoll.SuppressRandomExpression =
+            (_walkMode is { IsActive: true }) || _isDragging || _agentReflect != AgentState.Idle;
+        _paperdoll.TickExpressionClock();
+        OnTimerTickCore(sender, e);
+    }
+
+    private void OnTimerTickCore(object? sender, EventArgs e)
     {
         try
         {
@@ -784,6 +1487,8 @@ public partial class PetWindow : Window
             {
                 // 纸娃娃 provider：合成帧位图（BGRA premul）+ union 公共 origin
                 ox = fr.OriginX; oy = fr.OriginY; fw = fr.FrameW; fh = fr.FrameH;
+                _lastOriginX = ox;
+                _lastOriginY = oy;
             }
             else if (fr.Png != null)
             {
@@ -876,7 +1581,14 @@ public partial class PetWindow : Window
                 {
                     int dx = oxScaled - _lastOriginX;
                     int dy = oyScaled - _lastOriginY;
-                    if (dx != 0 || dy != 0)
+                    // 行走模式：TickWalkMode 每帧全量定位窗口（动作坐标 → Position），这里的**增量补偿**
+                    // 会和它打架（两套逻辑互相平移窗口）。只同步基准不动窗口，退出行走后恢复补偿。
+                    if (_walkMode is { IsActive: true })
+                    {
+                        _lastOriginX = oxScaled;
+                        _lastOriginY = oyScaled;
+                    }
+                    else if (dx != 0 || dy != 0)
                     {
                         // 贴顶（窗口顶=0）时垂直不补偿：保持角色顶贴屏顶（大素材动画切换 oy 变大不会把角色顶推出屏外）
                         int ny = Position.Y - dy;
@@ -888,9 +1600,9 @@ public partial class PetWindow : Window
                         {
                             Position = new PixelPoint(Position.X - dx, ny);
                         }
+                        _lastOriginX = oxScaled;
+                        _lastOriginY = oyScaled;
                     }
-                    _lastOriginX = oxScaled;
-                    _lastOriginY = oyScaled;
                 }
 
                 // 气泡独立窗口位置：底 = 角色头顶（锚点基准固定 → 动画切换气泡不动）。
@@ -932,8 +1644,54 @@ public partial class PetWindow : Window
             }
             // 状态文字只显示动作名（去掉原调试用 tick 计数）
             _infoText.Text = _animService.GetCurrentAction();
+
+            // 音乐模块 V0.2.1：宠物位置哨兵（pet:moved）——帧尾统一比对发布，
+            // 拖拽 / 释放绝对定位 / 动画 origin 补偿与落地 / 重置桌面中央（含托盘菜单路径）/
+            // 摄像机模式落地（PetWindow.Mode.cs）等一切改 Position 的路径都在此被捕获
+            PublishPetMovedThrottled();
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] Tick: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 发布宠物桌面位置变化 pet:moved（V0.2.1 迷你控制条跟随契约）：EventBus 通道 MiniPetEvents.PetMoved，
+    /// payload = (double X, double Y) **角色脚底中心**桌面像素坐标（2026-08-27 修订：原发窗口左上角
+    /// 导致控制条叠在角色头部——现纸娃娃取锚点帧底边水平居中，mob/npc 取脚底锚点）。OnTimerTick 每帧
+    /// 尾部调用做位置哨兵——与上次已发布坐标一致零开销跳过；有变化时限速 10Hz（100ms gate），gate
+    /// 窗口内的变更不丢弃（每帧复查坐标差，停稳后的最终位置必然在下帧补发）。try-catch 保护不影响主流程。
+    /// </summary>
+    private void PublishPetMovedThrottled()
+    {
+        try
+        {
+            var now = Environment.TickCount64;
+            if (_petMovedLastSent.HasValue && _petMovedLastSent.Value == Position)
+            {
+                return; // 无变化不发（30fps 轮询下的常态快路径）
+            }
+            if (now - _petMovedLastMs < 100)
+            {
+                return; // 10Hz 节流：窗口期暂缓（下帧仍不一致时补发）
+            }
+            // 脚底中心换算：与气球「气泡底=头顶」同一坐标系反推——头在窗口顶 → 脚 = Top + 锚点帧高×scale；
+            // 纸娃娃水平居中用锚点帧宽×scale 的一半；mob/npc 的 _balloonAnchorX/Y 本身即脚底中心。
+            double feetX;
+            double feetY;
+            if (IsSentinelActive())
+            {
+                feetX = Position.X + (_anchorFrameW > 0 ? _anchorFrameW * _scale / 2 : 40);
+                feetY = Position.Y + (_anchorFrameH > 0 ? _anchorFrameH * _scale : 80);
+            }
+            else
+            {
+                feetX = _balloonAnchorX;
+                feetY = _balloonAnchorY;
+            }
+            _petMovedLastMs = now;
+            _petMovedLastSent = Position;
+            _eventBus.Publish(MiniPetEvents.PetMoved, (X: feetX, Y: feetY));
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetMovedPublish: {ex.Message}"); }
     }
 
     /// <summary>
@@ -1061,14 +1819,20 @@ public partial class PetWindow : Window
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollWarmup: {ex.Message}"); }
                     _paperdoll.SetAppearance(appearance); // 切换外观清依赖外观缓存；引用赋值原子，帧循环安全
                     // 持久化当前搭配（启动恢复）+ 构建离线精灵图条（WZ 断线兜底）
+                    // PLAN 步骤 8：Task.Run 内「LoadSettings→改→SaveSettings」整对象读改写迁移到 Update 事务
+                    // （序列化锁内「读→改→写」+ 派发 UI 线程与设置窗口整对象回存同线程串行化，
+                    // 消除与音乐 PlayHistory 高频写入的「缓存读↔整存」碰撞窗口；字段改动语义不变）
                     try
                     {
-                        var s = _configService.LoadSettings();
-                        s.CurrentMobId = PaperdollService.SentinelMobId;
-                        s.CurrentEntityType = "player";
-                        s.CurrentPaperdoll = appearance;
-                        _configService.SaveSettings(s);
-                        Console.WriteLine($"[PetWindow] Paperdoll 持久化成功: CurrentMobId={s.CurrentMobId} CurrentPaperdoll={(s.CurrentPaperdoll != null ? $"有 {s.CurrentPaperdoll.Hair?.Id}" : "无")}");
+                        // V0.1.3：只写本宠物这一只的实例配置（旧版写全局单值 = 所有宠物一起变纸娃娃）
+                        _configService.UpdatePet(_petId, p =>
+                        {
+                            p.MobId = PaperdollService.SentinelMobId;
+                            p.EntityType = "player";
+                            p.Paperdoll = appearance;
+                        });
+                        Console.WriteLine($"[PetWindow] Paperdoll 持久化成功({_petId}): CurrentMobId={PaperdollService.SentinelMobId} Paperdoll={(appearance != null ? $"有 {appearance.Hair?.Id}" : "无")}");
+
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollSave 失败: {ex}"); }
                     try { _paperdoll.BuildOfflineStrips(); }
@@ -1080,9 +1844,16 @@ public partial class PetWindow : Window
                             if (gen != _paperdollGen) { return; } // 被更新的选择覆盖
                             _animService.SetCurrentMobId(PaperdollService.SentinelMobId);
                             _animService.Play("stand1", PlayMode.Loop);
-                            _trayService.SetTooltip("MiniPet - 纸娃娃");
+                            ApplyIdlePolicy();
+                            _currentEntityType = "player";
+                            if (_isPrimaryRole)
+                            {
+                                _trayService.SetTooltip("MiniPet - 纸娃娃");
+                            }
                             // 后台构建完成：恢复设置窗口「应用到主窗口」按钮（合成中 → ✅ 已应用，体验 B）
-                            _settingsWindow?.SetPaperdollApplyBusy(false);
+                            // I2：发起换装的设置窗口可能不是本窗口的设置窗口（编辑目标 ≠ 创建者）→
+                            // 广播完成回执，由「目标宠物 id == 自己目标」的设置窗口解除 busy。
+                            _eventBus.Publish(EventType.PaperdollAppliedDone, _petId);
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PaperdollApply: {ex.Message}"); }
                     });
@@ -1103,6 +1874,34 @@ public partial class PetWindow : Window
     }
 
     /// <summary>
+    /// 启动切换超时兜底：PreloadMob 后台任务若因异常情况（WZ 锁长占用/磁盘不可写）迟迟不返回，
+    /// 原实现没有任何取消或超时，loading 会永久停在「切换中…」。超时后复位 UI 并提示，不再无限等待。
+    /// </summary>
+    private void StartPetSwitchTimeout(int gen, string name)
+    {
+        StopPetSwitchTimeout();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(PetSwitchTimeoutMs) };
+        timer.Tick += (_, _) =>
+        {
+            StopPetSwitchTimeout();
+            if (gen != _petSwitchGen) { return; }         // 已被更新的切换接管
+            if (_loadingBar?.IsVisible != true) { return; } // loading 已正常结束
+            ShowPetLoading(false);
+            Console.Error.WriteLine($"[PetWindow] SwitchToPet 超时({PetSwitchTimeoutMs}ms)：gen={gen} name={name}");
+            ShowInfoPopup("切换宠物", $"素材 [{name}] 加载超时（{PetSwitchTimeoutMs / 1000}s），已保持当前宠物。");
+        };
+        _petSwitchTimeout = timer;
+        timer.Start();
+    }
+
+    /// <summary>停止切换超时兜底计时器。</summary>
+    private void StopPetSwitchTimeout()
+    {
+        _petSwitchTimeout?.Stop();
+        _petSwitchTimeout = null;
+    }
+
+    /// <summary>
     /// 切换到指定素材桌宠：stand 已缓存则立即切；未缓存则后台预加载（显示 loading 菊花），期间保持旧角色播放，加载完成后切换。
     /// 避免首次切换（WZ 构建/磁盘读取）在 UI 线程同步执行导致的明显卡顿。代际 token 防快速连点竞态。
     /// A8：加载失败不再静默——提示用户且不发布 PetChanged（托盘 tooltip 与最近使用记录不脏数据）。
@@ -1115,17 +1914,21 @@ public partial class PetWindow : Window
             var gen = ++_petSwitchGen;
             if (_spriteService.GetCachedStrip(id, "stand").Item1 != null)
             {
+                StopPetSwitchTimeout();
                 ShowPetLoading(false);
                 _spriteCanvas.ForceSizeRefresh(); // 切换素材强制容器重设（防截断，胶水反馈 2026-08-09）
                 _lastFrameW = 0; _lastFrameH = 0;
                 _animService.SetCurrentMobId(id);
                 _animService.SwitchTo("stand");
-                // 切换成功才发布 PetChanged（tooltip / 最近使用记录）
-                _eventBus.Publish(EventType.PetChanged, (id, name));
+                ApplyIdlePolicy();
+                // 切换成功才写配置 + 发布 PetChanged（V0.1.3：只写本宠物这一只 / 只通知自己）
+                PersistEntity(id, type, name);
+                _eventBus.Publish(EventType.PetChanged, new PetChangedEvent(_petId, id, name));
             }
             else
             {
                 ShowPetLoading(true, name);
+                StartPetSwitchTimeout(gen, name);
                 System.Threading.Tasks.Task.Run(() =>
                 {
                     bool ok;
@@ -1135,7 +1938,8 @@ public partial class PetWindow : Window
                     {
                         try
                         {
-                            if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖
+                            if (gen != _petSwitchGen) { return; } // 被更新的切换覆盖（loading 由新切换接管）
+                            StopPetSwitchTimeout();
                             ShowPetLoading(false);
                             if (!ok)
                             {
@@ -1148,18 +1952,116 @@ public partial class PetWindow : Window
                             _lastFrameW = 0; _lastFrameH = 0;
                             _animService.SetCurrentMobId(id);
                             _animService.SwitchTo("stand");
-                            // 切换成功才发布 PetChanged（tooltip / 最近使用记录）
-                            _eventBus.Publish(EventType.PetChanged, (id, name));
+                            ApplyIdlePolicy();
+                            // 切换成功才写配置 + 发布 PetChanged（V0.1.3：只写本宠物这一只 / 只通知自己）
+                            PersistEntity(id, type, name);
+                            _eventBus.Publish(EventType.PetChanged, new PetChangedEvent(_petId, id, name));
                         }
                         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PetSwitch: {ex.Message}"); }
                     });
                 });
             }
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] SwitchToPet: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            // 同步段异常也要复位 loading/超时，避免「切换中…」永久残留
+            StopPetSwitchTimeout();
+            ShowPetLoading(false);
+            Console.Error.WriteLine($"[PetWindow] SwitchToPet: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 把本宠物当前实体写入自己的实例配置（V0.1.3：只动这一只，不碰其他桌宠）。
+    /// name 非空时同步显示名（Mob/Npc 用 WZ 名）；纸娃娃（哨兵）保留已有名字（预设名）。
+    /// </summary>
+    private void PersistEntity(string mobId, string entityType, string? name = null)
+    {
+        try
+        {
+            var normalized = mobId == PaperdollService.SentinelMobId ? "player" : NormalizeEntityType(entityType);
+            _configService.UpdatePet(_petId, p =>
+            {
+                p.MobId = mobId;
+                p.EntityType = normalized;
+                if (!string.IsNullOrEmpty(name) && mobId != PaperdollService.SentinelMobId)
+                {
+                    p.Name = name;
+                }
+            });
+            _cfg.MobId = mobId;
+            _cfg.EntityType = normalized;
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] PersistEntity({_petId}): {ex.Message}"); }
     }
 
     private bool IsSentinelActive() => _animService.GetCurrentMobId() == PaperdollService.SentinelMobId;
+
+    // ── 左右转向（胶水 2026-09-16：所有桌宠每个都可以独立转向；行走中由 Facing 驱动不受手动影响）──
+    private bool _manualFlipX;
+
+    /// <summary>翻转朝向（右键菜单「↔ 转向」；拖拽方向也会自动转向）。行走中由 Facing 接管。</summary>
+    public void FlipFacing()
+    {
+        _manualFlipX = !_manualFlipX;
+        ApplyManualFacing();
+    }
+
+    private void ApplyManualFacing()
+    {
+        if (_walkMode is { IsActive: true }) { return; }   // 行走朝向 = 行进方向
+        _spriteCanvas.FlipX = _manualFlipX;
+    }
+
+    /// <summary>是否纸娃娃桌宠（哨兵 mobId = __paperdoll__ 即纸娃娃；mob/NPC 不参与跟随队列）。</summary>
+    private bool IsPaperdollPet() => IsSentinelActive();
+
+    /// <summary>应用随机气泡发言开关：关 = 停随机气泡定时器并收起气泡；开 = 重启调度。</summary>
+    public void ApplyRandomBalloonEnabled(bool enabled)
+    {
+        if (enabled)
+        {
+            if (_balloonTimer != null && !_balloonTimer.IsEnabled) { _balloonTimer.Start(); }
+            ScheduleRandomBalloon();
+        }
+        else
+        {
+            _balloonTimer?.Stop();
+            try { _balloonWindow.HideBalloonWindow(); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// 行走跟随（胶水 2026-09-16「多纸娃娃时子桌宠跟随主宠」指音乐播放时）：
+    /// 由**主宠**的 TickWalkMode 驱动——子纸娃娃窗口显示在主宠身后（slot+1 个身位），
+    /// 重复主宠动作与朝向。音乐停（行走退出）后恢复桌面独立摆放。
+    /// </summary>
+    public void FollowWalk(PetWindow primary, int slot)
+    {
+        if (_isDragging) { return; }
+        if (!IsVisible)
+        {
+            try { Show(); } catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FollowShow: {ex.Message}"); }
+        }
+        // FlipX=false = 原图朝左已翻为朝右 → 子宠排在主宠身后
+        bool faceRight = primary._spriteCanvas.FlipX;
+        int back = (slot + 1) * 60 * (faceRight ? 1 : -1);
+        var target = new PixelPoint(primary.Position.X + back, primary.Position.Y);
+        if (Position != target) { Position = target; }
+
+        // 朝向与动作重复主宠
+        _spriteCanvas.FlipX = primary._spriteCanvas.FlipX;
+        try
+        {
+            string? act = primary._walkMode?.CurrentAction;
+            if (!string.IsNullOrEmpty(act) && act != _animService.GetCurrentAction())
+            {
+                _animService.Play(act, PlayMode.Loop);   // 重复主宠动作（walk1/walk2/jump 同步）
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] FollowWalk act: {ex.Message}"); }
+    }
+
 
     /// <summary>把记录里的类型归一化成 WZ 目录名（Mob/Npc）。</summary>
     private static string NormalizeEntityType(string? type)
@@ -1198,37 +2100,10 @@ public partial class PetWindow : Window
     {
         try
         {
-            // 复用单例：SettingsWindow.OnClosing 把关闭改成 Hide()，所以 IsVisible=false 时是"隐藏未销毁"。
-            // 此前每次重开都 new 一个新实例 → 旧窗口泄露（_config.OnSettingsChanged 订阅/事件处理器不释放，逐次堆积）。            // 修复：实例只在 _settingsWindow==null 时创建；已可见→Activate，已隐藏→Show 复用。
-            if (_settingsWindow == null)
-            {
-                _settingsWindow = new SettingsWindow(_configService, _wzService, _paperdoll, _mapService, _balloonService);
-                _settingsWindow.OnPetApplied += (id, name, type) =>
-                {
-                    try { SwitchToPet(id, name, type); }
-                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnPetApplied: {ex.Message}"); }
-                };
-                _settingsWindow.OnPaperdollApplied += appearance => ApplyPaperdoll(appearance);
-                _settingsWindow.OnBackgroundMapApplied += sel => Dispatcher.UIThread.Post(() => ApplyMapSelection(sel));
-                _settingsWindow.OnViewportSizeApplied += (w, h) => Dispatcher.UIThread.Post(() => _mapViewportWindow.SetViewportSize(w, h));
-                _settingsWindow.OnLayerTogglesChanged += () => Dispatcher.UIThread.Post(ReRenderBackground);
-                _settingsWindow.OnWzRefreshed += () =>
-                {
-                    try
-                    {
-                        // M14：WZ 热更新后清地图精灵缓存（含负缓存——缺失 sprite 的 null 条目）+ 整图缓存，
-                        // 否则热更新新增/修复的资源仍显示「缺失」，整图仍显示旧 WZ 渲染结果。
-                        _mapService.ClearSpriteCache();
-                        _mapService.InvalidateFullRenderCache();
-                        LoadDefaultPet(_wzService);
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] OnWzRefreshed: {ex.Message}"); }
-                };
-            }
-            if (_settingsWindow.IsVisible)
-                _settingsWindow.Activate();
-            else
-                _settingsWindow.Show();
+            // V0.1.3：设置中心**全局唯一**（由 PetManager 持有）——旧版每只桌宠各持一个实例，
+            // 多只桌宠点「设置中心」会开出多个窗口。这里只请求显示，并把编辑目标切到自己。
+            _petManager.ShowSettings(_petId);
+
         }
         catch (Exception ex) { Console.Error.WriteLine($"[PetWindow] ShowSettingsWindow: {ex.Message}"); }
     }

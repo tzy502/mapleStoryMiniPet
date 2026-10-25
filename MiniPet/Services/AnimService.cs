@@ -54,6 +54,20 @@ namespace MiniPet.Services
         private int _idleTimeoutMinMs = 8000;
         private int _idleTimeoutMaxMs = 15000;
         private bool _randomIdleEnabled = true;
+
+        /// <summary>
+        /// 「一闪而过」动作黑名单（运行时自适应）：懒加载阶段条带未缓存、无法预先按时长过滤
+        /// （实测 GetCachedStrip 在抽取瞬间返回 -1，阈值过滤形同虚设），
+        /// 所以改为**第一次抽到并播完后**量出真实时长，太短的以后不再抽。
+        /// </summary>
+        private readonly HashSet<string> _shortIdleActions = new(StringComparer.Ordinal);
+        private const int MinIdleActionMs = 500;   // 只拉黑真正的「一闪而过」（实测 300ms 的 skill1/skillAfter1）；0.6~0.7s 的保留
+
+        /// <summary>诊断日志（临时）：随机动作与帧推进写文件，避免 stdout 缓冲看不到。</summary>
+        private static void LogAnim(string msg)
+        {
+            try { System.IO.File.AppendAllText("/tmp/mp-anim.log", $"{DateTime.Now:HH:mm:ss.fff} {msg}\n"); } catch { }
+        }
         private double _idleAccumulated;
         private double _currentIdleThreshold;
 
@@ -218,6 +232,17 @@ namespace MiniPet.Services
                     if (randomAction != null && randomAction != _currentAction)
                     {
                         Console.WriteLine($"[AnimService] 随机动作触发: {randomAction}, 空闲 {_idleAccumulated:F0}ms, 阈值 {_currentIdleThreshold:F0}ms");
+                        try
+                        {
+                            var st = _spriteService.GetCachedStrip(_currentMobId, randomAction).Item1;
+                            int totalMs = 0;
+                            if (st != null)
+                            {
+                                for (int fi = 0; fi < st.FrameCount; fi++) { totalMs += GetFrameDelay(st, fi); }
+                            }
+                            LogAnim($"随机动作={randomAction} 帧数={st?.FrameCount ?? -1} 总时长={totalMs}ms 对象={_currentMobId}");
+                        }
+                        catch (Exception ex) { LogAnim($"随机动作日志失败: {ex.Message}"); }
                         // A10：随机空闲只选 Loop 类动作 → 直接 Loop 播放，不预置 pending
                         // （Loop 无 OneShot 完成回调，原预置 "stand" 会悬挂：下次 OneShot 完成时误回 stand）
                         // 胶水 2026-08-17：mob 池现含 say/regen/attack1 等 OneShot 展示动作——
@@ -247,6 +272,13 @@ namespace MiniPet.Services
                 {
                     if (_currentMode == PlayMode.OneShot)
                     {
+                        int _doneMs = 0;
+                        for (int fi = 0; fi < strip.FrameCount; fi++) { _doneMs += GetFrameDelay(strip, fi); }
+                        if (_doneMs > 0 && _doneMs < MinIdleActionMs)
+                        {
+                            _shortIdleActions.Add(_currentAction);
+                        }
+                        LogAnim($"动作完成={_currentAction} 帧数={strip.FrameCount} 时长={_doneMs}ms → 回 {(!string.IsNullOrEmpty(_pendingAction) ? _pendingAction : "stand")}{( _doneMs > 0 && _doneMs < MinIdleActionMs ? " [已拉黑]" : "")}");
                         EmitEvent(AnimEventType.ActionCompleted, _currentAction);
                         var onComplete = _onComplete;
                         _onComplete = null;
@@ -329,6 +361,8 @@ namespace MiniPet.Services
                 var stand = ResolveActionForProvider("stand");
                 if (_currentAction != stand)
                 {
+                    // 诊断「走一半变 stand」：正常 walk1/walk2/jump 都有帧，触发即说明动作解析出了问题
+                    Console.Error.WriteLine($"[Anim] 动作无帧回退 stand: {_currentAction}");
                     _currentAction = stand;
                     _currentFrameIndex = 0;
                     _accumulatedDelay = 0;
@@ -541,20 +575,45 @@ namespace MiniPet.Services
                 return null;
             }
 
-            // 池缓存不含「当前动作」过滤（动作随时变），取时排除
+            // 池缓存不含「当前动作」过滤（动作随时变），取时排除。
+            // 同时过滤**一闪而过**的短动作：实测 9834755 的 skill1/skillAfter1 只有 5 帧 ≈0.3s，
+            // 抽到它们观感就是「没几帧就回 stand」（胶水 2026-09-24）。阈值 800ms。
             var candidates = new List<string>(pool.Count);
             foreach (var a in pool)
             {
-                if (a != _currentAction)
-                {
-                    candidates.Add(a);
-                }
+                if (a == _currentAction) { continue; }
+                if (_shortIdleActions.Contains(a)) { continue; }        // 已实测过太短
+                int totalMs = GetActionTotalMs(a);
+                if (totalMs >= 0 && totalMs < MinIdleActionMs) { _shortIdleActions.Add(a); continue; }
+                candidates.Add(a);
             }
             if (candidates.Count == 0)
             {
-                return null;
+                // 全被时长过滤掉（或池里只剩当前动作）→ 回退为不过滤，保证仍有随机动作
+                foreach (var a in pool)
+                {
+                    if (a != _currentAction) { candidates.Add(a); }
+                }
+                if (candidates.Count == 0) { return null; }
             }
             return candidates[Random.Shared.Next(candidates.Count)];
+        }
+
+        /// <summary>
+        /// 某动作一个完整循环的总时长（ms）。条带未缓存 → 返回 -1（调用方视为「不过滤」，
+        /// 避免懒加载阶段把所有动作都判成过短而随机池变空）。
+        /// </summary>
+        private int GetActionTotalMs(string action)
+        {
+            try
+            {
+                var st = _spriteService.GetCachedStrip(_currentMobId, action).Item1;
+                if (st == null) { return -1; }
+                int total = 0;
+                for (int i = 0; i < st.FrameCount; i++) { total += GetFrameDelay(st, i); }
+                return total;
+            }
+            catch { return -1; }
         }
 
         /// <summary>
@@ -571,18 +630,21 @@ namespace MiniPet.Services
             // 首选族匹配展示池；族匹配为空（武器类型未知/映射未覆盖本 WZ）→ 用兜底池（武器有帧即展示）
             var effectiveDisplay = displayPool.Count > 0 ? displayPool : displayAltPool;
 
-            // 合并候选（排除当前动作；两池无交集：Loop 池只含循环动作，展示池只含非循环武器动作）
+            // 合并候选（排除当前动作；两池无交集：Loop 池只含循环动作，展示池只含非循环武器动作）。
+            // 胶水 2026-09-15：stand1/stand2/walk1/walk2 等**基础动作一律不参与空闲随机切换**
+            // （待机就安定站在基准站姿上，切换只留给展示类动作）——不管当前是不是 stand 族，
+            // stand* 候选直接剔除；walk*/fly*/jump* 在 IsLoopAction 已排除。
             var candidates = new List<string>(loopPool.Count + effectiveDisplay.Count);
             foreach (var a in loopPool)
             {
-                if (a != _currentAction)
+                if (a != _currentAction && !IsStandFamily(a))
                 {
                     candidates.Add(a);
                 }
             }
             foreach (var a in effectiveDisplay)
             {
-                if (a != _currentAction)
+                if (a != _currentAction && !IsStandFamily(a))
                 {
                     candidates.Add(a);
                 }
@@ -592,12 +654,21 @@ namespace MiniPet.Services
                 return (null, PlayMode.Loop);
             }
 
-            var chosen = candidates[Random.Shared.Next(candidates.Count)];
+            var pool = candidates;
+
+            var chosen = pool[Random.Shared.Next(pool.Count)];
             var mode = effectiveDisplay.Contains(chosen) ? PlayMode.OneShot : PlayMode.Loop;
             return (chosen, mode);
         }
 
         /// <summary>空闲随机 Loop 池：仅 Loop 类动作（A13 缓存；与展示池同键同建）。</summary>
+        /// <summary>是否 stand 族动作（stand / stand1 / stand2…）。</summary>
+        private static bool IsStandFamily(string? action)
+        {
+            return !string.IsNullOrEmpty(action)
+                   && action.StartsWith("stand", StringComparison.OrdinalIgnoreCase);
+        }
+
         private List<string> GetIdleActionPool()
         {
             BuildIdlePools();

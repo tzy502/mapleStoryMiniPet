@@ -1024,3 +1024,345 @@ catch 异常分支同理弹窗（err 文案「未知错误」+ 异常消息）�
 4. 黑盒（失败路径）：改 wz-config.json 的 BaseWzPath 为无效路径 → 启动弹 WzLoadFailWindow，点「知道了」关闭，桌宠走缓存正常显示
 5. 黑盒（刷新按钮）：WZ 路径无效启动 → 打开设置 → WZ 配置 → 修正路径 → 点「刷新当前素材」→ 提示成功 + 宠物列表出现 + 桌宠重载
 6. 黑盒（wzlib 兜底）：wz-config.json 配无效 wzlib 路径 + 有效 BaseWzPath → 启动仍成功加载（回退内置），失败弹窗才显示警告
+
+---
+
+## 11. 增量设计 v1.2（2026-08-23）— V0.2.0 音乐模块（F15-F17）
+
+> 需求：`docs/ai/requirements-analysis.md` 第 8 章 F15-F17
+> 数据实证：SSD 客户端 `/Volumes/SSD/mxd/mxd/Data/Sound/`（Sound.wz + Sound_000~004.wz 分卷，94 个 BgmXX.img 共 1174 首，`Wz_Sound.ExtractSound()` → MP3）
+> 设计验证：第一轮 3 agent 审查（2026-08-23）→ 修复 4 P0 + P1 若干，P2 暂缓
+
+### 11.1 设计总览
+
+```
+┌─────────────────────────────────────────────────┐
+│  SettingsWindow 音乐大 tab (SettingsWindow.Music.cs)│  ← F16 UI（独立大 tab，非子 tab）
+│  （曲目浏览/搜索/播放控制/音量/模式/联动开关）        │
+└──────────────────┬──────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────┐
+│        MusicPlayerService（新增服务）              │
+│  ├─ 播放控制（play/pause/stop/prev/next/seek）     │
+│  ├─ 播放状态（当前曲目/进度/音量/模式）              │
+│  ├─ 播放模式（单曲循环/顺序/随机）                  │
+│  └─ 场景联动调度（地图 BGM 映射，可开关 F17）        │
+└──────────────────┬──────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────┐
+│        MusicCatalogService（新增服务）             │
+│  ├─ 曲目目录（懒加载 Wz Sound/BgmXX.img → 曲目列表）│
+│  ├─ 分类/搜索                                    │
+│  └─ 场景映射表（mapId → bgm，懒加载缓存）           │
+└──────────────────┬──────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────┐
+│  IMusicPlayer（音频播放抽象，实现可换）              │
+│  （Play(byte[])/Pause/Resume/Stop/Seek/Volume）  │
+└──────────────────┬──────────────────────────────┘
+                   ▼
+           ┌───────────────┐
+           │   WzService    │  ← 复用 WithWzLock 锁
+           │  Sound 读取扩展 │
+           └───────────────┘
+```
+
+**关键设计决策**：
+
+1. **音频播放抽象 `IMusicPlayer`**：C# 跨平台音频播放没有统一内置方案，Avalonia 本身不带音频。设计将播放实现抽象成接口（`Play(byte[] mp3) / Pause() / Stop() / Seek / Volume`），实现层选型在开发阶段核实（**macOS 用 AVFoundation（objc_msgSend，项目已有先例）/ Windows 用 NAudio 或 MediaFoundation / 或跨平台 OpenAL 库如 OpenTK.Audio**）。接口先行，实现可换。
+2. **MP3 流转播放**：WZ `Wz_Sound.ExtractSound()` 返回完整 MP3 字节数组，直接 `IMusicPlayer.Play(bytes)`，不落盘临时文件（减少 IO）。实现方必须把 byte[] 包成**可定位 MemoryStream** 供解码器取 Position/Duration/Seek——Position/Duration 返回 null 只在 Stopped 状态允许。
+3. **WzService 扩展最小化**：只在 WzService 加 1 个公开方法 `ExtractSound(string imgName, string trackName) → byte[]?`，内部走 `WithWzLock` + `FindNodeByPath` + `Wz_Sound`，调用方不需要知道 WzLib 类型。**⚠️ WZ 路径必须带 `Sound/` 前缀**（探针实证：根节点下没有 BgmXX.img，顶层是 Character/Map/Sound/String 等目录）。
+4. **曲目目录懒加载**：首次打开音乐 tab 才遍历 `Sound/Bgm*.img` 构建曲目索引（同素材浏览的模式）；不预加载 1174 首全部进内存。**首次加载约 2.2 秒（94 img × 25ms），UI 需 loading 提示**。
+5. **场景联动独立配置**：`MusicConfig.SceneLinkEnabled`（bool）+ 映射表（mapId → img/track）从 WZ 懒加载，联动逻辑在 MusicPlayerService 内，不污染 PetWindow。**映射表来源 WZ `Map/Map/Map{首字符}/{id}.img/info/bgm`**（探针实证，不是 Map.img/{id}.img）。
+6. **避免 God Class**（胶水要求）：音乐模块拆 **MusicCatalogService**（目录/映射，纯数据）+ **MusicPlayerService**（播放/联动调度）+ **IMusicPlayer**（音频抽象）三个类，各司其职，不堆成一个大服务。
+
+### 11.2 MusicCatalogService（新增 — 目录/分类/场景映射，纯数据）
+
+**文件**：`MiniPet/Services/MusicCatalogService.cs`
+
+```csharp
+public class MusicCatalogService
+{
+    private readonly WzService _wz;
+
+    private List<MusicTrack>? _catalogCache;          // 全部曲目（懒加载）
+    private bool _catalogLoading;
+
+    private Dictionary<string, MusicTrackRef>? _sceneMapCache; // mapId → track（懒加载）
+
+    public async Task<List<MusicTrack>> GetCatalogAsync(CancellationToken ct = default);
+    public List<MusicTrack> Search(string keyword);
+    public List<string> GetCategories();              // Bgm00.img ~ BgmXX.img 分类
+    public void InvalidateCatalog();                  // WZ 重载 / 手动刷新时清缓存
+
+    // ====== 场景映射（F17） ======
+    public async Task<MusicTrackRef?> GetSceneTrackAsync(string mapId);  // 查该地图的 bgm，无则 null
+}
+```
+
+**目录加载（GetCatalogAsync）**：
+- 遍历 Wz `Sound` 节点下的 `Bgm*.img`（探针实证 94 个），`Wz_Image.TryExtract()` 后读 `img.Node.Nodes`（⚠️ 外层 Nodes 恒 0）
+- 每个 `Wz_Sound` 子节点 = 一首曲：`{ Img = "Bgm00.img", Track = "SleepyWood", Ms = 166635, Channels = 2, Frequency = 22050 }`
+- 全部走 `WithWzLock` 锁，同现有 FindNodeByPath 模式
+- 构建后缓存 `_catalogCache`，设置页可手动「刷新目录」清缓存重建（`InvalidateCatalog`）
+
+**场景映射（GetSceneTrackAsync）**：
+- 查 WZ `Map/Map/Map{mapId[0]}/{mapId}.img/info/bgm` 字段（探针实证：`000010000.img/info/bgm = "Bgm58/The Beginnig of The Adventure"`）
+- ⚠️ **bgm 值无 `.img` 后缀**：`"Bgm58/The Beginnig..."` → 归一化为 `MusicTrackRef(Img="Bgm58.img", Track="The Beginnig...")`
+- 首次使用时懒加载 `_sceneMapCache`（按需查，不预遍历全部地图，避免 2.2s 级全量扫描）
+
+### 11.3 MusicPlayerService（新增 — 播放控制/状态/联动调度）
+
+**文件**：`MiniPet/Services/MusicPlayerService.cs`
+
+```csharp
+public class MusicPlayerService
+{
+    private readonly WzService _wz;
+    private readonly MusicCatalogService _catalog;
+    private readonly IMusicPlayer _player;
+    private readonly ConfigService _config;
+
+    // ====== 播放状态 ======
+    private MusicTrack? _current;
+    private List<MusicTrack> _queue = new();           // 当前播放列表（按当前浏览/搜索结果）
+    private int _queueIndex = -1;
+    private PlaybackState _state = PlaybackState.Stopped;
+    private int _volume = 70;                          // 0-100
+    private PlaybackMode _playMode = PlaybackMode.Sequential; // 顺序/单曲/随机
+
+    public event Action<MusicTrack?>? CurrentChanged;   // 当前曲目变化（UI/气泡联动）
+    public event Action<PlaybackState>? StateChanged;
+    public event Action<int>? VolumeChanged;
+
+    // ====== 播放 ======
+    public async Task PlayAsync(MusicTrack track, List<MusicTrack> queue);
+    public Task PauseAsync();
+    public Task ResumeAsync();
+    public Task StopAsync();
+    public Task NextAsync();
+    public Task PrevAsync();
+    public void SetVolume(int v);  // 0-100
+    public void SetPlayMode(PlaybackMode mode);
+    public MusicTrack? Current => _current;
+    public PlaybackState State => _state;
+    public int Volume => _volume;
+    public PlaybackMode Mode => _playMode;
+
+    // ====== 场景联动调度（F17） ======
+    public bool SceneLinkEnabled { get; set; }
+    public async Task OnMapChanged(string mapId);  // 地图切换：查映射并播放
+    public async Task RestoreLastTrackAsync();     // 启动/设置页打开时恢复上次播放（LastTrackKey）
+}
+```
+
+**播放实现**：
+- `PlayAsync(track, queue)` → `_wz.ExtractSound(track.Img, track.Track)`（内部已处理 `Sound/` 前缀）→ `_player.Play(bytes)` → 更新 `_current/_queue/_state` → `CurrentChanged?.Invoke(track)`
+- `NextAsync`：按 `_playMode` 计算下一首 index（Sequential +1 循环 / RepeatOne 重播当前 / Random 随机取）；`_queueIndex` 越界回 0
+- `PauseAsync/ResumeAsync/StopAsync` → `_player.Pause()/Resume()/Stop()` → `_state` 切换 → `StateChanged?.Invoke(...)`
+- 音量：`_player.Volume = _volume / 100.0`
+- 播完 `PlaybackEnded`（IMusicPlayer 事件）→ 自动 `NextAsync()`
+- `RestoreLastTrackAsync`：读 `MusicConfig.LastTrackKey` → `_catalog.Search` 找到 → 播放（失败静默，不弹错）
+
+**场景联动（OnMapChanged）**：
+- `SceneLinkEnabled == false` → 直接 return（不换歌）
+- 查 `_catalog.GetSceneTrackAsync(mapId)` → 有映射 → 播放对应 track → 无映射 → 保持当前播放
+- 联动触发时气泡提示曲名变化（`CurrentChanged` 统一处理）
+
+### 11.4 IMusicPlayer（新增）
+
+**文件**：`MiniPet/Services/IMusicPlayer.cs`
+
+```csharp
+public interface IMusicPlayer
+{
+    bool IsPlaying { get; }
+    bool IsPaused { get; }
+    double Volume { get; set; }        // 0.0-1.0
+    TimeSpan? Position { get; }        // 可定位 MemoryStream 取；Stopped 时允许 null
+    TimeSpan? Duration { get; }
+
+    void Play(byte[] mp3Bytes);        // 播放 MP3 字节流（实现方包装为可定位 MemoryStream）
+    void Pause();
+    void Resume();
+    void Stop();
+    void Seek(TimeSpan pos);
+
+    event Action? PlaybackEnded;       // 自然播完（用于自动下一首）
+    event Action<string>? PlaybackError;
+}
+```
+
+**实现选型（开发阶段核实）**：
+- **macOS 首选**：AVFoundation（`objc_msgSend`，项目 Utils/MacNative.cs 已有先例）——系统原生，无第三方依赖
+- **Windows 首选**：NAudio（Windows 原生，成熟稳定）
+- **备选**：OpenTK.Audio / SoundFlow（跨平台）
+- **跨平台策略**：`MusicPlayerService` 构造时按 `OperatingSystem.IsMacOS()/IsWindows()` 注入对应 `IMusicPlayer` 实现
+- **验证方式**：开发时先做一个最小可播 demo（读一首 MP3 → 播放 → 可停），确认选定库在当前 Avalonia 12.1 + .NET 9 环境可用再集成
+
+### 11.5 模型（新增）
+
+**文件**：`MiniPet/Models/MusicData.cs`
+
+```csharp
+/// 一首曲目
+public record MusicTrack(
+    string Img,        // "Bgm00.img"（WZ 分类）
+    string Track,      // "SleepyWood"（曲名）
+    int Ms,            // 时长毫秒
+    int Channels,
+    int Frequency
+)
+{
+    public string Display => $"{Track} ({TimeSpan.FromMilliseconds(Ms):mm\\:ss})";
+    public string Key => $"{Img}/{Track}";
+}
+
+/// 场景映射（mapId → 曲目）
+public record MusicTrackRef(string Img, string Track);
+
+/// 播放状态
+public enum PlaybackState { Stopped, Playing, Paused }
+
+/// 播放模式（⚠️ 不与 AnimService 的 PlayMode 冲突，改名 PlaybackMode）
+public enum PlaybackMode { Sequential, RepeatOne, Random }
+```
+
+### 11.6 配置（PetSettings 扩展）
+
+**文件**：`MiniPet/Models/AppConfig.cs`（PetSettings 追加字段）
+
+```csharp
+// ====== 音乐模块（V0.2.0） ======
+public MusicConfig Music { get; set; } = new MusicConfig();
+```
+
+**文件**：`MiniPet/Models/MusicConfig.cs`
+
+```csharp
+public class MusicConfig
+{
+    public int Volume { get; set; } = 70;                 // 0-100
+    public PlaybackMode PlaybackMode { get; set; } = PlaybackMode.Sequential;
+    public string? LastTrackKey { get; set; }             // 上次播放（Bgm00.img/SleepyWood），恢复用
+    public bool SceneLinkEnabled { get; set; }            // F17 联动开关（默认 false）
+    public List<string> PlayHistory { get; set; } = new(); // 最近播放（key 列表，去重截断 20）
+}
+```
+
+### 11.7 WzService 扩展（最小改动）
+
+**文件**：`MiniPet/Services/WzService.cs`（追加方法，不动现有逻辑）
+
+```csharp
+/// <summary>
+/// 提取 Sound.wz 里的一首音乐（MP3 字节流）。
+/// imgName 如 "Bgm00.img"，trackName 如 "SleepyWood"。
+/// 全程 WithWzLock 锁串行化。
+/// ⚠️ WZ 路径带 Sound/ 前缀（探针实证：BgmXX.img 在 Sound 节点下，根节点找不到）。
+/// </summary>
+public byte[]? ExtractSound(string imgName, string trackName)
+{
+    if (!_wzLoaded || _wzs?.WzNode == null) return null;
+    lock (_wzLock)
+    {
+        try
+        {
+            var imgNode = _wzs.WzNode.FindNodeByPath("Sound/" + imgName);
+            if (imgNode == null) return null;
+            var img = imgNode.GetValue<Wz_Image>();
+            if (img == null || !img.TryExtract()) return null;
+            var trackNode = img.Node.Nodes.FirstOrDefault(n => n.Text == trackName);
+            if (trackNode == null) return null;
+            var sound = trackNode.GetValue<Wz_Sound>();
+            return sound?.ExtractSound();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WzService] ExtractSound({imgName}/{trackName}): {ex.Message}");
+            return null;
+        }
+    }
+}
+```
+
+> ⚠️ **关键坑（探针实证）**：①img 子节点必须读 `img.Node.Nodes`（Wz_Image.Node 属性），`TryExtract()` 后**外层 node.Nodes 恒 0**；②WZ 路径必须带 `Sound/` 前缀（`FindNodeByPath("Bgm00.img")` 返回 null，`FindNodeByPath("Sound/Bgm00.img")` 才命中）。上面实现已用对。
+
+### 11.8 SettingsWindow 音乐 tab（F16）
+
+**文件**：`MiniPet/Views/SettingsWindow.Music.cs`（新增 partial class，跟 Agent/Background/Balloon/Paperdoll 同模式）
+
+> ⚠️ **挂载位置（胶水 2026-08-23 定）**：音乐 tab 是**独立大 tab**（设置中心顶层 tab 行），不是宠物设置下的子 tab。现有设置中心顶层 tab = AI 设置 / 宠物设置 → 音乐 tab 加为第 3 个顶层 tab（TabStrip 追加「🎵 音乐」，对应新增面板）。
+
+**布局**（参考素材浏览的分栏模式）：
+
+```
+┌─────────────── 设置中心 · 音乐 ───────────────────┐
+│  [🔄 刷新目录]  [搜索: ______________]  [x] 联动地图BGM │
+├──────────────┬──────────────────────────────────┤
+│ 分类列表       │  曲目列表（当前分类/搜索结果）         │
+│ ▸ Bgm00      │  ┌────────────────────────────┐   │
+│ ▸ Bgm01      │  │ SleepyWood (02:46)    [▶]  │   │
+│ ▸ Bgm02      │  │ FloralLife (02:17)    [▶]  │   │
+│   ...        │  │ GoPicnic   (01:12)    [▶]  │   │
+│              │  └────────────────────────────┘   │
+├──────────────┴──────────────────────────────────┤
+│ ▶ SleepyWood  02:14 / 02:46  ▓▓▓▓▓▓░░░░░░  │
+│ [⏮] [⏯] [⏹] [⏭]  [🔁顺序▾]  音量 ────●──── 70 │
+└──────────────────────────────────────────────────┘
+```
+
+**交互**：
+- 打开 tab → 若 `_catalogCache == null` → 后台加载目录（**loading 提示，首次约 2.2 秒**）→ 填充分类/曲目列表
+- 搜索框 → 输入即过滤（曲名/分类名包含，OrdinalIgnoreCase）
+- 双击曲目 / 点 ▶ → `MusicPlayerService.PlayAsync(track, 当前列表)` → 播放 + 高亮当前行
+- 播放控制区：进度条（Position/Duration 实时刷新）、模式切换按钮（点击循环切 Sequential→RepeatOne→Random）、音量滑块（实时 `SetVolume`）
+- 「联动地图 BGM」开关 → `MusicConfig.SceneLinkEnabled` + `SaveSettings`
+- **WZ 未加载 / Sound 缺失 → 面板显示灰色占位「WZ 未加载，无法读取音乐」**（不崩溃、不弹错，控件禁用）
+
+**与 PetWindow 联动**：
+- `MusicPlayerService.CurrentChanged` → PetWindow 订阅 → 气泡提示「🎵 SleepyWood」
+- 播完 `PlaybackEnded` → MusicPlayerService 自动 `NextAsync`
+
+### 11.9 PetWindow 右键菜单入口（F16）
+
+**文件**：`MiniPet/Views/PetWindow.Menu.cs`（追加一项）
+
+- 菜单加「🎵 音乐」→ 打开设置中心并切到音乐 tab（`SettingsWindow.OpenMusicTab()`）
+- 播放中显示当前曲名（菜单 header 动态更新，同现有 DSH 状态显示模式）
+
+### 11.10 场景联动（F17）
+
+- **挂钩点**：`PetWindow.Mode.cs` 的 `ApplyMapSelection`（行 255，地图选择回调；行 277/303/307 的 `_backgroundWindow.SetMap` / `_mapViewportWindow.SetMap` 同链路）——地图切换完成后调用 `MusicPlayerService.OnMapChanged(mapId)`
+- `OnMapChanged` → `_catalog.GetSceneTrackAsync(mapId)` → 查 WZ `Map/Map/Map{mapId[0]}/{mapId}.img/info/bgm`（bgm 值归一化：`"Bgm58/xxx"` → `Img="Bgm58.img"`）→ 有则播放，无则不动
+- 联动触发时气泡提示曲名变化（`CurrentChanged` 统一处理）
+
+### 11.11 改动文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `MiniPet/Services/MusicCatalogService.cs` | **新增**：目录/分类/搜索/场景映射（纯数据） |
+| `MiniPet/Services/MusicPlayerService.cs` | **新增**：播放控制/状态/联动调度 |
+| `MiniPet/Services/IMusicPlayer.cs` | **新增**：音频播放抽象接口 |
+| `MiniPet/Services/（具体实现）MusicPlayer.xxx.cs` | **新增**：IMusicPlayer 实现（macOS AVFoundation / Windows NAudio，开发阶段选型） |
+| `MiniPet/Models/MusicData.cs` | **新增**：MusicTrack/MusicTrackRef/PlaybackState/PlaybackMode |
+| `MiniPet/Models/MusicConfig.cs` | **新增**：MusicConfig |
+| `MiniPet/Models/AppConfig.cs` | PetSettings 加 `Music` 字段 |
+| `MiniPet/Services/WzService.cs` | 加 `ExtractSound` 方法（带 `Sound/` 前缀） |
+| `MiniPet/Views/SettingsWindow.Music.cs` | **新增**：音乐 tab（独立大 tab，partial class） |
+| `MiniPet/Views/SettingsWindow.axaml.cs` | 注册音乐大 tab（顶层 TabStrip + 面板） |
+| `MiniPet/Views/PetWindow.Menu.cs` | 右键菜单加「🎵 音乐」入口 |
+| `MiniPet/Views/PetWindow.Mode.cs` | `ApplyMapSelection` 完成后调用 `MusicPlayerService.OnMapChanged` |
+| `MiniPet/Views/PetWindow.axaml.cs` | 订阅 CurrentChanged 气泡提示 + DI 注入 |
+
+### 11.12 验证方案
+
+1. **编译**：`"/Volumes/SSD/C#/dotnet" build MiniPet/MiniPet.csproj -c Debug` 0 错误
+2. **测试**：`dotnet test`（MiniPet.Tests）全通过
+3. **黑盒（目录）**：打开设置 → 音乐 tab → 分类/曲目列表正确加载（Bgm00 8 首等）
+4. **黑盒（播放）**：双击 SleepyWood → 实际听到音乐（MP3 播放）、进度条走动、桌宠气泡提示曲名
+5. **黑盒（控制）**：暂停/继续/停止/上一首/下一首/音量滑块/模式切换全部生效
+6. **黑盒（搜索）**：输入「Floral」→ 列表过滤出 FloralLife
+7. **黑盒（联动）**：开联动 → 切换地图到有 BGM 的地图（例：100000000 Henesys）→ 自动换歌 + 气泡提示；无 BGM 地图 → 保持当前
+8. **黑盒（降级）**：WZ 未配置 / Sound 目录缺失 → 打开音乐 tab 灰色占位「WZ 未加载，无法读取音乐」不崩溃
+9. **黑盒（持久化）**：播一首 → 退出重进 → 音量/模式/上次曲目恢复

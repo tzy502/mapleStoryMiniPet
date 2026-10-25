@@ -54,6 +54,35 @@ namespace MiniPet.Services
         /// <summary>
         /// 枚举 WZ 全量地图 id：遍历 Map/Map/Map{0..9} 下所有 .img，文件名去 .img = 9 位地图 id。持 _wzLock。
         /// </summary>
+        /// <summary>诊断：按名称找地图 id（String/Map.img 全量），确认短 id 的真实 WZ 位置。</summary>
+        public List<(string MapId, string Name)> FindMapsByName(string keyword)
+        {
+            var result = new List<(string, string)>();
+            if (!_wz.IsWzLoaded || _wz.WzRoot == null) return result;
+            lock (_wz.WzLock)
+            {
+                try
+                {
+                    var imgNode = _wz.WzRoot.FindNodeByPath(true, "String", "Map.img");
+                    var img = imgNode?.GetValue<Wz_Image>();
+                    if (img == null || !img.TryExtract()) return result;
+                    foreach (Wz_Node group in img.Node.Nodes)
+                    {
+                        foreach (Wz_Node idNode in group.Nodes)
+                        {
+                            var id = idNode.Text;
+                            if (!id.Contains(keyword)) continue;
+                            var resolved = idNode.ResolveUol() ?? idNode;
+                            var name = resolved.FindNodeByPath("mapName")?.GetValueEx<string>(null) ?? "(?)";
+                            result.Add((id, name));
+                        }
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[MapCatalog] FindMapsByName: {ex.Message}"); }
+            }
+            return result;
+        }
+
         public List<string> ListMapIds()
         {
             var result = new List<string>();
@@ -136,14 +165,44 @@ namespace MiniPet.Services
             return _mapNameCache != null && _mapNameCache.Count > 0;
         }
 
-        /// <summary>取地图显示名（查目录缓存，未命中回退 map_{id}）。</summary>
+        /// <summary>取地图显示名（查目录缓存，未命中回退 map_{id}）。
+        /// 短 id 双查（2026-10-14）：key 格式随 WZ 版本差异——本 WZ String/Map.img/maple 组是**不补零短 key**
+        /// （10000/1000000 实测），有的版本是 9 位补零（000010000）；两个方向都试一次。</summary>
         public string GetMapName(string mapId)
         {
             if (string.IsNullOrEmpty(mapId)) return string.Empty;
             var cache = _mapNameCache;
-            if (cache != null && cache.TryGetValue(mapId, out var name)) return name;
+            if (cache != null)
+            {
+                if (cache.TryGetValue(mapId, out var name)) return name;
+                var padded = mapId.PadLeft(9, '0');
+                if (padded != mapId && cache.TryGetValue(padded, out var paddedName)) return paddedName;
+                var stripped = mapId.TrimStart('0');
+                if (stripped.Length > 0 && stripped != mapId && cache.TryGetValue(stripped, out var strippedName)) return strippedName;
+            }
             return $"map_{mapId}";
         }
+
+        /// <summary>
+        /// 地图显示名解析（展示/写历史统一口径，2026-10-14 修「历史菜单中文缺失」）：
+        /// 存量坏数据把 Name 存成了 id 本身（如 10000/1000000），展示时非空即用 → 中文永远丢失。
+        /// ① 存量名有效（非空、≠id、非 map_ 哨兵）→ 用存量；
+        /// ② 否则查名字缓存（lookup，含短 id 双查）→ 命中用缓存名；
+        /// ③ 全失败回退存量 ?? id。
+        /// </summary>
+        public static string ResolveDisplayName(string mapId, string? storedName, Func<string, string> lookup)
+        {
+            bool storedUsable = !string.IsNullOrEmpty(storedName)
+                && storedName != mapId
+                && !storedName.StartsWith("map_", StringComparison.Ordinal);
+            if (storedUsable) { return storedName; }
+            var resolved = lookup(mapId);
+            if (!string.IsNullOrEmpty(resolved) && !resolved.StartsWith("map_", StringComparison.Ordinal)) { return resolved; }
+            return storedName ?? mapId;
+        }
+
+        /// <summary>实例便捷重载（lookup = GetMapName）。</summary>
+        public string ResolveDisplayName(string mapId, string? storedName) => ResolveDisplayName(mapId, storedName, GetMapName);
 
         /// <summary>
         /// 后台构建地图目录缓存（单飞 + 版本化）：LoadWz 成功后触发；WZ 重载时仅发布最新一次构建结果。
@@ -435,7 +494,9 @@ namespace MiniPet.Services
                 if (string.IsNullOrEmpty(mapId) || !_wz.IsWzLoaded || _wz.WzRoot == null) return false;
                 lock (_wz.WzLock)
                 {
-                    var n = _wz.WzRoot.FindNodeByPath(true, $"Map/Map/Map{mapId[0]}/{mapId}.img".Split('/'));
+                    // 短 id 补 0 到 9 位（同 GetMapWzPath 口径，胶水 2026-09-16）
+                    var padded = mapId.PadLeft(9, '0');
+                    var n = _wz.WzRoot.FindNodeByPath(true, $"Map/Map/Map{padded[0]}/{padded}.img".Split('/'));
                     var img = n?.GetValue<Wz_Image>();
                     if (img == null || !img.TryExtract()) return false;
                     var town = img.Node.FindNodeByPath("info")?.FindNodeByPath("town")?.GetValueEx<int?>(null);

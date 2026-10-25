@@ -5,10 +5,54 @@ using MiniPet.Services;
 namespace MiniPet.Models
 {
     /// <summary>
+    /// 单只桌宠的实例配置（V0.1.3 多桌宠）：一只宠物一份，实体 / 外观 / 位置 / 缩放各自独立。
+    /// 旧版单值字段（CurrentMobId / CurrentEntityType / CurrentPaperdoll / WindowScale）保留为
+    /// 主宠的兼容镜像：首次启动由 <see cref="Services.ConfigService.EnsurePets"/> 迁移成 Pets[0]，
+    /// 主宠的这些字段变化时同步写回旧字段（旧版本/旧配置读取方仍能用）。
+    /// </summary>
+    public class PetInstanceConfig
+    {
+        /// <summary>稳定标识（"pet-1"…），跨启动不变；宠物列表 / 事件按它定位。</summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>实体类型：Mob / Npc / player（player = 纸娃娃，MobId 为哨兵）。</summary>
+        public string EntityType { get; set; } = "Mob";
+
+        /// <summary>实体 id（Mob/Npc 为 WZ id）；纸娃娃时为 <see cref="Services.PaperdollService.SentinelMobId"/>。</summary>
+        public string MobId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 显示名（V0.1.3）：纸娃娃用预设名（如「菲伦」），Mob/Npc 可用 WZ 名；
+        /// 为空时列表回退「WZ 名 [id]」/ 纯 id。用于区分多只同类桌宠（否则全是「纸娃娃」）。
+        /// </summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>纸娃娃外观（EntityType=player 时有效）。</summary>
+        public CharacterAppearance? Paperdoll { get; set; }
+
+        /// <summary>窗口左上角屏幕坐标；<see cref="int.MinValue"/> = 未设置（首次启动按序号错开摆放）。</summary>
+        public int WindowX { get; set; } = int.MinValue;
+
+        public int WindowY { get; set; } = int.MinValue;
+
+        /// <summary>该只宠物的渲染缩放（&lt;=0 = 用 1.0）。</summary>
+        public double WindowScale { get; set; } = 1.0;
+
+        /// <summary>主宠：挂地图背景 + 响应 Agent 状态特效；同一时刻有且仅有一只（由 ConfigService 保证）。</summary>
+        public bool Primary { get; set; }
+    }
+
+    /// <summary>
     /// 宠物设置
     /// </summary>
     public class PetSettings
     {
+        /// <summary>
+        /// 桌宠实例列表（顺序 = 创建顺序，第一只默认主宠）。空 = 未迁移；
+        /// ConfigService.LoadSettings 会从下面的单值字段迁移出第一只（不落盘，首次保存时写入）。
+        /// </summary>
+        public List<PetInstanceConfig> Pets { get; set; } = new List<PetInstanceConfig>();
+
         public string WzLibPath { get; set; } = string.Empty;
         public string BaseWzPath { get; set; } = string.Empty;
         public string CurrentMobId { get; set; } = string.Empty;
@@ -25,6 +69,17 @@ namespace MiniPet.Models
         public int CropW { get; set; }
         public int CropH { get; set; }
         public List<MapHistoryEntry> MapHistory { get; set; } = new List<MapHistoryEntry>();
+        /// <summary>行走模式显示地图背景（胶水 2026-09-16：加开关可操作；关 = 只有人物在桌面走，无地图窗口）。默认开。</summary>
+        public bool WalkShowMapBackground { get; set; } = true;
+        /// <summary>随机气泡发言开关（Agent 空闲时的随机聊天气泡）。默认开（现状行为）。</summary>
+        public bool RandomBalloonEnabled { get; set; } = true;
+
+        /// <summary>macOS 程序坞（Dock）图标可见（V0.1.0 对外发布默认开——Dock 显示应用图标可右键退出；
+        /// 关 = 旧版行为：不进 Dock/Cmd-Tab，仅状态栏托盘）。运行时可在桌宠右键菜单切换。Windows 无此概念不受影响。</summary>
+        public bool ShowDockIcon { get; set; } = true;
+
+        /// <summary>窗口置顶（默认开）。关掉后桌宠会被其它窗口盖住。</summary>
+        public bool Topmost { get; set; } = true;
         public string BalloonId { get; set; } = string.Empty;
         public List<string> BalloonHistory { get; set; } = new List<string>();
         public string DefaultAnim { get; set; } = string.Empty;
@@ -43,12 +98,30 @@ namespace MiniPet.Models
         public bool MapShowLife { get; set; } = true;
         public bool MapShowPortal { get; set; } = true;
         public bool MapShowFoothold { get; set; }
+
+        // ── 表情开关（V0.2.x M2，见 docs/ai/PLAN-表情功能.md §4.3 / §4.4）──
+
+        /// <summary>
+        /// 自动眨眼（默认开）：待机时每 3~6s 随机播一次 blink（行走/攀爬中仍眨眼）。
+        /// 对应右键菜单「表情 → 自动眨眼」勾选项，经 ConfigService.SetAutoBlink 落盘；
+        /// 旧配置无该字段时反序列化保留此默认值 true。
+        /// </summary>
+        public bool AutoBlink { get; set; } = true;
+
+        /// <summary>
+        /// 随机表情（默认关）：待机时每 20~45s 从友好表情池随机播一个（行走/拖拽/Agent Run 中抑制）。
+        /// 对应右键菜单「表情 → 随机表情」勾选项，经 ConfigService.SetRandomExpression 落盘。
+        /// </summary>
+        public bool RandomExpression { get; set; }
+
         // 纸娃娃当前搭配（CurrentMobId == "__paperdoll__" 时启动恢复）
         public CharacterAppearance? CurrentPaperdoll { get; set; }
         // 纸娃娃预设（搭配存档：预设名 → 外观）
         public Dictionary<string, CharacterAppearance> SavedPaperdolls { get; set; } = new Dictionary<string, CharacterAppearance>();
         // Agent 接入（Hermes / Claude Code / Codex 状态订阅 + 通用特效层）
         public AgentIntegrationConfig AgentIntegration { get; set; } = new AgentIntegrationConfig();
+        /// 音乐模块设置（V0.2.0）：旧配置无 music 字段时反序列化安全落默认值 new MusicConfig()。
+        public MusicConfig Music { get; set; } = new();
     }
 
     /// <summary>

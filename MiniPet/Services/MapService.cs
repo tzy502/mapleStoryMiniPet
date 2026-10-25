@@ -60,7 +60,7 @@ public partial class MapService
 
     // 层排序缓存：key = "{mapId}|{layerIdx}|{showObj}|{showTile}" → 排序后的绘制项。
     // 地图不变时 (Z0,Z1,Id) 顺序固定，避免每帧 8 层 LINQ OrderBy 分配临时对象（P5-2）。
-    private readonly Dictionary<string, List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile)>> _layerSortCache = new();
+    private readonly Dictionary<string, List<(int Z0, int Z1, bool IsObj, MapObj? Obj, MapTile? Tile, MapLife? Life)>> _layerSortCache = new();
 
     // M11：SKPaint 提字段复用（原每精灵 using new SKPaint，大地图每帧数百次分配）。整帧渲染在 _spriteCacheLock 内串行，单实例安全。
     private readonly SKPaint _paintSprite = new() { IsAntialias = false, FilterQuality = SKFilterQuality.None };
@@ -182,6 +182,18 @@ public partial class MapService
                 mi.Lifes = ParseLife($"{mapRoot}/life");
             if (_wz.FindNodeByPath($"{mapRoot}/portal") != null)
                 mi.Portals = ParsePortals($"{mapRoot}/portal");
+            // ladderRope（梯子/绳索，F18 行走攀爬用）
+            if (_wz.FindNodeByPath($"{mapRoot}/ladderRope") != null)
+                mi.Ropes = ParseLadderRopes($"{mapRoot}/ladderRope");
+
+            // 垂直 foothold（x1==x2）= 墙（sdlMS：无 k 不可站不可爬）。
+            // 2026-09-16 撤销「垂直段转梯」：把墙转成梯会让人物面对墙用爬而不是跳（胶水实测），
+            // 且空中撞墙检测形同虚设。高台连通改由 WalkGraph「跨高度链邻段归 Jump」承担（物理跳上去）。
+            if (mi.Footholds != null && mi.Footholds.Count > 0)
+            {
+                mi.Ropes ??= new List<LadderRope>();
+                mi.Ropes.RemoveAll(r => r.Id >= 100000);   // 清理旧版转换残留（如有）
+            }
 
             // VR 视口边界（CalculateBounds 使用；缺失时回退到坐标极值）
             mi.VRLeft = _wz.GetIntProperty($"{mapRoot}/info/VRLeft");
@@ -240,10 +252,15 @@ public partial class MapService
         try
         {
             var tS = _wz.GetStringProperty($"{layerPath}/info/tS") ?? "";
-            for (int i = 0; ; i++)
+            // 同 obj：tile 子节点名也不保证从 0 连续 → 遍历全部子节点，Id 取节点名（对齐 R2 TileItem）
+            var tileRoot = _wz.FindNodeByPath($"{layerPath}/tile");
+            if (tileRoot == null) { return tiles; }
+            int tileSeq = 0;
+            foreach (var tileNode in tileRoot.Nodes)
             {
-                var tilePath = $"{layerPath}/tile/{i}";
-                if (_wz.FindNodeByPath(tilePath) == null) break;
+                var tilePath = $"{layerPath}/tile/{tileNode.Text}";
+                int tileId = int.TryParse(tileNode.Text, out var tidParsed) ? tidParsed : tileSeq;
+                tileSeq++;
                 var x = _wz.GetIntProperty($"{tilePath}/x");
                 var y = _wz.GetIntProperty($"{tilePath}/y");
                 var u = _wz.GetStringProperty($"{tilePath}/u") ?? "";
@@ -255,7 +272,7 @@ public partial class MapService
                 var tileFrameZ = _wz.GetIntProperty($"Map/Tile/{tS}.img/{u}/{no}/z");
                 tiles.Add(new MapTile
                 {
-                    Id = i, X = x, Y = y,
+                    Id = tileId, X = x, Y = y,
                     Z = tileFrameZ,
                     Resource = new Sprite { ResourceUrl = $"Map/Tile/{tS}.img/{u}/{no}" }
                 });
@@ -270,10 +287,18 @@ public partial class MapService
         var objs = new List<MapObj>();
         try
         {
-            for (int i = 0; ; i++)
+            // ⚠️ 不能按 obj/0,1,2… 递增查找：WZ 里子节点名**不保证从 0 连续**
+            //（实测 100000200 的层 0 是 "2","3",… 没有 "0" → 递增会第一次就 break，整层 obj 全丢，
+            //  表现为「灌木/草丛缺失或位置不对」）。对齐参考 WzComparerR2 MapData.LoadObjects：
+            //  foreach (var node in objNode.Nodes) + Index = int.Parse(node.Text)。
+            var objRoot = _wz.FindNodeByPath($"{layerPath}/obj");
+            if (objRoot == null) { return objs; }
+            int objSeq = 0;
+            foreach (var objNode in objRoot.Nodes)
             {
-                var objPath = $"{layerPath}/obj/{i}";
-                if (_wz.FindNodeByPath(objPath) == null) break;
+                var objPath = $"{layerPath}/obj/{objNode.Text}";
+                int objId = int.TryParse(objNode.Text, out var nidParsed) ? nidParsed : objSeq;
+                objSeq++;
                 var x = _wz.GetIntProperty($"{objPath}/x");
                 var y = _wz.GetIntProperty($"{objPath}/y");
                 var z = _wz.GetIntProperty($"{objPath}/z");
@@ -290,7 +315,7 @@ public partial class MapService
                 }
                 objs.Add(new MapObj
                 {
-                    Id = i, X = x, Y = y, Z = z, FlipX = f != 0,
+                    Id = objId, X = x, Y = y, Z = z, FlipX = f != 0,
                     Resource = new FrameAnimate { Frames = new() { new Frame { ResourceUrl = $"Map/Obj/{oS}.img/{l0}/{l1}/{l2}/0" } } }
                 });
             }
@@ -423,6 +448,7 @@ public partial class MapService
                 Y = _wz.GetIntProperty($"{p}/y"),
                 Cy = _wz.GetIntProperty($"{p}/cy"),
                 Fh = _wz.GetIntProperty($"{p}/fh"),
+                Z = _wz.GetIntProperty($"{p}/z"),
                 Flip = _wz.GetIntProperty($"{p}/f") != 0,
                 Hide = _wz.GetIntProperty($"{p}/hide") != 0,
                 Resource = new Sprite { ResourceUrl = PickLifeFrameUrl(type, idStr) ?? "" }
@@ -491,11 +517,42 @@ public partial class MapService
                     X = _wz.GetIntProperty($"{p}/x"),
                     Y = _wz.GetIntProperty($"{p}/y"),
                     PName = _wz.GetStringProperty($"{p}/pn") ?? "",
+                    Tm = _wz.GetStringProperty($"{p}/tm") ?? "",
+                    Tn = _wz.GetStringProperty($"{p}/tn") ?? "",
                     Resource = new Sprite { ResourceUrl = PickPortalFrameUrl(pt, image) ?? "" }
                 });
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[MapService] ParsePortals: {ex.Message}"); }
+        return result;
+    }
+
+    /// <summary>
+    /// 解析梯子 / 绳索（F18 行走攀爬）—— WZ `ladderRope/{i}`：x / y1 / y2 / l。
+    /// </summary>
+    private List<LadderRope> ParseLadderRopes(string ropePath)
+    {
+        var result = new List<LadderRope>();
+        try
+        {
+            // ⚠️ ladderRope 的子节点**不是从 0 连续编号**（probe 实测 101000000 有 14 个子节点但无 "0"），
+            // 必须直接遍历节点，不能按 {ropePath}/{i} 递增查找（否则第一次就 break → 0 根）。
+            var root = _wz.FindNodeByPath(ropePath);
+            if (root == null) { return result; }
+            foreach (var n in root.Nodes)
+            {
+                var p = $"{ropePath}/{n.Text}";
+                result.Add(new LadderRope
+                {
+                    Id = int.TryParse(n.Text, out var rid) ? rid : 0,
+                    X = _wz.GetIntProperty($"{p}/x"),
+                    Y1 = _wz.GetIntProperty($"{p}/y1"),
+                    Y2 = _wz.GetIntProperty($"{p}/y2"),
+                    IsLadder = _wz.GetIntProperty($"{p}/l") != 0,
+                });
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[MapService] ParseLadderRopes: {ex.Message}"); }
         return result;
     }
 
@@ -532,8 +589,11 @@ public partial class MapService
 
     public static string GetMapWzPath(string mapId)
     {
-        var prefix = !string.IsNullOrEmpty(mapId) ? mapId[0] : '0';
-        return $"Map/Map/Map{prefix}/{mapId}.img";
+        // 胶水 2026-09-16「往 1 前面补 0 让长度一样」：短 id（如枫树山丘 10000）补 0 到 9 位
+        // → 000010000，分片按补零后的首字符选（'0'→Map0）。原样首字符会把短 id 错选到 Map1（段0 → 黑屏/渲染失败）。
+        var padded = !string.IsNullOrEmpty(mapId) ? mapId.PadLeft(9, '0') : "000000000";
+        var prefix = padded[0];
+        return $"Map/Map/Map{prefix}/{padded}.img";
     }
 
     /// <summary>
